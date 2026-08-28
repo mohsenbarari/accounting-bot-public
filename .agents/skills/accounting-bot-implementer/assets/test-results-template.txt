@@ -1,0 +1,15 @@
+WORK PACKAGE: <work-package>
+PHASE: <phase>
+RECORDED AT UTC: <timestamp>
+
+COMMAND 1
+Exact command: <command>
+Exit code: <integer>
+Relevant output:
+<output>
+
+FINAL SUMMARY
+Passed: <count>
+Failed: <count>
+Skipped: <count>
+Blocked: <count>

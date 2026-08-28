@@ -1,0 +1,65 @@
+# Real accounting sources and generated data
+*.xls
+*.xlsm
+*.xlsb
+*.xlsx
+!tests/fixtures/synthetic/**/*.xlsx
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.dump
+*.bak
+*.pdf
+/data/
+/work/
+
+# Pre-G0 local analysis prototypes; not product baseline
+/scripts/import_excel_to_sqlite.py
+/scripts/validate_sqlite_import.py
+/scripts/__pycache__/
+/skills/accounting-roadmap/
+
+# Secrets and deployment-local configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+/secrets/
+/secure/
+
+# Python and test artifacts
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Runtime and temporary artifacts
+*.log
+/logs/
+/tmp/
+/temp/
+
+# IDE and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
