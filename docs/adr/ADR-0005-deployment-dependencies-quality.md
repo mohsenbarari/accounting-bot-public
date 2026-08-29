@@ -14,7 +14,7 @@
 - سرور مرکزی تک‌میزبان است؛ Agent ویندوز Container نمی‌شود.
 - دامنه نهایی هنوز انتخاب نشده و ورودی مؤجل فاز 4 است.
 - Secret، داده واقعی، Excel و SQLite عملیاتی نباید وارد Git یا Image شوند.
-- مخزن عملیاتی Private است و انتشار Public فقط از مخزن جدا و Sanitizeشده مجاز است.
+- مخزن عملیاتی Public است؛ فقط کد و مستندات عمومی‌پذیر و Fixture ساختگی Commit می‌شوند و هر داده واقعی، Secret و پیکربندی واقعی استقرار خارج از Git می‌ماند.
 
 ## Options considered
 
@@ -55,7 +55,7 @@ Option A انتخاب شده است. سرور با Docker Compose شامل Caddy
 - G4: Compose آزمایشی، Healthcheck، Restart میزبان، Migration و Caddy روی دامنه آزمایشی.
 - G4/G7: ACME renewal rehearsal، پورت‌های بسته و Secret injection خارج از Repo/Image.
 - G7: PITR با RPO 15 دقیقه، Backup جدا، Restore با RTO حداکثر 4 ساعت و Rollback نسخه برنامه.
-- پیش از Public Repo: Secret/Data Scan و اثبات نبود تاریخچه داده حساس.
+- در هر PR عمومی: Secret/Data Scan و اثبات نبود داده واقعی یا پیکربندی واقعی استقرار.
 
 ## Migration and rollback impact
 

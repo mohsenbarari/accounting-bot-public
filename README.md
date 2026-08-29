@@ -1,6 +1,6 @@
 # Telegram Accounting Reporting
 
-This is the sanitized public planning snapshot for the Telegram accounting reporting project. The private operational repository remains the authoritative source for active work, approvals and deployments.
+This public repository is the governed operational source for the Telegram accounting reporting project.
 
 ## Current status
 
@@ -11,9 +11,9 @@ This is the sanitized public planning snapshot for the Telegram accounting repor
 
 No final product code may be implemented until the Product Owner explicitly approves G0 in [ROADMAP.md](ROADMAP.md).
 
-## Public snapshot contents
+## Sources of authority
 
-- [ROADMAP.md](ROADMAP.md) is a sanitized planning snapshot and does not authorize production work by itself.
+- [ROADMAP.md](ROADMAP.md) is the sole product and phase authority.
 - [Architecture Decision Records](docs/adr/) capture the accepted O-52 through O-56 architecture decisions without replacing the Roadmap.
 - [accounting-bot-implementer](.agents/skills/accounting-bot-implementer/SKILL.md) governs future Antigravity work packages and handoffs.
 
@@ -21,4 +21,6 @@ The Product Owner approves requirements, Gate transitions and merges. Antigravit
 
 ## Protected and local-only assets
 
-Real Excel workbooks, SQLite databases, phone numbers, Telegram identities, credentials, deployment `.env` files, production artifacts and generated PDFs must never be committed. Pre-G0 inspection scripts and working artifacts remain local and are excluded by `.gitignore`; they are not the product implementation.
+Real Excel workbooks, SQLite databases, phone numbers, Telegram identities, credentials, production artifacts and generated PDFs must never be committed. Pre-G0 inspection scripts and working artifacts remain local and are excluded by `.gitignore`; they are not the product implementation.
+
+Deployment hostnames, IP addresses and secrets belong only in ignored local environment files or the deployment secret store. Public examples use placeholders and synthetic data.
