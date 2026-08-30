@@ -36,3 +36,18 @@ The canonical hashing module (`accounting_contracts.canonical_hashing`) implemen
   - `decimal`: Plain base-10 format without scientific notation or insignificant trailing fractional zeros.
   - `jalali_date`: Canonical `YYYY-MM-DD` representation.
 - **Snapshot Sorting:** Pairs are ordered strictly by canonical UUIDv7 binary bytes, ensuring row permutation invariance.
+
+## Deterministic Source Change Planning (`source_change_plan`)
+
+The source change planning module (`accounting_contracts.source_change_plan`) implements ADR-0007 for validating full-source snapshots and producing deterministic change plans:
+- **Plan Contract Version:** `source-change-plan.v1`
+- **Full Workbook Requirement:** Requires an explicit declaration of all four approved sheets exactly once before any planning can occur. An incomplete or partial snapshot is rejected and cannot authorize void transitions.
+- **Prior Identity State:** Tracks all known prior UUIDv7 identities, their immutable home sheets, positive integer revision numbers, and active/voided lifecycle states.
+- **Transition Classification:**
+  - `insert`: Unknown identity -> planned revision 1.
+  - `unchanged`: Active identity with matching hash -> no revision.
+  - `edit`: Active identity with changed hash or voided identity reactivated -> planned revision n+1.
+  - `void`: Active identity absent from the validated full snapshot -> planned revision n+1.
+  - Settled voided identities that remain absent emit no plan item (idempotent no-op).
+- **Identity Invariant:** UUIDs are globally unique across all sheets; relocation between sheets raises `IdentityRelocationError`.
+- **Deterministic Ordering:** Items are sorted by authoritative sheet registry order and UUID binary bytes with O(N log N) time and O(N) memory complexity.
