@@ -25,7 +25,7 @@ PERSIAN_TO_ASCII_DIGITS = str.maketrans(
     "01234567890123456789",
 )
 
-JALALI_DATE_REGEX = re.compile(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$")
+JALALI_DATE_REGEX = re.compile(r"^([0-9]{4})([/-])([0-9]{1,2})\2([0-9]{1,2})$")
 
 
 class CanonicalDateError(ContractError):
@@ -79,6 +79,7 @@ def parse_canonical_jalali_date(raw_value: Any) -> CanonicalJalaliDate | None:
     """Parse raw text into a CanonicalJalaliDate.
 
     Accepts strings with 4-digit year, 1-2 digit month and day, separated by / or -.
+    Enforces identical separators (either YYYY/MM/DD or YYYY-MM-DD).
     Normalizes Persian/Arabic digits and outer whitespace.
     Returns None if raw_value is None.
     """
@@ -94,11 +95,12 @@ def parse_canonical_jalali_date(raw_value: Any) -> CanonicalJalaliDate | None:
     if not match:
         msg = (
             f"Invalid Jalali date format '{raw_value}'. "
-            "Expected 'YYYY/MM/DD' or 'YYYY-MM-DD' with a 4-digit year."
+            "Expected 'YYYY/MM/DD' or 'YYYY-MM-DD' with a 4-digit year "
+            "and matching separators."
         )
         raise InvalidDateError(msg)
 
-    year_str, month_str, day_str = match.groups()
+    year_str, _sep, month_str, day_str = match.groups()
     year = int(year_str)
     month = int(month_str)
     day = int(day_str)

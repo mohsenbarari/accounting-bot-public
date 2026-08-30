@@ -146,6 +146,10 @@ def test_invalid_dates_rejected() -> None:
         "not-a-date",
         "1403/01/01 extra",  # Extra tokens
         "1403.01.01",  # Dot separator not accepted
+        "1403/01-01",  # Mixed separator / and -
+        "1403-01/01",  # Mixed separator - and /
+        "१४०३/०۵/۱۵",  # Devanagari digits rejected
+        "１４０۳/０۵/۱۵",  # Full-width digits rejected
     ]
     for inp in invalid_inputs:
         with pytest.raises(InvalidDateError):

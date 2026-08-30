@@ -7,7 +7,6 @@
 - Branch/worktree: antigravity/phase-01-canonical-source-hashing
 - Commit(s):
   - `4a31183` (feat(contracts): implement canonical Jalali date parsing and deterministic hashing)
-  - `633553f` (docs(handoff): finalize WP-03 handoff documentation)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -24,11 +23,14 @@ Implement the smallest shared, immutable and versioned canonicalization boundary
   - Version constant `JALALI_DATE_VERSION = "jalali-date.v1"`.
   - Immutable dataclass `CanonicalJalaliDate` holding `raw_text`, canonical `YYYY-MM-DD`, queryable Gregorian `date`, year, month, day, `fiscal_year` equal to Jalali year, and calculation version.
   - Jalali calendar validation via `persiantools.jdatetime.JalaliDate` for leap years (1403/1399 vs non-leap 1402 Esfand 30) and month-end families (1-6: 31, 7-11: 30).
+  - Strict matching separator regex (`/` or `-`) and ASCII digit matching `[0-9]`.
   - Timezone conversion `to_iran_time` with `zoneinfo.ZoneInfo("Asia/Tehran")`, rejecting naive datetimes.
 - Public module `accounting_contracts.canonical_hashing` containing:
   - Version constants `SOURCE_HASH_VERSION = "source-hash.v1"` and `SHEET_SNAPSHOT_HASH_VERSION = "sheet-snapshot-hash.v1"`.
+  - TypeTag validation prior to None evaluation, raising typed `CanonicalValueError`.
   - Normalization policies for `raw_text`, `jalali_date`, `integer_toman`, `decimal`.
-  - Strict rejection of Float, Boolean, NaN, Infinity, exponent notation, thousands separators, and ambiguous punctuation.
+  - Strict rejection of Float, Boolean, NaN, Infinity, exponent notation, thousands separators, and ambiguous punctuation via `[0-9]` regexes.
+  - Inferred `date_raw` field classification without hardcoding transactional sheet lists.
   - `compute_source_hash` using compact UTF-8 JSON array serialization and SHA-256 digests.
   - `compute_sheet_snapshot_hash` using binary UUIDv7 sorting and SHA-256 digests.
 - Public API exports in `accounting_contracts/__init__.py`.
@@ -52,7 +54,7 @@ Implement the smallest shared, immutable and versioned canonicalization boundary
 | Roadmap section / O-item | Approved status | Implemented behavior |
 |---|---|---|
 | Sections 4.2, 5.2 / O-03 | ✅ Approved | Versioned SHA-256 hashing, row-number independence and sorted UUID/hash sheet snapshots |
-| Section 5.4 / O-25 | ✅ Approved | Literal-input-only boundary, Integer Toman, exact Decimal and no Float |
+| Section 5.4 / O-25 | 🧪 Partial (Phase 1 Canonical) | Literal-input-only boundary, Integer Toman, exact Decimal and no Float canonical representation; full accounting validation deferred |
 | Section 16 / O-42 | ✅ Approved | Raw Jalali date preservation, canonical query date, fiscal-year key, persiantools, zoneinfo and Asia/Tehran |
 | O-68, ADR-0006 | ✅ Approved | Exact v1 byte contract, normalization rules, versioning and deferred ledger_hash |
 | WP-02 | ✅ Approved | Reuse authoritative sheet names, raw field order, stable IDs and formula/derived exclusions |
@@ -64,13 +66,12 @@ Implement the smallest shared, immutable and versioned canonicalization boundary
 |---|---|---|
 | `packages/contracts/pyproject.toml` | Modified | Add direct dependency `persiantools>=6.2.0,<6.3.0` |
 | `uv.lock` | Modified | Update lockfile via uv to lock `persiantools 6.2.0` |
-| `pyproject.toml` | Modified | Add `disallow_untyped_calls = false` to mypy override for third-party libraries |
 | `packages/contracts/src/accounting_contracts/canonical_date.py` | Created | Canonical Jalali date parsing, calendar validation, fiscal year extraction, and Asia/Tehran conversion |
-| `packages/contracts/src/accounting_contracts/canonical_hashing.py` | Created | Deterministic source_hash and sheet_snapshot_hash serialization, SHA-256, and value normalizations |
+| `packages/contracts/src/accounting_contracts/canonical_hashing.py` | Created | Deterministic source_hash and sheet_snapshot_hash serialization, SHA-256, tag validation, and value normalizations |
 | `packages/contracts/src/accounting_contracts/__init__.py` | Modified | Export canonical date and hashing public APIs |
 | `packages/contracts/README.md` | Modified | Document canonical date and canonical hashing contracts and boundaries |
-| `tests/test_canonical_date.py` | Created | Deterministic tests for Jalali date parsing, leap year, month boundaries, and timezone conversion |
-| `tests/test_canonical_hashing.py` | Created | Literal Golden Vector, rejection, permutation invariance, and Hypothesis property tests |
+| `tests/test_canonical_date.py` | Created | Deterministic tests for Jalali date parsing, leap year, month boundaries, digit variants, and timezone conversion |
+| `tests/test_canonical_hashing.py` | Created | Literal Golden Vector, rejection, permutation invariance, raw field mutation, and Hypothesis property tests |
 | `handoffs/phase-01/wp-03-canonical-source-hashing/*` | Created | WP-03 Handoff, Acceptance Matrix, and Test Results |
 
 ## Schema and migrations
@@ -90,10 +91,10 @@ Implement the smallest shared, immutable and versioned canonicalization boundary
 | `uv run ruff format --check .` | 0 | Verify formatting compliance |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
 | `uv run mypy .` | 0 | Verify strict static typing |
-| `uv run pytest -v` | 0 | Execute all 61 unit and property tests |
+| `uv run pytest -v` | 0 | Execute all 64 unit and property tests |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace or line-ending defects against origin/main |
-| `git ls-files \| grep -E '\.(xlsx\|xls\|xlsm\|sqlite\|sqlite3\|db\|pdf\|key\|pem\|env)$' \|\| true` | 0 | Verify no forbidden extensions or database/secret files tracked in git |
-| `git grep -n -i -E '(password\s*[:=]\|secret\s*[:=]\|bearer\s+[A-Za-z0-9]\|BEGIN RSA\|BEGIN OPENSSH\|09[0-9]{9}\|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})' -- ':!ROADMAP.md' ':!docs/adr/*' ':!.agents/*' ':!handoffs/*' ':!uv.lock' \|\| true` | 0 | Verify no sensitive patterns, private keys, IP addresses or real phone numbers in source/tests |
+| `! git ls-files \| grep -E '\.(xlsx\|xls\|xlsm\|sqlite\|sqlite3\|db\|pdf\|key\|pem\|env)$'` | 0 | Verify zero forbidden extensions or database/secret files tracked in git |
+| `! git grep -n -i -E '(password\s*[:=]\|secret\s*[:=]\|bearer\s+[A-Za-z0-9]\|BEGIN RSA\|BEGIN OPENSSH\|09[0-9]{9}\|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})' -- ':!ROADMAP.md' ':!docs/adr/*' ':!.agents/*' ':!handoffs/*' ':!uv.lock'` | 0 | Verify zero sensitive patterns, private keys, IP addresses or real phone numbers in source/tests |
 | `python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-03-canonical-source-hashing/` | 0 | Validate completeness and markers of handoff package |
 
 ## Tests and evidence

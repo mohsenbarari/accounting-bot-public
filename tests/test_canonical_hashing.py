@@ -5,11 +5,15 @@ Verifies ADR-0006 compliance for source_hash and sheet_snapshot_hash:
 - literal Golden Vectors for all four approved sheets and snapshot configurations;
 - rejection of Float, Boolean, NaN, Infinity, exponent and grouping;
 - row-order and mapping-order independence;
-- snapshot UUIDv7 binary sorting and duplicate/malformed validation.
+- snapshot UUIDv7 binary sorting and duplicate/malformed validation;
+- every canonical raw field mutation sensitivity across all 4 sheets;
+- arbitrary snapshot permutation invariance via property tests.
 """
 
 from __future__ import annotations
 
+import random
+import uuid
 from decimal import Decimal
 
 import pytest
@@ -27,8 +31,10 @@ from accounting_contracts.canonical_hashing import (
     compute_source_hash,
 )
 from accounting_contracts.raw_input_contracts import (
+    RAW_CONTRACT_REGISTRY,
     RAW_SOURCE_CONTRACT_VERSION,
     UnknownSheetError,
+    ValueKind,
 )
 from hypothesis import given
 from hypothesis import strategies as st
@@ -148,7 +154,7 @@ def test_golden_vector_business_parties_row() -> None:
     """Verify exact literal JSON bytes and SHA-256 for 'لیست کسبه' row."""
     row = {
         "party_name_raw": "فروشگاه نمونه",
-        "phone_number_raw": "09120000000",
+        "phone_number_raw": "SYNTHETIC-PHONE-001",
     }
 
     result = compute_source_hash("لیست کسبه", row)
@@ -156,10 +162,10 @@ def test_golden_vector_business_parties_row() -> None:
     expected_json = (
         '["source-hash.v1","raw-source-contract.v1","لیست کسبه",'
         '[["party_name_raw","raw_text","فروشگاه نمونه"],'
-        '["phone_number_raw","raw_text","09120000000"]]]'
+        '["phone_number_raw","raw_text","SYNTHETIC-PHONE-001"]]]'
     )
     expected_bytes = expected_json.encode("utf-8")
-    expected_hash = "8b93dd92efc747ca69af46921cca6430b5ae3a8c9054b7fdaf1703671f822698"
+    expected_hash = "f88ccdeb76608de9c530d856ba12310ca667dba48bfbe6ce5fa0e4451b8aac24"
 
     assert result.canonical_json == expected_json
     assert result.canonical_bytes == expected_bytes
@@ -212,10 +218,10 @@ def test_mapping_order_independence() -> None:
     """Verify source_row dictionary key insertion order does not affect source_hash."""
     row_forward = {
         "party_name_raw": "فروشگاه نمونه",
-        "phone_number_raw": "09120000000",
+        "phone_number_raw": "SYNTHETIC-PHONE-001",
     }
     row_backward = {
-        "phone_number_raw": "09120000000",
+        "phone_number_raw": "SYNTHETIC-PHONE-001",
         "party_name_raw": "فروشگاه نمونه",
     }
     res_forward = compute_source_hash("لیست کسبه", row_forward)
@@ -238,7 +244,7 @@ def test_missing_or_extra_fields_rejected() -> None:
             "لیست کسبه",
             {
                 "party_name_raw": "فروشگاه",
-                "phone_number_raw": "09120000000",
+                "phone_number_raw": "SYNTHETIC-PHONE-001",
                 "extra_field": "unauthorized",
             },
         )
@@ -250,7 +256,7 @@ def test_missing_or_extra_fields_rejected() -> None:
             "لیست کسبه",
             {
                 "party_name_raw": "فروشگاه",
-                "phone_number_raw": "09120000000",
+                "phone_number_raw": "SYNTHETIC-PHONE-001",
                 "party_id": "0191a3f0-0001-7000-8000-000000000001",
             },
         )
@@ -293,6 +299,18 @@ def test_raw_text_whitespace_and_unicode_preservation() -> None:
 
 
 # --- Number Normalization and Rejection ---
+
+
+def test_invalid_type_tag_raises_canonical_value_error() -> None:
+    """Verify that invalid type tag raises CanonicalValueError even if value is None."""
+    with pytest.raises(CanonicalValueError):
+        canonicalize_value("invalid_type_tag", None)
+
+    with pytest.raises(CanonicalValueError):
+        canonicalize_value("unknown", "sample_value")
+
+    with pytest.raises(CanonicalValueError):
+        canonicalize_value(12345, None)  # type: ignore[arg-type]
 
 
 def test_number_canonicalization_and_type_rejections() -> None:
@@ -343,6 +361,68 @@ def test_number_canonicalization_and_type_rejections() -> None:
         canonicalize_value(TypeTag.DECIMAL, "1,000.5")  # Grouping separator
     with pytest.raises(CanonicalValueError):
         canonicalize_value(TypeTag.DECIMAL, "1e-4")  # Exponent
+
+
+def test_every_raw_field_mutation_changes_source_hash() -> None:
+    """Verify mutating any single raw column across all 4 sheets changes source_hash."""
+    base_rows: dict[str, dict[str, object]] = {
+        "خرید-فروش": {
+            "date_raw": "1403/05/15",
+            "party_name_raw": "بازرگانی احمدی",
+            "transaction_type_raw": "خرید",
+            "item_name_raw": "طلای آبشده",
+            "quantity_raw": "12.34",
+            "unit_price_toman_raw": "1500000",
+            "discount_toman_raw": "0",
+            "notes_raw": "توضیحات اولیه",
+        },
+        "دریافت-پرداخت": {
+            "date_raw": "1403/01/01",
+            "party_name_raw": "همکار نمونه",
+            "entry_type_raw": "RS",
+            "amount_toman_raw": "50000000",
+            "notes_raw": "تسویه اولیه",
+            "account_code_raw": "101",
+            "customer_flag_raw": "1",
+        },
+        "ورود-خروج": {
+            "date_raw": "1403/12/29",
+            "party_name_raw": "کارگاه زرگری",
+            "movement_type_raw": "ورود",
+            "item_name_raw": "شمش طلا",
+            "quantity_raw": "100.5",
+            "purity_raw": "750",
+            "notes_raw": "تحویل کارگاه",
+            "customer_flag_raw": "1",
+        },
+        "لیست کسبه": {
+            "party_name_raw": "فروشگاه نمونه",
+            "phone_number_raw": "SYNTHETIC-PHONE-001",
+        },
+    }
+
+    for sheet_name, base_row in base_rows.items():
+        base_res = compute_source_hash(sheet_name, base_row)
+        sheet_contract = RAW_CONTRACT_REGISTRY.get_sheet_contract(sheet_name)
+
+        for col in sheet_contract.raw_columns:
+            mutated_row = dict(base_row)
+            if col.field_name == "date_raw":
+                mutated_row["date_raw"] = "1403/05/20"
+            elif col.value_kind == ValueKind.RAW_TEXT:
+                curr_val = base_row[col.field_name]
+                mutated_row[col.field_name] = f"{curr_val}_MUTATED"
+            elif col.value_kind == ValueKind.INTEGER_TOMAN:
+                mutated_row[col.field_name] = "999999"
+            elif col.value_kind == ValueKind.DECIMAL:
+                mutated_row[col.field_name] = "888.88"
+
+            mutated_res = compute_source_hash(sheet_name, mutated_row)
+            assert mutated_res.source_hash != base_res.source_hash, (
+                f"Mutation of field '{col.field_name}' in sheet '{sheet_name}' "
+                "did not change source_hash!"
+            )
+            assert mutated_res.canonical_bytes != base_res.canonical_bytes
 
 
 # --- Snapshot Hashing Rules ---
@@ -415,4 +495,44 @@ def test_property_source_hash_determinism(name: str, phone: str) -> None:
     res1 = compute_source_hash("لیست کسبه", row)
     res2 = compute_source_hash("لیست کسبه", row)
     assert res1.source_hash == res2.source_hash
+    assert res1.canonical_bytes == res2.canonical_bytes
+
+
+def _make_uuid7(b: bytes) -> uuid.UUID:
+    b_arr = bytearray(b)
+    b_arr[6] = (b_arr[6] & 0x0F) | 0x70
+    b_arr[8] = (b_arr[8] & 0x3F) | 0x80
+    return uuid.UUID(bytes=bytes(b_arr))
+
+
+st_uuid7 = st.binary(min_size=16, max_size=16).map(_make_uuid7)
+
+
+@given(
+    pairs=st.lists(
+        st.tuples(
+            st_uuid7,
+            st.text(
+                alphabet="0123456789abcdef",
+                min_size=64,
+                max_size=64,
+            ),
+        ),
+        min_size=1,
+        max_size=10,
+        unique_by=lambda item: item[0],
+    ),
+    seed=st.integers(min_value=0, max_value=1000),
+)
+def test_property_snapshot_arbitrary_permutation_invariance(
+    pairs: list[tuple[uuid.UUID, str]], seed: int
+) -> None:
+    """Hypothesis test: arbitrary pair permutations yield identical snapshot hash."""
+    shuffled = list(pairs)
+    random.Random(seed).shuffle(shuffled)
+
+    res1 = compute_sheet_snapshot_hash("خرید-فروش", pairs)
+    res2 = compute_sheet_snapshot_hash("خرید-فروش", shuffled)
+
+    assert res1.snapshot_hash == res2.snapshot_hash
     assert res1.canonical_bytes == res2.canonical_bytes

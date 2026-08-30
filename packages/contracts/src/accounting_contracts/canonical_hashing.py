@@ -33,12 +33,8 @@ SOURCE_HASH_VERSION: str = "source-hash.v1"
 SHEET_SNAPSHOT_HASH_VERSION: str = "sheet-snapshot-hash.v1"
 
 HEX_DIGEST_64_REGEX = re.compile(r"^[0-9a-f]{64}$")
-INTEGER_TOMAN_REGEX = re.compile(r"^[+-]?\d+$")
-DECIMAL_REGEX = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
-
-TRANSACTIONAL_SHEETS_WITH_JALALI_DATE = frozenset(
-    {"خرید-فروش", "دریافت-پرداخت", "ورود-خروج"}
-)
+INTEGER_TOMAN_REGEX = re.compile(r"^[+-]?[0-9]+$")
+DECIMAL_REGEX = re.compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$")
 
 
 class TypeTag(StrEnum):
@@ -78,11 +74,15 @@ def canonicalize_value(type_tag: str | TypeTag, value: Any) -> Any:
     """Convert an accepted literal source value to deterministic canonical format.
 
     Rejects Boolean, Float, NaN, Infinity, exponent notation, and ambiguous formatting.
+    Validates type_tag before evaluating value.
     """
+    try:
+        tag = TypeTag(type_tag)
+    except (ValueError, TypeError) as exc:
+        raise CanonicalValueError(f"Unknown or invalid type tag '{type_tag}'") from exc
+
     if value is None:
         return None
-
-    tag = TypeTag(type_tag)
 
     if tag == TypeTag.RAW_TEXT:
         if isinstance(value, bool) or not isinstance(value, str):
@@ -227,10 +227,7 @@ def compute_source_hash(
     triples_tuple: list[tuple[str, str, Any]] = []
 
     for col in sheet_contract.raw_columns:
-        if (
-            col.field_name == "date_raw"
-            and sheet_name in TRANSACTIONAL_SHEETS_WITH_JALALI_DATE
-        ):
+        if col.field_name == "date_raw":
             tag = TypeTag.JALALI_DATE
         elif col.value_kind == ValueKind.RAW_TEXT:
             tag = TypeTag.RAW_TEXT
