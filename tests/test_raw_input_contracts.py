@@ -27,6 +27,7 @@ from accounting_contracts.raw_input_contracts import (
     classify_cell,
     get_raw_contract_registry,
     get_sheet_contract,
+    is_valid_excel_column,
 )
 from hypothesis import given
 from hypothesis import strategies as st
@@ -45,6 +46,25 @@ def test_registry_approved_sheets() -> None:
     assert RAW_CONTRACT_REGISTRY.list_sheet_names() == expected_sheets
     assert len(RAW_CONTRACT_REGISTRY.list_sheet_contracts()) == 4
     assert get_raw_contract_registry() is RAW_CONTRACT_REGISTRY
+
+
+def test_stable_id_technical_headers() -> None:
+    """Verify exact technical header names for all four Stable-ID columns."""
+    assert BUY_SELL_CONTRACT.stable_id_column.column_letter == "Z"
+    assert BUY_SELL_CONTRACT.stable_id_column.field_name == "record_id"
+    assert BUY_SELL_CONTRACT.stable_id_column.required_header == "record_id"
+
+    assert RECEIPTS_PAYMENTS_CONTRACT.stable_id_column.column_letter == "P"
+    assert RECEIPTS_PAYMENTS_CONTRACT.stable_id_column.field_name == "record_id"
+    assert RECEIPTS_PAYMENTS_CONTRACT.stable_id_column.required_header == "record_id"
+
+    assert INVENTORY_MOVEMENTS_CONTRACT.stable_id_column.column_letter == "P"
+    assert INVENTORY_MOVEMENTS_CONTRACT.stable_id_column.field_name == "record_id"
+    assert INVENTORY_MOVEMENTS_CONTRACT.stable_id_column.required_header == "record_id"
+
+    assert BUSINESS_PARTIES_CONTRACT.stable_id_column.column_letter == "D"
+    assert BUSINESS_PARTIES_CONTRACT.stable_id_column.field_name == "party_id"
+    assert BUSINESS_PARTIES_CONTRACT.stable_id_column.required_header == "party_id"
 
 
 def test_buy_sell_contract_specification() -> None:
@@ -280,6 +300,48 @@ def test_no_float_kind_in_any_contract() -> None:
             assert col.value_kind in approved_kinds
 
 
+def test_excel_column_boundary_validation() -> None:
+    """Verify Excel column validation strictly allows A-XFD and rejects invalid ones."""
+    # Valid columns
+    assert is_valid_excel_column("A")
+    assert is_valid_excel_column("Z")
+    assert is_valid_excel_column("AA")
+    assert is_valid_excel_column("XFD")  # 16384 (maximum allowed in XLSX)
+
+    # Invalid columns (beyond XFD or malformed)
+    assert not is_valid_excel_column("XFE")  # 16385 (exceeds Excel max)
+    assert not is_valid_excel_column("ZZZ")  # 18278 (exceeds Excel max)
+    assert not is_valid_excel_column("AAAA")  # 4 letters
+    assert not is_valid_excel_column("123")
+    assert not is_valid_excel_column("A1")
+    assert not is_valid_excel_column("")
+
+    # Validation in RawColumnContract
+    valid_col = RawColumnContract(
+        column_letter="XFD",
+        field_name="max_col",
+        role=ColumnRole.LITERAL_RAW_INPUT,
+        value_kind=ValueKind.RAW_TEXT,
+    )
+    assert valid_col.column_letter == "XFD"
+
+    with pytest.raises(ContractValidationError):
+        RawColumnContract(
+            column_letter="XFE",
+            field_name="out_of_bounds",
+            role=ColumnRole.LITERAL_RAW_INPUT,
+            value_kind=ValueKind.RAW_TEXT,
+        )
+
+    with pytest.raises(ContractValidationError):
+        RawColumnContract(
+            column_letter="ZZZ",
+            field_name="out_of_bounds",
+            role=ColumnRole.LITERAL_RAW_INPUT,
+            value_kind=ValueKind.RAW_TEXT,
+        )
+
+
 def test_cell_classification_rules() -> None:
     """Verify pure cell classification logic across different columns and flags."""
     sheet = "خرید-فروش"
@@ -388,7 +450,7 @@ def test_unknown_sheet_lookup_fails() -> None:
 
 
 def test_immutability_and_frozen_contracts() -> None:
-    """Verify contract objects cannot be mutated through their public attributes."""
+    """Verify contract objects and registry cannot be mutated directly or indirectly."""
     contract = get_sheet_contract("خرید-فروش")
     with pytest.raises((FrozenInstanceError, AttributeError)):
         contract.sheet_name = "NewName"  # type: ignore[misc]
@@ -396,6 +458,86 @@ def test_immutability_and_frozen_contracts() -> None:
     col = contract.stable_id_column
     with pytest.raises((FrozenInstanceError, AttributeError)):
         col.column_letter = "Y"  # type: ignore[misc]
+
+    # Deep immutability: modifying the source dictionary does not affect registry
+    source_dict = {"خرید-فروش": BUY_SELL_CONTRACT}
+    registry = RawContractRegistry(source_dict)
+    source_dict["خرید-فروش"] = RECEIPTS_PAYMENTS_CONTRACT
+    assert registry.get_sheet_contract("خرید-فروش") is BUY_SELL_CONTRACT
+
+    # Direct mutation on registry.sheets is rejected with TypeError
+    with pytest.raises(TypeError):
+        registry.sheets["خرید-فروش"] = RECEIPTS_PAYMENTS_CONTRACT  # type: ignore[index]
+
+    with pytest.raises(TypeError):
+        del registry.sheets["خرید-فروش"]  # type: ignore[attr-defined]
+
+
+def test_contract_validation_rejects_field_name_collisions() -> None:
+    """Verify duplicate field names across Stable-ID, Raw, and Derived are rejected."""
+    stable_id = RawColumnContract(
+        column_letter="Z",
+        field_name="shared_field",
+        role=ColumnRole.STABLE_ID,
+        value_kind=ValueKind.UUID7,
+    )
+    raw_col = RawColumnContract(
+        column_letter="B",
+        field_name="shared_field",
+        role=ColumnRole.LITERAL_RAW_INPUT,
+        value_kind=ValueKind.RAW_TEXT,
+    )
+    derived_col = RawColumnContract(
+        column_letter="A",
+        field_name="shared_field",
+        role=ColumnRole.KNOWN_DERIVED,
+        value_kind=ValueKind.RAW_TEXT,
+    )
+
+    # 1. Collision between Stable-ID and Raw
+    with pytest.raises(ContractValidationError) as exc:
+        RawSheetContract(
+            sheet_name="TestSheet",
+            stable_id_column=stable_id,
+            raw_columns=(raw_col,),
+            activity_columns=("B",),
+            derived_columns=(),
+        )
+    assert "collides with stable_id" in str(exc.value)
+
+    # 2. Collision between Stable-ID and Derived
+    unique_raw = RawColumnContract(
+        column_letter="B",
+        field_name="unique_raw",
+        role=ColumnRole.LITERAL_RAW_INPUT,
+        value_kind=ValueKind.RAW_TEXT,
+    )
+    with pytest.raises(ContractValidationError) as exc:
+        RawSheetContract(
+            sheet_name="TestSheet",
+            stable_id_column=stable_id,
+            raw_columns=(unique_raw,),
+            activity_columns=("B",),
+            derived_columns=(derived_col,),
+        )
+    assert "collides with stable_id" in str(exc.value)
+
+    # 3. Collision between Raw and Derived
+    unique_stable = RawColumnContract(
+        column_letter="Z",
+        field_name="unique_stable_id",
+        role=ColumnRole.STABLE_ID,
+        value_kind=ValueKind.UUID7,
+    )
+    with pytest.raises(ContractValidationError) as exc:
+        RawSheetContract(
+            sheet_name="TestSheet",
+            stable_id_column=unique_stable,
+            raw_columns=(raw_col,),
+            activity_columns=("B",),
+            derived_columns=(derived_col,),
+        )
+    assert "collides with raw column" in str(exc.value)
 
 
 def test_contract_validation_rejects_invalid_definitions() -> None:
@@ -523,7 +665,9 @@ def test_contract_validation_rejects_invalid_definitions() -> None:
 
 
 @given(
-    col=st.text(alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ", min_size=1, max_size=3),
+    col=st.text(alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ", min_size=1, max_size=3).filter(
+        is_valid_excel_column
+    ),
     has_formula=st.booleans(),
     sheet_name=st.sampled_from(
         ["خرید-فروش", "دریافت-پرداخت", "ورود-خروج", "لیست کسبه"]
@@ -532,7 +676,7 @@ def test_contract_validation_rejects_invalid_definitions() -> None:
 def test_property_classification_invariants(
     col: str, has_formula: bool, sheet_name: str
 ) -> None:
-    """Hypothesis property test verifying classification consistency."""
+    """Hypothesis property test verifying classification on valid Excel columns."""
     contract = get_sheet_contract(sheet_name)
     classification = classify_cell(sheet_name, col, has_formula=has_formula)
 

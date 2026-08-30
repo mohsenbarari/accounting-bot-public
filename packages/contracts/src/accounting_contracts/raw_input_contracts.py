@@ -7,14 +7,33 @@ to Roadmap sections 5.1, 5.2, 5.4, 5.5 and O-03/O-25/O-26.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 
 RAW_SOURCE_CONTRACT_VERSION: str = "raw-source-contract.v1"
+MAX_EXCEL_COLUMN_INDEX: int = 16384  # Excel column 'XFD'
 
-EXCEL_COLUMN_REGEX = re.compile(r"^[A-Z]{1,3}$")
+
+def excel_column_to_number(column_letter: str) -> int:
+    """Convert uppercase Excel column string to 1-based index."""
+    col_num = 0
+    for char in column_letter:
+        if not ("A" <= char <= "Z"):
+            return 0
+        col_num = col_num * 26 + (ord(char) - ord("A") + 1)
+    return col_num
+
+
+def is_valid_excel_column(column_letter: str) -> bool:
+    """Check if a column letter is a valid Excel column address (A through XFD)."""
+    if not (1 <= len(column_letter) <= 3):
+        return False
+    if not column_letter.isalpha() or not column_letter.isupper():
+        return False
+    col_num = excel_column_to_number(column_letter)
+    return 1 <= col_num <= MAX_EXCEL_COLUMN_INDEX
 
 
 class ColumnRole(StrEnum):
@@ -69,10 +88,12 @@ class RawColumnContract:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "column_letter", self.column_letter.strip().upper())
-        if not EXCEL_COLUMN_REGEX.match(self.column_letter):
-            raise ContractValidationError(
-                f"Invalid Excel column address '{self.column_letter}'"
+        if not is_valid_excel_column(self.column_letter):
+            msg = (
+                f"Invalid Excel column address '{self.column_letter}'. "
+                "Must be a valid uppercase Excel column between 'A' and 'XFD'."
             )
+            raise ContractValidationError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,8 +127,13 @@ class RawSheetContract:
             )
             raise ContractValidationError(msg)
 
+        all_fields: dict[str, str] = {
+            self.stable_id_column.field_name: (
+                f"stable_id '{self.stable_id_column.column_letter}'"
+            )
+        }
+
         raw_letters = set()
-        raw_fields = set()
         for col in self.raw_columns:
             if col.role != ColumnRole.LITERAL_RAW_INPUT:
                 msg = (
@@ -120,17 +146,17 @@ class RawSheetContract:
                     f"in sheet '{self.sheet_name}'"
                 )
                 raise ContractValidationError(msg)
-            if col.field_name in raw_fields:
+            if col.field_name in all_fields:
                 msg = (
-                    f"Duplicate raw field name '{col.field_name}' "
+                    f"Duplicate field name '{col.field_name}' in raw column "
+                    f"'{col.column_letter}' collides with {all_fields[col.field_name]} "
                     f"in sheet '{self.sheet_name}'"
                 )
                 raise ContractValidationError(msg)
             raw_letters.add(col.column_letter)
-            raw_fields.add(col.field_name)
+            all_fields[col.field_name] = f"raw column '{col.column_letter}'"
 
         derived_letters = set()
-        derived_fields = set()
         for col in self.derived_columns:
             if col.role != ColumnRole.KNOWN_DERIVED:
                 msg = (
@@ -143,14 +169,15 @@ class RawSheetContract:
                     f"in sheet '{self.sheet_name}'"
                 )
                 raise ContractValidationError(msg)
-            if col.field_name in derived_fields:
+            if col.field_name in all_fields:
                 msg = (
-                    f"Duplicate derived field name '{col.field_name}' "
+                    f"Duplicate field name '{col.field_name}' in derived column "
+                    f"'{col.column_letter}' collides with {all_fields[col.field_name]} "
                     f"in sheet '{self.sheet_name}'"
                 )
                 raise ContractValidationError(msg)
             derived_letters.add(col.column_letter)
-            derived_fields.add(col.field_name)
+            all_fields[col.field_name] = f"derived column '{col.column_letter}'"
 
         if self.stable_id_column.column_letter in raw_letters:
             msg = (
@@ -251,11 +278,13 @@ class RawSheetContract:
 
 @dataclass(frozen=True, slots=True)
 class RawContractRegistry:
-    """Immutable registry containing all approved raw sheet contracts."""
+    """Deeply immutable registry containing all approved raw sheet contracts."""
 
     sheets: Mapping[str, RawSheetContract]
 
-    def __post_init__(self) -> None:
+    def __init__(self, sheets: Mapping[str, RawSheetContract]) -> None:
+        defensive_copy = dict(sheets)
+        object.__setattr__(self, "sheets", MappingProxyType(defensive_copy))
         self.validate()
 
     def validate(self) -> None:
