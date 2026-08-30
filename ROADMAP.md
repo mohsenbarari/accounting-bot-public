@@ -2,7 +2,7 @@
 
 > وضعیت سند: پیش‌نویس زنده برای بازبینی و تصویب
 >
-> نسخه: 0.29
+> نسخه: 0.30
 >
 > آخرین به‌روزرسانی: 2026-08-30
 >
@@ -90,7 +90,7 @@
 - ✅ قالب‌های `handoff.md`، `acceptance-matrix.md`، `test-results.txt` و ADR به‌همراه Validator بدون وابستگی خارجی ساخته و Validator روی Templateها و Fixture تکمیل‌شده با Exit Code صفر آزموده شد.
 - ✅ پیش از ایجاد Workspace، Skill موقتاً در مسیر Global قابل‌کشف Antigravity نصب شده بود؛ پس از Clone مخزن، آن نسخه با Backup حفظ و مسیر Global به نسخه Project Scope پیوند مدیریت‌شده شد.
 - ✅ `.agents/skills/accounting-bot-implementer/` در مخزن عمومی عملیاتی منبع یگانه است و نصب Global مستقیماً همان منبع را ارائه می‌کند؛ نسخه مستقل قابل‌ویرایش باقی نمانده است.
-- 🧪 کشف Skill در نشست واقعی Antigravity و رفتار آن در سناریوهای قبل از G0، Scope مجاز، Roadmap 🟨/🟦 و دارایی محافظت‌شده هنوز باید پس از Reload/Restart با `/skills` و Dry Run اثبات شود.
+- ✅ طبق خروجی نشست واقعی ارائه‌شده توسط کاربر در 2026-08-30، Antigravity پس از `/skills` نسخه `accounting-bot-implementer` را کشف و در Dry Run با خواندن Roadmap، تصویب‌نشدن G0 را تشخیص داد، شروع کدنویسی را رد کرد، کارهای مجاز قبل از G0 را به تحلیل/شاهد محدود و Roadmap، Excel، داده واقعی، `main`، Production و سوابق مالی را محافظت‌شده اعلام کرد.
 
 ## 4. مدل مفهومی داده
 
@@ -736,7 +736,8 @@
 - 🧪 تغییر مؤثر بر قواعد مالی، امنیت، هزینه، سرویس بیرونی، داده واقعی، رفتار قابل‌مشاهده یا Acceptance Criteria بدون ADR و تأیید کاربر اجرا نشود؛ انتخاب فنی برگشت‌پذیر نیز ADR و بازبینی Codex داشته باشد.
 - 🧪 هیچ Agentی بدون اجازه صریح فایل Excel مرجع، شماره/داده واقعی، Telegram تولید، سرور/DNS تولید، Secret، Migration مخرب یا وضعیت‌های Roadmap را تغییر ندهد.
 - ✅ مخزن عمومی مستقل با یک Root Commit تازه ساخته و کل تاریخ آن پیش از انتشار Scan شد؛ Excel، SQLite، داده/شماره واقعی، Credential، IP/شناسه مخزن خصوصی و Artifact داخلی در آن وجود ندارند و مقادیر استقرار فقط با Placeholder محیطی نمایش داده می‌شوند.
-- 🧪 Antigravity پس از Reload/Restart، نسخه Project Scope مخزن عملیاتی را از طریق Symlink مسیر Global در `/skills` کشف کند؛ Dry Run ثابت کند پیش از G0 کدنویسی را رد، روی 🟨 و 🟦 اثرگذار متوقف، Roadmap/Excel/داده واقعی/Production را محافظت و پس از یک بسته آزمایشی Handoff معتبر تولید می‌کند و برای بازبینی Codex می‌ایستد.
+- ✅ Antigravity در نشست واقعی نسخه Project Scope مخزن عملیاتی را از طریق مسیر Global در `/skills` کشف کرد و Dry Run ارائه‌شده توسط کاربر نشان داد پیش از G0 کدنویسی را رد و Roadmap/Excel/داده واقعی/`main`/Production را محافظت می‌کند.
+- 🧪 تولید Handoff کامل، Acceptance Matrix و Test Results معتبر و توقف برای بازبینی Codex باید در نخستین Work Package شاهددار پس از تصویب G0 اثبات شود؛ این شاهد اجرایی با Dry Run خواندنی پیش از G0 یکی نیست و بسته‌شدن Gate همان Work Package را کنترل می‌کند.
 - 🧪 `uv.lock` نصب تکرارپذیر Agent و Server را روی محیط‌های هدف بدهد و CI در صورت Lockfile ناسازگار، Ruff، mypy یا آزمون ناموفق شکست بخورد.
 - 🧪 Docker Compose آزمایشی شامل Caddy، API/Webhook، Worker و PostgreSQL با Healthcheck، Restart و Migration کنترل‌شده بالا بیاید و بازیابی پس از Restart میزبان را بدون از دست‌رفتن Job اثبات کند.
 
@@ -751,7 +752,7 @@
 
 ### فاز 0 — تکمیل و تصویب Roadmap
 
-وضعیت: در حال انجام
+وضعیت: آماده تصویب؛ G0 هنوز تصویب نشده است
 
 - ثبت همه نیازمندی‌های قطعی و باز.
 - پاسخ‌دادن به تصمیم‌های بحرانی بخش 21.
@@ -764,8 +765,8 @@
 - ✅ روی تنها Volume متصل سرور یک دایرکتوری مستقل بدون Format یا تغییر داده موجود ایجاد و با Bind Mount پایدار در `/srv/accounting-bot` ارائه شد؛ `fstab` با Backup نصب و با صفر خطای Parse/Filesystem راستی‌آزمایی شد.
 - ✅ مخزن عمومی به‌صورت کنترل‌شده و بدون نیاز به Credential در `/srv/accounting-bot/workspace` Clone شد؛ `main`، `origin/main` و Commit عمومی ادغام‌شده `24da1133ceafb27e58e0cb9f2ff422071e043d0b` برابر و Worktree پاک بودند.
 - ✅ محدودیت Branch Protection مخزن Private با انتقال مرجع عملیاتی به مخزن Public رفع شد؛ حفاظت فنی `main` عمومی فعال و O-67 بسته است و خرید GitHub Pro لازم نیست.
-- ✅ نصب Global مستقل با Backup حفظ و به Symlink مدیریت‌شده نسخه Project Scope مخزن عملیاتی تبدیل شد؛ Validator قالب‌ها و تطبیق SHA-256 فایل اصلی Skill موفق بود. کشف واقعی `/skills` و Dry Run پس از Reload/Restart همچنان 🧪 است.
-- تصویب صریح Roadmap توسط کاربر.
+- ✅ نصب Global مستقل با Backup حفظ و به Symlink مدیریت‌شده نسخه Project Scope مخزن عملیاتی تبدیل شد؛ Validator قالب‌ها و تطبیق SHA-256 فایل اصلی Skill موفق بود و کشف واقعی `/skills` و Dry Run پیش از G0 نیز طبق شاهد ارائه‌شده توسط کاربر موفق شد.
+- 🟨 تصویب صریح Roadmap و G0 توسط کاربر هنوز انجام نشده است.
 
 معیار خروج G0: کاربر Roadmap را برای شروع کدنویسی تأیید کند.
 
@@ -1450,7 +1451,7 @@
 - **وضعیت:** ✅ بسته؛ محل قابل‌استفاده برای Antigravity تعیین و نصب اولیه انجام شد.
 - **موضوع:** Skill به‌صورت Global یا Project Scope نصب و چگونه الزام‌آور شود.
 - **تصمیم:** نسخه Project Scope در `.agents/skills/accounting-bot-implementer/` مخزن عملیاتی منبع یگانه است و مسیر Global رسمی Antigravity یعنی `/root/.gemini/config/skills/accounting-bot-implementer/` با Symlink مدیریت‌شده همان منبع را ارائه می‌کند، نه نسخه مستقل قابل‌ویرایش. هر Work Package نیز نام Skill را صریحاً در Prompt ذکر می‌کند.
-- **شاهد نصب:** در 2026-08-30 مسیر Global به نسخه Project Scope داخل `/srv/accounting-bot/workspace/.agents/skills/accounting-bot-implementer/` پیوند داده شد؛ فایل اصلی Skill در هر دو مسیر SHA-256 یکسان دارد و Validator قالب‌ها Exit Code صفر داد. مشاهده در `/skills` و Dry Run پس از Reload/Restart همچنان شاهد 🧪 معیار G0 است.
+- **شاهد نصب:** در 2026-08-30 مسیر Global به نسخه Project Scope داخل `/srv/accounting-bot/workspace/.agents/skills/accounting-bot-implementer/` پیوند داده شد؛ فایل اصلی Skill در هر دو مسیر SHA-256 یکسان دارد و Validator قالب‌ها Exit Code صفر داد. سپس خروجی نشست واقعی ارائه‌شده توسط کاربر، کشف Skill در `/skills` و رفتار صحیح Dry Run پیش از G0 را اثبات کرد.
 - **دلیل:** مسیر Global برای کشف Antigravity حفظ شده ولی محتوای آن مستقیماً از مخزن عملیاتی می‌آید؛ بنابراین نسخه مستقل قابل‌ویرایش و Drift وجود ندارد.
 - **تاریخ تصمیم:** 2026-08-28.
 
@@ -1542,6 +1543,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.30 | 2026-08-30 | ثبت شاهد واقعی `/skills` و Dry Run ارائه‌شده توسط کاربر: کشف Skill پروژه‌ای، تشخیص تصویب‌نشدن G0، رد کدنویسی و حفاظت صحیح Roadmap/Excel/داده/`main`/Production؛ تغییر فاز صفر به «آماده تصویب» بدون بستن G0؛ تفکیک شاهد موفق پیش از G0 از آزمون Handoff کامل که در نخستین Work Package پس از G0 انجام می‌شود |
 | 0.29 | 2026-08-30 | ثبت اصلاح کاربر مبنی بر وجود فقط یک Volume متصل و تکمیل شاهد فاز صفر: ساخت دایرکتوری مستقل و Bind Mount پایدار `/srv/accounting-bot` بدون Format یا دست‌زدن به داده موجود؛ Clone عمومی و بدون Credential در `workspace` و تطبیق Commit/Worktree؛ تبدیل نصب Global مستقل Skill به Symlink مدیریت‌شده Project Scope همراه Backup، Hash و Validator موفق؛ باقی‌ماندن فقط `/skills` و Dry Run واقعی به‌صورت 🧪 و عدم تغییر G0 |
 | 0.28 | 2026-08-29 | اجرای تصمیم جدید کاربر برای حذف نیاز به GitHub Pro: ارتقای مخزن پاک `accounting-bot-public` به منبع عملیاتی و مرجع یگانه Roadmap/Skill؛ نگهداری مخزن Private صرفاً به‌عنوان آرشیو بدون انتقال تاریخچه یا Clone سرور؛ بستن O-67 با حفاظت فنی موجود Public؛ تقویت منع Commit داده/Secret/Host واقعی و به‌روزرسانی فاز صفر و ریسک‌ها |
 | 0.27 | 2026-08-29 | اجرای انتخاب کاربر برای مخزن عمومی جدا: ساخت `accounting-bot-public` از Snapshot پاک با یک Root Commit و بدون تاریخ Private؛ حذف IP/شناسه‌های عملیاتی و استفاده از `SYNC_SERVER_HOST` در `.env` غیرقابل‌Commit؛ موفقیت Secret/Data/History Scan؛ Push عمومی و حفاظت `main` با PR اجباری، Enforce Admin و منع Force Push/Deletion؛ حفظ مخزن عملیاتی Private و بازماندن O-67 فقط برای حفاظت همان مخزن |
