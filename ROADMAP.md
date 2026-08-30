@@ -2,9 +2,9 @@
 
 > وضعیت سند: پیش‌نویس زنده برای بازبینی و تصویب
 >
-> نسخه: 0.28
+> نسخه: 0.29
 >
-> آخرین به‌روزرسانی: 2026-08-29
+> آخرین به‌روزرسانی: 2026-08-30
 >
 > قاعده حاکم: تا پیش از تأیید صریح این Roadmap، وارد مرحله کدنویسی محصول نهایی نمی‌شویم. نمونه اولیه انتقال چهار شیت به SQLite از قبل انجام شده است.
 >
@@ -85,11 +85,11 @@
 
 ### 3.3 Skill اجرایی Google Antigravity
 
-- ✅ نسخه منبع Skill اختصاصی `accounting-bot-implementer` طبق قالب رسمی Agent Skills در `.agents/skills/accounting-bot-implementer/` ساخته شد و برای نصب Project Scope نهایی آماده است.
+- ✅ نسخه منبع Skill اختصاصی `accounting-bot-implementer` طبق قالب رسمی Agent Skills در `.agents/skills/accounting-bot-implementer/` ساخته و به‌عنوان نصب Project Scope نهایی روی Workspace سرور مستقر شد.
 - ✅ Skill، Roadmap را منبع یگانه می‌خواند، G0 و وضعیت‌ها را اعمال می‌کند، Antigravity را صرفاً مجری نگه می‌دارد، دارایی‌های محافظت‌شده را منع و Handoff/ADR شاهددار را اجباری می‌کند.
 - ✅ قالب‌های `handoff.md`، `acceptance-matrix.md`، `test-results.txt` و ADR به‌همراه Validator بدون وابستگی خارجی ساخته و Validator روی Templateها و Fixture تکمیل‌شده با Exit Code صفر آزموده شد.
-- ✅ چون Workspace عملیاتی حسابداری هنوز روی سرور ایجاد نشده است، Skill موقتاً در مسیر Global قابل‌کشف Antigravity یعنی `/root/.gemini/config/skills/accounting-bot-implementer/` روی سرور نصب شد؛ هر شش فایل با SHA-256 نسخه منبع تطبیق و Validator همان نسخه روی سرور با Exit Code صفر اجرا شد.
-- ✅ پس از ایجاد Baseline مخزن عمومی عملیاتی، `.agents/skills/accounting-bot-implementer/` همان مخزن منبع یگانه خواهد بود؛ نصب Global باید از همان منبع به‌صورت کپی استقرار فقط‌خواندنی یا پیوند مدیریت‌شده به‌روزرسانی شود و نسخه مستقل قابل‌ویرایش باقی نماند.
+- ✅ پیش از ایجاد Workspace، Skill موقتاً در مسیر Global قابل‌کشف Antigravity نصب شده بود؛ پس از Clone مخزن، آن نسخه با Backup حفظ و مسیر Global به نسخه Project Scope پیوند مدیریت‌شده شد.
+- ✅ `.agents/skills/accounting-bot-implementer/` در مخزن عمومی عملیاتی منبع یگانه است و نصب Global مستقیماً همان منبع را ارائه می‌کند؛ نسخه مستقل قابل‌ویرایش باقی نمانده است.
 - 🧪 کشف Skill در نشست واقعی Antigravity و رفتار آن در سناریوهای قبل از G0، Scope مجاز، Roadmap 🟨/🟦 و دارایی محافظت‌شده هنوز باید پس از Reload/Restart با `/skills` و Dry Run اثبات شود.
 
 ## 4. مدل مفهومی داده
@@ -736,7 +736,7 @@
 - 🧪 تغییر مؤثر بر قواعد مالی، امنیت، هزینه، سرویس بیرونی، داده واقعی، رفتار قابل‌مشاهده یا Acceptance Criteria بدون ADR و تأیید کاربر اجرا نشود؛ انتخاب فنی برگشت‌پذیر نیز ADR و بازبینی Codex داشته باشد.
 - 🧪 هیچ Agentی بدون اجازه صریح فایل Excel مرجع، شماره/داده واقعی، Telegram تولید، سرور/DNS تولید، Secret، Migration مخرب یا وضعیت‌های Roadmap را تغییر ندهد.
 - ✅ مخزن عمومی مستقل با یک Root Commit تازه ساخته و کل تاریخ آن پیش از انتشار Scan شد؛ Excel، SQLite، داده/شماره واقعی، Credential، IP/شناسه مخزن خصوصی و Artifact داخلی در آن وجود ندارند و مقادیر استقرار فقط با Placeholder محیطی نمایش داده می‌شوند.
-- 🧪 Antigravity پس از Reload/Restart، نصب Global فعلی و سپس نسخه Project Scope مخزن عملیاتی از Skill `accounting-bot-implementer` را در `/skills` کشف کند؛ Dry Run ثابت کند پیش از G0 کدنویسی را رد، روی 🟨 و 🟦 اثرگذار متوقف، Roadmap/Excel/داده واقعی/Production را محافظت و پس از یک بسته آزمایشی Handoff معتبر تولید می‌کند و برای بازبینی Codex می‌ایستد.
+- 🧪 Antigravity پس از Reload/Restart، نسخه Project Scope مخزن عملیاتی را از طریق Symlink مسیر Global در `/skills` کشف کند؛ Dry Run ثابت کند پیش از G0 کدنویسی را رد، روی 🟨 و 🟦 اثرگذار متوقف، Roadmap/Excel/داده واقعی/Production را محافظت و پس از یک بسته آزمایشی Handoff معتبر تولید می‌کند و برای بازبینی Codex می‌ایستد.
 - 🧪 `uv.lock` نصب تکرارپذیر Agent و Server را روی محیط‌های هدف بدهد و CI در صورت Lockfile ناسازگار، Ruff، mypy یا آزمون ناموفق شکست بخورد.
 - 🧪 Docker Compose آزمایشی شامل Caddy، API/Webhook، Worker و PostgreSQL با Healthcheck، Restart و Migration کنترل‌شده بالا بیاید و بازیابی پس از Restart میزبان را بدون از دست‌رفتن Job اثبات کند.
 
@@ -761,9 +761,10 @@
 - ✅ Baseline محلی پاک روی شاخه `main` با `.gitignore`/`.gitattributes`، Roadmap، پنج ADR، README و Skill اجرایی ساخته شد؛ SQLite واقعی، Excel، PDF، داده/Secret، پوشه کار و Prototypeهای پیش از G0 خارج از Commit ماندند و اسکن الگوی Secret/شماره موبایل و `git diff --check` موفق بود.
 - ✅ مخزن Private پیشین برای Baseline اولیه ساخته شد؛ پس از تصمیم جدید کاربر، آن مخزن فقط آرشیو تاریخچه پیشین است و منبع عملیاتی یا مقصد تغییرات تازه نیست.
 - ✅ مخزن پاک و عمومی `mohsenbarari/accounting-bot-public` با تاریخچه مستقل منتشر و سپس به‌عنوان منبع عملیاتی و مرجع یگانه Roadmap/Skill انتخاب شد؛ `main` آن Require Pull Request و Enforce for administrators دارد و Force Push/Deletion ممنوع است.
-- 🧪 Clone کنترل‌شده روی سرور، جایگزینی نصب Global با استقرار مدیریت‌شده منبع Project Scope و Forward Test واقعی Antigravity هنوز انجام نشده‌اند.
+- ✅ روی تنها Volume متصل سرور یک دایرکتوری مستقل بدون Format یا تغییر داده موجود ایجاد و با Bind Mount پایدار در `/srv/accounting-bot` ارائه شد؛ `fstab` با Backup نصب و با صفر خطای Parse/Filesystem راستی‌آزمایی شد.
+- ✅ مخزن عمومی به‌صورت کنترل‌شده و بدون نیاز به Credential در `/srv/accounting-bot/workspace` Clone شد؛ `main`، `origin/main` و Commit عمومی ادغام‌شده `24da1133ceafb27e58e0cb9f2ff422071e043d0b` برابر و Worktree پاک بودند.
 - ✅ محدودیت Branch Protection مخزن Private با انتقال مرجع عملیاتی به مخزن Public رفع شد؛ حفاظت فنی `main` عمومی فعال و O-67 بسته است و خرید GitHub Pro لازم نیست.
-- ✅ ساخت Skill Antigravity، قالب‌های ADR/Handoff و Validator و نصب Global موقت روی سرور با تطبیق SHA-256 انجام شد؛ کشف واقعی `/skills` و Dry Run و انتقال منبع یگانه به مخزن عملیاتی همچنان 🧪 است.
+- ✅ نصب Global مستقل با Backup حفظ و به Symlink مدیریت‌شده نسخه Project Scope مخزن عملیاتی تبدیل شد؛ Validator قالب‌ها و تطبیق SHA-256 فایل اصلی Skill موفق بود. کشف واقعی `/skills` و Dry Run پس از Reload/Restart همچنان 🧪 است.
 - تصویب صریح Roadmap توسط کاربر.
 
 معیار خروج G0: کاربر Roadmap را برای شروع کدنویسی تأیید کند.
@@ -1448,9 +1449,9 @@
 
 - **وضعیت:** ✅ بسته؛ محل قابل‌استفاده برای Antigravity تعیین و نصب اولیه انجام شد.
 - **موضوع:** Skill به‌صورت Global یا Project Scope نصب و چگونه الزام‌آور شود.
-- **تصمیم:** تا زمانی که Workspace حسابداری روی سرور ساخته نشده، Skill در مسیر Global رسمی Antigravity یعنی `/root/.gemini/config/skills/accounting-bot-implementer/` نصب می‌شود تا قابل‌استفاده باشد. پس از Baseline، نسخه Project Scope در `.agents/skills/accounting-bot-implementer/` مخزن عملیاتی منبع یگانه است و Global فقط استقرار مدیریت‌شده همان منبع خواهد بود، نه نسخه مستقل قابل‌ویرایش. هر Work Package نیز نام Skill را صریحاً در Prompt ذکر می‌کند.
-- **شاهد نصب:** شش فایل منبع و سرور SHA-256 یکسان دارند و Validator سرور Exit Code صفر داده است؛ مشاهده در `/skills` و Dry Run پس از Reload/Restart همچنان شاهد 🧪 معیار G0 است.
-- **دلیل:** نصب Global اکنون برای Antigravity قابل کشف است و انتقال منبع یگانه به مخزن عملیاتی بعدی از Drift جلوگیری می‌کند.
+- **تصمیم:** نسخه Project Scope در `.agents/skills/accounting-bot-implementer/` مخزن عملیاتی منبع یگانه است و مسیر Global رسمی Antigravity یعنی `/root/.gemini/config/skills/accounting-bot-implementer/` با Symlink مدیریت‌شده همان منبع را ارائه می‌کند، نه نسخه مستقل قابل‌ویرایش. هر Work Package نیز نام Skill را صریحاً در Prompt ذکر می‌کند.
+- **شاهد نصب:** در 2026-08-30 مسیر Global به نسخه Project Scope داخل `/srv/accounting-bot/workspace/.agents/skills/accounting-bot-implementer/` پیوند داده شد؛ فایل اصلی Skill در هر دو مسیر SHA-256 یکسان دارد و Validator قالب‌ها Exit Code صفر داد. مشاهده در `/skills` و Dry Run پس از Reload/Restart همچنان شاهد 🧪 معیار G0 است.
+- **دلیل:** مسیر Global برای کشف Antigravity حفظ شده ولی محتوای آن مستقیماً از مخزن عملیاتی می‌آید؛ بنابراین نسخه مستقل قابل‌ویرایش و Drift وجود ندارد.
 - **تاریخ تصمیم:** 2026-08-28.
 
 ### O-66 — منبع یگانه Roadmap و Skill میان سیستم محلی و سرور
@@ -1460,7 +1461,7 @@
 - **تصمیم:** مخزن Public عملیاتی Git یعنی `mohsenbarari/accounting-bot-public` منبع یگانه و Versioned برای `ROADMAP.md` و `.agents/skills/` است؛ سرور و سیستم محلی Clone/Worktree همان مخزن هستند. مخزن Private قبلی آرشیو فقط‌خواندنی است و نسخه موازیِ قابل‌ویرایش محسوب نمی‌شود.
 - **دلیل:** Antigravity و Codex باید دقیقاً یک Roadmap و Skill را بخوانند؛ کپی دستی دوطرفه دیر یا زود باعث Drift و اجرای قاعده قدیمی می‌شود.
 - **مرز اختیار:** تغییر سرور، Volume، DNS، Secret، داده واقعی و Merge همچنان فقط در حدود اجازه صریح مربوط انجام می‌شود.
-- **شاهد اجرا:** مخزن عمومی پاک و شاخه محافظت‌شده آن موجود است؛ همگام‌سازی نسخه 0.28، تغییر Remote محلی، Clone سرور و انتقال نصب Global باید به‌عنوان شاهدهای همین تصمیم تکمیل شوند.
+- **شاهد اجرا:** Remote اصلی سیستم محلی به مخزن Public تغییر کرد؛ مخزن Private پیشین Archived است. Clone کنترل‌شده Public روی Volume سرور انجام، Commit با `origin/main` تطبیق و نصب Global به نسخه Project Scope همان Clone پیوند داده شد. فقط Forward Test واقعی Antigravity باقی مانده است.
 - **تاریخ تصمیم:** 2026-08-29؛ جایگزین انتخاب Private در 2026-08-28.
 
 ### O-67 — حفاظت فنی شاخه `main` در GitHub Free
@@ -1541,6 +1542,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.29 | 2026-08-30 | ثبت اصلاح کاربر مبنی بر وجود فقط یک Volume متصل و تکمیل شاهد فاز صفر: ساخت دایرکتوری مستقل و Bind Mount پایدار `/srv/accounting-bot` بدون Format یا دست‌زدن به داده موجود؛ Clone عمومی و بدون Credential در `workspace` و تطبیق Commit/Worktree؛ تبدیل نصب Global مستقل Skill به Symlink مدیریت‌شده Project Scope همراه Backup، Hash و Validator موفق؛ باقی‌ماندن فقط `/skills` و Dry Run واقعی به‌صورت 🧪 و عدم تغییر G0 |
 | 0.28 | 2026-08-29 | اجرای تصمیم جدید کاربر برای حذف نیاز به GitHub Pro: ارتقای مخزن پاک `accounting-bot-public` به منبع عملیاتی و مرجع یگانه Roadmap/Skill؛ نگهداری مخزن Private صرفاً به‌عنوان آرشیو بدون انتقال تاریخچه یا Clone سرور؛ بستن O-67 با حفاظت فنی موجود Public؛ تقویت منع Commit داده/Secret/Host واقعی و به‌روزرسانی فاز صفر و ریسک‌ها |
 | 0.27 | 2026-08-29 | اجرای انتخاب کاربر برای مخزن عمومی جدا: ساخت `accounting-bot-public` از Snapshot پاک با یک Root Commit و بدون تاریخ Private؛ حذف IP/شناسه‌های عملیاتی و استفاده از `SYNC_SERVER_HOST` در `.env` غیرقابل‌Commit؛ موفقیت Secret/Data/History Scan؛ Push عمومی و حفاظت `main` با PR اجباری، Enforce Admin و منع Force Push/Deletion؛ حفظ مخزن عملیاتی Private و بازماندن O-67 فقط برای حفاظت همان مخزن |
 | 0.26 | 2026-08-29 | احراز مجدد GitHub CLI برای حساب `mohsenbarari`، ساخت مخزن عملیاتی Private، ثبت `origin` و Push/تطبیق Baseline روی `main`؛ تفکیک Clone و Forward Test باقی‌مانده؛ ثبت مانع 403 حفاظت شاخه Private روی GitHub Free و افزودن O-67 برای انتخاب ارتقا به Pro یا پذیرش موقت کنترل فرایندی، بدون عمومی‌کردن مخزن یا تغییر Billing |
