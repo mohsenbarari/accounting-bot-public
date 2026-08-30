@@ -7,6 +7,7 @@
 - Branch/worktree: antigravity/phase-01-canonical-source-hashing
 - Commit(s):
   - `4a31183` (feat(contracts): implement canonical Jalali date parsing and deterministic hashing)
+  - `a7afb92` (fix(contracts): address Codex review feedback for WP-03)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
