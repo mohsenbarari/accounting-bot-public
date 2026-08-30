@@ -5,7 +5,7 @@
 - Phase: 1 — source and data-model foundation
 - Work Package: WP-02: Raw input contract registry
 - Branch/worktree: antigravity/phase-01-raw-input-contracts
-- Commit(s): 2da2b61
+- Commit(s): f03c90f (implementation), e208819 (handoff documentation)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
