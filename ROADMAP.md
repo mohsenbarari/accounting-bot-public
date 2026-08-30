@@ -1,8 +1,8 @@
 # نقشه راه سامانه گزارش حسابداری تلگرام
 
-> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 و WP-02 در 2026-08-30 توسط Codex مدیر پروژه پذیرفته شدند و G1 باز است
+> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 و WP-02 پذیرفته شده‌اند، WP-03 صادر شده و G1 باز است
 >
-> نسخه: 0.33
+> نسخه: 0.34
 >
 > آخرین به‌روزرسانی: 2026-08-30
 >
@@ -569,7 +569,7 @@
 
 > وضعیت این زیربخش: ✅ معماری و خانواده فناوری‌های O-52 تا O-56 تأیید شده‌اند. نسخه دقیق بسته‌ها هنگام ساخت Baseline فنی در `uv.lock` قفل می‌شود؛ Spikeها و آزمون‌های ذکرشده همچنان شرط عبور Gate مربوط هستند.
 
-- ✅ تصمیم‌ها و برنامه شواهد در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). این اسناد تصمیم تازه‌ای فراتر از O-52 تا O-56 ایجاد نمی‌کنند و اجرای آنها همچنان منوط به G0 و Gateهای شاهددار است.
+- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد فنی Canonical و Hash منبع O-68 نیز در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md) ثبت شده است؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
 
 - ✅ ساختار کلان: Monorepo با Modular Monolith برای بخش سرور و یک Agent مستقل ویندوز. هسته Domain و قواعد حسابداری Python خالص و مستقل از FastAPI، Telegram و دیتابیس می‌ماند؛ API/Webhook و Workerها Processهای جدا ولی مصرف‌کننده همان کد دامنه‌اند.
 - ✅ زبان پایه: Python 3.13 برای Agent و سرور، با `pyproject.toml` و Lockfile قطعی. یک Spike روی کپی مجاز اکسل باید پیش از G1 سازگاری COM، بسته‌بندی و نسخه Python را اثبات کند.
@@ -774,6 +774,7 @@
 
 - ✅ WP-01 اسکلت Monorepo مصوب، Python 3.13، `uv`/Lockfile، مرز خودکار Domain، کنترل‌های Ruff/mypy/pytest و CI دو سکویی را ایجاد کرد؛ Codex آن را پس از Handoff، اصلاحات و Run نهایی PR #7 پذیرفت. این شاهد فقط زیرساخت G1 است و خود G1 را نمی‌بندد.
 - ✅ WP-02 قرارداد نسخه‌دار و عمیقاً تغییرناپذیر ورودی خام چهار شیت، نگاشت دقیق `Z/P/P/D`، تفکیک Literal/Formula/Cached/Derived/Unlisted، نوع‌های بدون Float و ناوردایی‌های ساختاری را با Fixture صرفاً ساختگی تثبیت کرد؛ Codex آن را پس از بازبینی مستقل، یک دور اصلاح، 36 آزمون و CI دو سکویی PR #10 پذیرفت. این شاهد مرز منبع G1 است و خود G1 را نمی‌بندد.
+- 🧪 WP-03 برای Canonicalization نسخه‌دار تاریخ/عدد، `source_hash` و `sheet_snapshot_hash` طبق O-68/ADR-0006 صادر شد؛ پذیرش آن منوط به Golden Vector، Property Test، آزمون مرز تقویم/منطقه زمانی، Handoff و CI دو سکویی است و خود G1 را نمی‌بندد.
 - تهیه نسخه پشتیبان کنترل‌شده از اکسل.
 - اجرای کنترل‌شده UUIDv7، Source/Ledger/Sheet SHA-256 و سال مالی پس از دریافت اجازه جداگانه تغییر کپی اکسل.
 - تعریف Whitelist ورودی خام چهار شیت و جداسازی Raw Immutable از Formula/Function/Query/Cached Value اکسل.
@@ -1477,6 +1478,16 @@
 - **شاهد:** Branch Protection مخزن عمومی در 2026-08-29 اعمال و راستی‌آزمایی شد. پاسخ 403 مخزن Private صرفاً سابقه علت تغییر تصمیم است و دیگر مانع عملیاتی نیست.
 - **تاریخ تصمیم:** 2026-08-29.
 
+### O-68 — قرارداد Canonical و Hash منبع
+
+- **وضعیت:** ✅ بسته؛ قرارداد فنی نسخه 1 توسط Codex مدیر پروژه تصویب و در ADR-0006 ثبت شد.
+- **موضوع:** تولید نتیجه یکسان برای تشخیص تغییر سطر/شیت روی Agent ویندوز و سرور، بدون وابستگی به ترتیب Mapping، Sort ردیف یا Serializer پلتفرم.
+- **تصمیم:** `source-hash.v1` و `sheet-snapshot-hash.v1` با SHA-256 روی UTF-8 JSON آرایه‌ای تایپ‌دار، فشرده و دارای Golden Vector ساخته می‌شوند. ترتیب فیلدهای سطر دقیقاً از `raw-source-contract.v1` و ترتیب Snapshot از UUIDv7 Canonical است؛ شناسه فنی در Source Hash نیست ولی با Hash سطر در Snapshot جفت می‌شود. Null/Text صریح، Raw Text بدون Normalize، Integer/Decimal بدون Float و تاریخ شمسی Canonical با `persiantools`/`jalali-date.v1` هستند.
+- **مرز:** `ledger_hash` تا تثبیت Financial Event/Resolver/Calculation Version در فاز 2 مؤجل است. WP-03 هیچ XLSX Parser، Schema/Revision/Void، قاعده مالی یا دسترسی Excel/داده واقعی ایجاد نمی‌کند.
+- **نسخه‌بندی:** هر تغییر مؤثر بر bytes یا معنا، نسخه تازه و Migration/Rebuild شاهددار می‌خواهد و حق بازتفسیر خاموش Hash نسخه 1 وجود ندارد.
+- **شاهد لازم:** Golden bytes/digest برای هر چهار شیت، Property Test ترتیب، اثر Insert/Edit/Delete، مرزهای Decimal/Null/Text، نوروز/کبیسه/تاریخ نامعتبر/`Asia/Tehran` و CI Windows/Linux در WP-03.
+- **تاریخ تصمیم:** 2026-08-30.
+
 ## 22. ریسک‌های اصلی
 
 | ریسک | اثر | اقدام کنترلی پیشنهادی |
@@ -1547,6 +1558,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.34 | 2026-08-30 | بستن O-68 و ثبت ADR-0006 برای Canonical UTF-8 JSON آرایه‌ای تایپ‌دار، نسخه‌های `jalali-date.v1`/`source-hash.v1`/`sheet-snapshot-hash.v1`، قواعد صریح Null/Text/Integer/Decimal/تاریخ شمسی و UUIDv7 مرتب؛ تعویق آگاهانه `ledger_hash` تا فاز 2؛ صدور WP-03 با Golden Vector، Property Test، آزمون تقویم/`Asia/Tehran` و حفاظت کامل Excel/داده واقعی، بدون بستن G1 |
 | 0.33 | 2026-08-30 | ثبت پذیرش شاهددار WP-02 توسط Codex مدیر پروژه: بازبینی مستقل و یک دور اصلاح Antigravity برای Deep Immutability، یکتایی سراسری نام فیلد و مرز واقعی `A:XFD`؛ تطبیق قرارداد دقیق چهار شیت و شناسه‌های `Z/P/P/D`، حذف Formula/Cached/Derived/Unlisted از Raw، نبود Float و حفاظت کامل Excel/داده واقعی؛ موفقیت 36 آزمون، Handoff/Acceptance Matrix/Test Results، اسکن دارایی/Secret و CI نهایی Linux/Windows در Run `33326970537`؛ ادغام PR #10 با Commit `5c99749` بدون بستن G1 |
 | 0.32 | 2026-08-30 | ثبت پذیرش شاهددار WP-01 توسط Codex مدیر پروژه: دو چرخه Review/اصلاح Antigravity، Handoff/Acceptance Matrix/Test Results معتبر، قفل `uv 0.12.7` و Sync Frozen همه Workspaceها/Groupها، مرز خودکار Domain، اسکن پاک دارایی/Secret، موفقیت 21 آزمون و CI نهایی Linux/Windows در Run `33324657599`، ادغام PR #7 با Commit `4f9ad3e`؛ تبدیل شاهد نخستین Handoff و Baseline تکرارپذیر به ✅ بدون بستن G1 |
 | 0.31 | 2026-08-30 | اجرای تصمیم تازه مالک درباره حاکمیت: Codex به‌عنوان مدیر پروژه/بازبین مسئول Roadmap، Work Package، ADR، Gate و Merge شد؛ Antigravity مجری بدون خودتأییدی ماند؛ مالک چشم‌انداز و آزمون پذیرش نهایی/اصلاحات را برعهده گرفت؛ مجوزهای ویژه Excel/داده/Secret/Production/هزینه/عملیات مخرب حفظ شدند؛ شواهد فاز صفر بررسی، G0 توسط مدیر پروژه بسته و فاز 1 مجاز شد؛ معیار G3/G7، O-46/O-47/O-49/O-50، ریسک‌ها و تعریف پایان هماهنگ شدند |
