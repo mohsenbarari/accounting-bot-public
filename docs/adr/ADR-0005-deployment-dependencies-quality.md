@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Work Package: Phase 0 — Architecture baseline
-- Decision owner: Product Owner؛ ثبت و بازبینی توسط Codex
+- Decision owner: مالک محصول برای تصمیم اصلی؛ حاکمیت اجرای فعلی با Codex مدیر پروژه طبق Roadmap 0.31
 
 ## Context
 
@@ -59,7 +59,7 @@ Option A انتخاب شده است. سرور با Docker Compose شامل Caddy
 
 ## Migration and rollback impact
 
-Imageها و Compose versioned هستند و نسخه برنامه قابل Rollback است. Migration دیتابیس پیش‌فرض Additive و Backward-compatible است؛ هر Migration مخرب به Backup، Rehearsal، Rollback plan و تأیید صریح کاربر نیاز دارد. Rollback نباید Job یا تاریخچه مالی/ممیزی را حذف کند.
+Imageها و Compose versioned هستند و نسخه برنامه قابل Rollback است. Migration دیتابیس پیش‌فرض Additive و Backward-compatible است؛ هر Migration مخرب به Backup، Rehearsal، Rollback plan و اختیار هدف‌دار مالک نیاز دارد. Rollback نباید Job یا تاریخچه مالی/ممیزی را حذف کند.
 
 ## Reconsideration triggers
 
@@ -69,4 +69,4 @@ Imageها و Compose versioned هستند و نسخه برنامه قابل Roll
 
 ## Approval required
 
-این تصمیم در O-56 تأیید شده است. ساخت Remote، Push، DNS، گواهی، استقرار یا تغییر سرور مجوزهای جداگانه می‌خواهند و اجرای محصول تا G0 آغاز نمی‌شود.
+این تصمیم در O-56 تأیید شده و G0 در 2026-08-30 بسته شده است. Branch، Commit، Push، PR و Merge مخزن عملیاتی طبق Work Package و تصمیم Codex مدیر پروژه انجام می‌شوند؛ DNS، گواهی، استقرار/تغییر Production، هزینه تازه یا داده واقعی اختیار هدف‌دار مالک را می‌خواهند.

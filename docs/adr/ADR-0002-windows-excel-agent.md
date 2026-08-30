@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Work Package: Phase 0 — Architecture baseline
-- Decision owner: Product Owner؛ ثبت و بازبینی توسط Codex
+- Decision owner: مالک محصول برای تصمیم اصلی؛ حاکمیت اجرای فعلی با Codex مدیر پروژه طبق Roadmap 0.31
 
 ## Context
 
@@ -74,4 +74,4 @@ Agent می‌تواند بدون تغییر Raw Excel غیرفعال شود و O
 
 ## Approval required
 
-این تصمیم قبلاً در O-53 تأیید شده است. هیچ Spike نوشتاری روی Excel، حتی کپی، تا اجازه صریح نام‌گذاری‌شده کاربر اجرا نمی‌شود و کدنویسی نهایی منوط به G0 است.
+این تصمیم قبلاً در O-53 تأیید شده و G0 در 2026-08-30 بسته شده است. هیچ Spike نوشتاری روی Excel، حتی کپی واقعی، بدون اختیار صریح و نام‌گذاری‌شده مالک اجرا نمی‌شود؛ Scope و پذیرش سایر Work Packageها با Codex مدیر پروژه است.
