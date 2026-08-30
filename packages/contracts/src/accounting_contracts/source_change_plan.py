@@ -22,6 +22,7 @@ from accounting_contracts.canonical_hashing import (
 from accounting_contracts.raw_input_contracts import (
     RAW_CONTRACT_REGISTRY,
     ContractError,
+    UnknownSheetError,
 )
 
 SOURCE_CHANGE_PLAN_VERSION: str = "source-change-plan.v1"
@@ -114,6 +115,32 @@ class ValidatedSourceRow:
     raw_values: MappingProxyType[str, Any]
     source_hash: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.stable_id, uuid.UUID) or self.stable_id.version != 7:
+            msg = f"Row stable_id must be UUIDv7, got {self.stable_id!r}"
+            raise InvalidIdentityError(msg)
+        if self.canonical_uuid != str(self.stable_id).lower():
+            msg = (
+                f"canonical_uuid '{self.canonical_uuid}' does not match "
+                f"stable_id '{self.stable_id}'"
+            )
+            raise InvalidIdentityError(msg)
+        if self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets:
+            msg = f"Unknown sheet '{self.sheet_name}' in ValidatedSourceRow"
+            raise UnknownSheetError(msg)
+        if not isinstance(self.raw_values, (Mapping, MappingProxyType)):
+            msg = f"raw_values must be a Mapping, got {type(self.raw_values).__name__}"
+            raise InvalidIdentityError(msg)
+        recomputed_hash = compute_source_hash(
+            self.sheet_name, self.raw_values
+        ).source_hash
+        if self.source_hash != recomputed_hash:
+            msg = (
+                f"Forged/mismatched source_hash '{self.source_hash}' "
+                f"(expected '{recomputed_hash}')"
+            )
+            raise InvalidIdentityError(msg)
+
 
 @dataclass(frozen=True, slots=True)
 class ValidatedSourceSheetSnapshot:
@@ -124,6 +151,37 @@ class ValidatedSourceSheetSnapshot:
     row_count: int
     sheet_snapshot_hash: str
 
+    def __post_init__(self) -> None:
+        if self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets:
+            msg = f"Unknown sheet '{self.sheet_name}' in ValidatedSourceSheetSnapshot"
+            raise UnknownSheetError(msg)
+        if not isinstance(self.rows, tuple):
+            msg = f"rows must be a tuple, got {type(self.rows).__name__}"
+            raise InvalidIdentityError(msg)
+        for r in self.rows:
+            if not isinstance(r, ValidatedSourceRow) or r.sheet_name != self.sheet_name:
+                msg = f"Invalid row {r!r} in sheet snapshot '{self.sheet_name}'"
+                raise InvalidIdentityError(msg)
+        sorted_bytes = [r.stable_id.bytes for r in self.rows]
+        if sorted_bytes != sorted(sorted_bytes):
+            msg = f"Rows in sheet '{self.sheet_name}' are not sorted by UUID bytes"
+            raise InvalidIdentityError(msg)
+        if self.row_count != len(self.rows):
+            msg = (
+                f"row_count {self.row_count} does not match len(rows) {len(self.rows)}"
+            )
+            raise InvalidIdentityError(msg)
+        pairs = [(r.canonical_uuid, r.source_hash) for r in self.rows]
+        recomputed_hash = compute_sheet_snapshot_hash(
+            self.sheet_name, pairs
+        ).snapshot_hash
+        if self.sheet_snapshot_hash != recomputed_hash:
+            msg = (
+                f"Forged/mismatched sheet_snapshot_hash '{self.sheet_snapshot_hash}' "
+                f"(expected '{recomputed_hash}')"
+            )
+            raise InvalidIdentityError(msg)
+
 
 @dataclass(frozen=True, slots=True)
 class ValidatedSourceWorkbookSnapshot:
@@ -132,6 +190,52 @@ class ValidatedSourceWorkbookSnapshot:
     sheets: MappingProxyType[str, ValidatedSourceSheetSnapshot]
     total_row_count: int
     all_rows_by_id: MappingProxyType[uuid.UUID, ValidatedSourceRow]
+
+    def __post_init__(self) -> None:
+        approved_sheets = tuple(RAW_CONTRACT_REGISTRY.sheets.keys())
+        if not isinstance(self.sheets, (Mapping, MappingProxyType)):
+            msg = f"sheets must be a Mapping, got {type(self.sheets).__name__}"
+            raise IncompleteSnapshotError(msg)
+        if tuple(self.sheets.keys()) != approved_sheets:
+            msg = (
+                "Workbook snapshot must contain exactly all 4 approved sheets "
+                f"in order: {approved_sheets}, got {tuple(self.sheets.keys())}"
+            )
+            raise IncompleteSnapshotError(msg)
+        seen_uuids: set[uuid.UUID] = set()
+        expected_total = 0
+        for sheet_name, s_snap in self.sheets.items():
+            if (
+                not isinstance(s_snap, ValidatedSourceSheetSnapshot)
+                or s_snap.sheet_name != sheet_name
+            ):
+                msg = f"Invalid sheet snapshot for '{sheet_name}'"
+                raise IncompleteSnapshotError(msg)
+            expected_total += s_snap.row_count
+            for r in s_snap.rows:
+                if r.stable_id in seen_uuids:
+                    msg = f"Duplicate UUIDv7 '{r.stable_id}' across workbook snapshot"
+                    raise DuplicateIdentityError(msg)
+                seen_uuids.add(r.stable_id)
+
+        if self.total_row_count != expected_total:
+            msg = (
+                f"total_row_count {self.total_row_count} does not match "
+                f"expected sum {expected_total}"
+            )
+            raise IncompleteSnapshotError(msg)
+
+        if not isinstance(self.all_rows_by_id, (Mapping, MappingProxyType)):
+            msg = "all_rows_by_id must be a Mapping"
+            raise IncompleteSnapshotError(msg)
+        if set(self.all_rows_by_id.keys()) != seen_uuids:
+            msg = "all_rows_by_id keys do not match workbook rows"
+            raise IncompleteSnapshotError(msg)
+        if list(self.all_rows_by_id.keys()) != sorted(
+            seen_uuids, key=lambda u: u.bytes
+        ):
+            msg = "all_rows_by_id is not sorted by UUID bytes"
+            raise IncompleteSnapshotError(msg)
 
 
 def build_source_workbook_snapshot(
@@ -148,6 +252,7 @@ def build_source_workbook_snapshot(
     Requires every sheet in RAW_CONTRACT_REGISTRY exactly once.
     Recalculates all source hashes and sheet snapshot hashes deterministically.
     Enforces global UUID uniqueness across all four sheets.
+    Sorts rows inside each sheet and all_rows_by_id by UUID bytes.
     """
     approved_sheets = tuple(RAW_CONTRACT_REGISTRY.sheets.keys())
     expected_sheets_set = set(approved_sheets)
@@ -245,6 +350,9 @@ def build_source_workbook_snapshot(
             validated_rows_list.append(v_row)
             all_rows_map[parsed_uuid] = v_row
 
+        # Sort rows deterministically by UUID bytes
+        validated_rows_list.sort(key=lambda r: r.stable_id.bytes)
+
         # Compute sheet snapshot hash via WP-03 canonical hashing
         snapshot_pairs = [
             (r.canonical_uuid, r.source_hash) for r in validated_rows_list
@@ -260,10 +368,15 @@ def build_source_workbook_snapshot(
         validated_sheets_map[sheet_name] = sheet_snapshot
         total_rows += len(validated_rows_list)
 
+    # Sort all_rows_map by UUID bytes
+    sorted_all_rows_map = {
+        k: all_rows_map[k] for k in sorted(all_rows_map.keys(), key=lambda u: u.bytes)
+    }
+
     return ValidatedSourceWorkbookSnapshot(
         sheets=MappingProxyType(validated_sheets_map),
         total_row_count=total_rows,
-        all_rows_by_id=MappingProxyType(all_rows_map),
+        all_rows_by_id=MappingProxyType(sorted_all_rows_map),
     )
 
 
@@ -278,12 +391,64 @@ class PriorIdentityState:
     lifecycle: IdentityLifecycle
     source_hash: str | None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.stable_id, uuid.UUID) or self.stable_id.version != 7:
+            msg = f"stable_id must be UUIDv7, got {self.stable_id!r}"
+            raise InvalidPriorStateError(msg)
+        if self.canonical_uuid != str(self.stable_id).lower():
+            msg = (
+                f"canonical_uuid '{self.canonical_uuid}' does not match "
+                f"stable_id '{self.stable_id}'"
+            )
+            raise InvalidPriorStateError(msg)
+        if self.home_sheet not in RAW_CONTRACT_REGISTRY.sheets:
+            msg = f"Unknown home_sheet '{self.home_sheet}' in PriorIdentityState"
+            raise InvalidPriorStateError(msg)
+        if (
+            isinstance(self.latest_revision, bool)
+            or not isinstance(self.latest_revision, int)
+            or self.latest_revision < 1
+        ):
+            msg = (
+                "latest_revision must be a positive integer, got "
+                f"{self.latest_revision!r}"
+            )
+            raise InvalidPriorStateError(msg)
+        if not isinstance(self.lifecycle, IdentityLifecycle):
+            msg = f"lifecycle must be an IdentityLifecycle enum, got {self.lifecycle!r}"
+            raise InvalidPriorStateError(msg)
+        if self.lifecycle == IdentityLifecycle.ACTIVE:
+            if not isinstance(self.source_hash, str) or not HEX_DIGEST_64_REGEX.match(
+                self.source_hash
+            ):
+                msg = (
+                    "Active prior identity requires 64-hex lowercase "
+                    f"source_hash, got {self.source_hash!r}"
+                )
+                raise InvalidPriorStateError(msg)
+        else:
+            if self.source_hash is not None:
+                msg = (
+                    "Voided prior identity must have source_hash=None, "
+                    f"got {self.source_hash!r}"
+                )
+                raise InvalidPriorStateError(msg)
+
 
 @dataclass(frozen=True, slots=True)
 class PriorIdentityRegistry:
     """Immutable registry of all known prior identities."""
 
     identities: MappingProxyType[uuid.UUID, PriorIdentityState]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identities, (Mapping, MappingProxyType)):
+            msg = f"identities must be a Mapping, got {type(self.identities).__name__}"
+            raise InvalidPriorStateError(msg)
+        for k, v in self.identities.items():
+            if not isinstance(v, PriorIdentityState) or k != v.stable_id:
+                msg = f"Invalid entry in PriorIdentityRegistry: {k!r} -> {v!r}"
+                raise InvalidPriorStateError(msg)
 
 
 def build_prior_identity_registry(

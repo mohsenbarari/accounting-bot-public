@@ -14,14 +14,21 @@ from __future__ import annotations
 import random
 import time
 import uuid
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 import pytest
+from accounting_contracts.canonical_hashing import (
+    compute_sheet_snapshot_hash,
+    compute_source_hash,
+)
 from accounting_contracts.raw_input_contracts import (
     RAW_CONTRACT_REGISTRY,
 )
 from accounting_contracts.source_change_plan import (
     SOURCE_CHANGE_PLAN_VERSION,
+    DeterministicSourceChangePlan,
     DuplicateIdentityError,
     IdentityLifecycle,
     IdentityRelocationError,
@@ -29,10 +36,12 @@ from accounting_contracts.source_change_plan import (
     InvalidIdentityError,
     InvalidPriorStateError,
     PlanAction,
+    PriorIdentityRegistry,
     PriorIdentityState,
-    SourceChangePlanError,
     SourceRowInput,
     SourceSheetInput,
+    ValidatedSourceRow,
+    ValidatedSourceSheetSnapshot,
     ValidatedSourceWorkbookSnapshot,
     build_prior_identity_registry,
     build_source_workbook_snapshot,
@@ -128,7 +137,6 @@ def test_public_version_constant() -> None:
 
 def test_full_snapshot_all_four_sheets_required() -> None:
     """Verify omitting any of four sheets raises IncompleteSnapshotError."""
-    # Only 3 sheets provided
     sheets_missing_one = [
         SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
         SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[]),
@@ -179,7 +187,134 @@ def test_full_snapshot_empty_workbook_and_empty_sheet_accepted() -> None:
         assert len(snap.sheets[sheet_name].rows) == 0
 
 
-# --- 3. Row Validation, Hashes and Global UUID Invariants ---
+# --- 3. Negative Invariant Tests for Forged/Tampered Objects ---
+
+
+def test_forged_snapshot_cannot_bypass_or_authorize_voids() -> None:
+    """Verify forged snapshot objects fail invariant checks and cannot plan changes."""
+    id1 = _make_uuid7(b"0000000000000001")
+    row_vals = _sample_buy_sell_row()
+    valid_hash = compute_source_hash("خرید-فروش", row_vals).source_hash
+
+    valid_row = ValidatedSourceRow(
+        stable_id=id1,
+        canonical_uuid=str(id1).lower(),
+        sheet_name="خرید-فروش",
+        raw_values=MappingProxyType(row_vals),
+        source_hash=valid_hash,
+    )
+
+    valid_sheet = ValidatedSourceSheetSnapshot(
+        sheet_name="خرید-فروش",
+        rows=(valid_row,),
+        row_count=1,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash(
+            "خرید-فروش", [(str(id1).lower(), valid_hash)]
+        ).snapshot_hash,
+    )
+
+    # 1. Forged snapshot with only 1 sheet (omitting 3 sheets)
+    with pytest.raises(IncompleteSnapshotError) as exc:
+        ValidatedSourceWorkbookSnapshot(
+            sheets=MappingProxyType({"خرید-فروش": valid_sheet}),
+            total_row_count=1,
+            all_rows_by_id=MappingProxyType({id1: valid_row}),
+        )
+    assert "exactly all 4 approved sheets" in str(exc.value)
+
+    # 2. Forged row with tampered source_hash
+    with pytest.raises(InvalidIdentityError):
+        ValidatedSourceRow(
+            stable_id=id1,
+            canonical_uuid=str(id1).lower(),
+            sheet_name="خرید-فروش",
+            raw_values=MappingProxyType(row_vals),
+            source_hash="0" * 64,  # forged hash!
+        )
+
+    # 3. Forged row with mismatched canonical_uuid
+    with pytest.raises(InvalidIdentityError):
+        ValidatedSourceRow(
+            stable_id=id1,
+            canonical_uuid="mismatched-uuid",
+            sheet_name="خرید-فروش",
+            raw_values=MappingProxyType(row_vals),
+            source_hash=valid_hash,
+        )
+
+    # 4. Forged sheet with tampered sheet_snapshot_hash
+    with pytest.raises(InvalidIdentityError):
+        ValidatedSourceSheetSnapshot(
+            sheet_name="خرید-فروش",
+            rows=(valid_row,),
+            row_count=1,
+            sheet_snapshot_hash="f" * 64,  # forged snapshot hash!
+        )
+
+
+def test_forged_prior_registry_invariants_rejected() -> None:
+    """Verify forged prior states with negative revision, bad hash or lifecycle fail."""
+    id1 = _make_uuid7(b"0000000000000001")
+    valid_hash = "a" * 64
+
+    # 1. Negative revision
+    with pytest.raises(InvalidPriorStateError):
+        PriorIdentityState(
+            stable_id=id1,
+            canonical_uuid=str(id1).lower(),
+            home_sheet="خرید-فروش",
+            latest_revision=-1,
+            lifecycle=IdentityLifecycle.ACTIVE,
+            source_hash=valid_hash,
+        )
+
+    # 2. Boolean revision
+    with pytest.raises(InvalidPriorStateError):
+        PriorIdentityState(
+            stable_id=id1,
+            canonical_uuid=str(id1).lower(),
+            home_sheet="خرید-فروش",
+            latest_revision=True,
+            lifecycle=IdentityLifecycle.ACTIVE,
+            source_hash=valid_hash,
+        )
+
+    # 3. Active lifecycle with source_hash=None
+    with pytest.raises(InvalidPriorStateError):
+        PriorIdentityState(
+            stable_id=id1,
+            canonical_uuid=str(id1).lower(),
+            home_sheet="خرید-فروش",
+            latest_revision=1,
+            lifecycle=IdentityLifecycle.ACTIVE,
+            source_hash=None,
+        )
+
+    # 4. Voided lifecycle with non-None source_hash
+    with pytest.raises(InvalidPriorStateError):
+        PriorIdentityState(
+            stable_id=id1,
+            canonical_uuid=str(id1).lower(),
+            home_sheet="خرید-فروش",
+            latest_revision=1,
+            lifecycle=IdentityLifecycle.VOIDED,
+            source_hash=valid_hash,
+        )
+
+    # 5. Non-v7 UUID (v4)
+    v4_id = uuid.uuid4()
+    with pytest.raises(InvalidPriorStateError):
+        PriorIdentityState(
+            stable_id=v4_id,
+            canonical_uuid=str(v4_id).lower(),
+            home_sheet="خرید-فروش",
+            latest_revision=1,
+            lifecycle=IdentityLifecycle.ACTIVE,
+            source_hash=valid_hash,
+        )
+
+
+# --- 4. Row Validation, Hashes and Global UUID Invariants ---
 
 
 def test_global_uuid_uniqueness_across_sheets() -> None:
@@ -218,8 +353,8 @@ def test_invalid_uuid_rejected_in_row_input() -> None:
     assert "version 7" in str(exc_info.value)
 
 
-def test_row_rebuilds_source_hash_without_trusting_caller() -> None:
-    """Verify source_hash & sheet_snapshot_hash recalculated deterministically."""
+def test_row_rebuilds_source_hash_matching_wp03_directly() -> None:
+    """Verify source_hash & sheet_snapshot_hash match WP-03 calculation."""
     id1 = _make_uuid7(b"0000000000000001")
     row_vals = _sample_buy_sell_row()
 
@@ -234,116 +369,15 @@ def test_row_rebuilds_source_hash_without_trusting_caller() -> None:
     ]
     snap = build_source_workbook_snapshot(sheets)
     v_row = snap.sheets["خرید-فروش"].rows[0]
-    assert len(v_row.source_hash) == 64
-    assert len(snap.sheets["خرید-فروش"].sheet_snapshot_hash) == 64
 
+    # Direct WP-03 computation comparison
+    direct_source_hash = compute_source_hash("خرید-فروش", row_vals).source_hash
+    direct_snapshot_hash = compute_sheet_snapshot_hash(
+        "خرید-فروش", [(str(id1).lower(), direct_source_hash)]
+    ).snapshot_hash
 
-# --- 4. Prior Identity State Validation ---
-
-
-def test_prior_identity_registry_validations() -> None:
-    """Verify prior identity registry validation rules and invariants."""
-    id1 = _make_uuid7(b"0000000000000001")
-    valid_hash = "a" * 64
-
-    # 1. Valid active and voided prior state
-    id2 = _make_uuid7(b"0000000000000002")
-    prior = build_prior_identity_registry(
-        [
-            PriorIdentityState(
-                stable_id=id1,
-                canonical_uuid=str(id1).lower(),
-                home_sheet="خرید-فروش",
-                latest_revision=1,
-                lifecycle=IdentityLifecycle.ACTIVE,
-                source_hash=valid_hash,
-            ),
-            PriorIdentityState(
-                stable_id=id2,
-                canonical_uuid=str(id2).lower(),
-                home_sheet="دریافت-پرداخت",
-                latest_revision=2,
-                lifecycle=IdentityLifecycle.VOIDED,
-                source_hash=None,
-            ),
-        ]
-    )
-    assert len(prior.identities) == 2
-
-    # 2. Duplicate UUID in prior state
-    with pytest.raises(DuplicateIdentityError):
-        build_prior_identity_registry(
-            [
-                {
-                    "stable_id": id1,
-                    "home_sheet": "خرید-فروش",
-                    "latest_revision": 1,
-                    "lifecycle": "active",
-                    "source_hash": valid_hash,
-                },
-                {
-                    "stable_id": id1,
-                    "home_sheet": "خرید-فروش",
-                    "latest_revision": 2,
-                    "lifecycle": "active",
-                    "source_hash": valid_hash,
-                },
-            ]
-        )
-
-    # 3. Active identity with invalid/missing hash
-    with pytest.raises(InvalidPriorStateError):
-        build_prior_identity_registry(
-            [
-                {
-                    "stable_id": id1,
-                    "home_sheet": "خرید-فروش",
-                    "latest_revision": 1,
-                    "lifecycle": "active",
-                    "source_hash": None,
-                }
-            ]
-        )
-
-    # 4. Voided identity with active hash present
-    with pytest.raises(InvalidPriorStateError):
-        build_prior_identity_registry(
-            [
-                {
-                    "stable_id": id1,
-                    "home_sheet": "خرید-فروش",
-                    "latest_revision": 1,
-                    "lifecycle": "voided",
-                    "source_hash": valid_hash,
-                }
-            ]
-        )
-
-    # 5. Invalid revision number (zero or boolean)
-    with pytest.raises(InvalidPriorStateError):
-        build_prior_identity_registry(
-            [
-                {
-                    "stable_id": id1,
-                    "home_sheet": "خرید-فروش",
-                    "latest_revision": 0,
-                    "lifecycle": "active",
-                    "source_hash": valid_hash,
-                }
-            ]
-        )
-    with pytest.raises(InvalidPriorStateError):
-        build_prior_identity_registry(
-            [
-                {
-                    "stable_id": id1,
-                    "home_sheet": "خرید-فروش",
-                    "latest_revision": True,
-                    "lifecycle": "active",
-                    "source_hash": valid_hash,
-                }
-            ]
-        )
+    assert v_row.source_hash == direct_source_hash
+    assert snap.sheets["خرید-فروش"].sheet_snapshot_hash == direct_snapshot_hash
 
 
 # --- 5. Full ADR-0007 Transition Table Tests ---
@@ -591,8 +625,15 @@ def test_order_invariance_sheet_and_row_permutations() -> None:
         ),
     ]
 
-    plan_a = plan_source_changes(build_source_workbook_snapshot(sheets_a))
-    plan_b = plan_source_changes(build_source_workbook_snapshot(sheets_b))
+    snap_a = build_source_workbook_snapshot(sheets_a)
+    snap_b = build_source_workbook_snapshot(sheets_b)
+
+    # Observable snapshot outputs must be identical
+    assert snap_a.sheets["خرید-فروش"].rows == snap_b.sheets["خرید-فروش"].rows
+    assert snap_a.all_rows_by_id == snap_b.all_rows_by_id
+
+    plan_a = plan_source_changes(snap_a)
+    plan_b = plan_source_changes(snap_b)
 
     assert plan_a.total_counts == plan_b.total_counts
     assert len(plan_a.items) == len(plan_b.items)
@@ -603,21 +644,125 @@ def test_order_invariance_sheet_and_row_permutations() -> None:
         assert it_a.planned_revision == it_b.planned_revision
 
 
-# --- 8. Retry and Idempotency ---
+# --- 8. State Advancement and Real Retry Idempotency ---
 
 
-def test_retry_idempotency_and_state_advancement() -> None:
-    """Verify identical current/prior state emits zero active events."""
-    id1 = _make_uuid7(b"0000000000000001")
-    snap = build_source_workbook_snapshot(
+def _advance_prior_registry(
+    prior: PriorIdentityRegistry, plan: DeterministicSourceChangePlan
+) -> PriorIdentityRegistry:
+    """Helper applying a planned change to prior identity registry."""
+    updated = dict(prior.identities)
+    for item in plan.items:
+        if item.action == PlanAction.INSERT:
+            assert item.current_source_hash is not None
+            assert item.planned_revision is not None
+            updated[item.stable_id] = PriorIdentityState(
+                stable_id=item.stable_id,
+                canonical_uuid=item.canonical_uuid,
+                home_sheet=item.sheet_name,
+                latest_revision=item.planned_revision,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash=item.current_source_hash,
+            )
+        elif item.action == PlanAction.EDIT:
+            assert item.current_source_hash is not None
+            assert item.planned_revision is not None
+            updated[item.stable_id] = PriorIdentityState(
+                stable_id=item.stable_id,
+                canonical_uuid=item.canonical_uuid,
+                home_sheet=item.sheet_name,
+                latest_revision=item.planned_revision,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash=item.current_source_hash,
+            )
+        elif item.action == PlanAction.VOID:
+            assert item.planned_revision is not None
+            updated[item.stable_id] = PriorIdentityState(
+                stable_id=item.stable_id,
+                canonical_uuid=item.canonical_uuid,
+                home_sheet=item.sheet_name,
+                latest_revision=item.planned_revision,
+                lifecycle=IdentityLifecycle.VOIDED,
+                source_hash=None,
+            )
+        elif item.action == PlanAction.UNCHANGED:
+            pass
+    return build_prior_identity_registry(updated.values())
+
+
+def test_state_advancement_for_all_four_transitions() -> None:
+    """Verify applying plan to prior state makes subsequent planning idempotent."""
+    id_ins = _make_uuid7(b"0000000000000001")
+    id_edt = _make_uuid7(b"0000000000000002")
+    id_vod = _make_uuid7(b"0000000000000003")
+    id_unc = _make_uuid7(b"0000000000000004")
+    id_rea = _make_uuid7(b"0000000000000005")
+
+    row_base = _sample_buy_sell_row()
+    row_mutated = dict(row_base)
+    row_mutated["notes_raw"] = "تغییر یادداشت"
+
+    snap_temp = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(
+                sheet_name="خرید-فروش",
+                rows=[SourceRowInput(stable_id=id_unc, source_values=row_base)],
+            ),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[]),
+        ]
+    )
+    base_hash = snap_temp.sheets["خرید-فروش"].rows[0].source_hash
+
+    # Initial Prior State
+    prior_initial = build_prior_identity_registry(
+        [
+            PriorIdentityState(
+                stable_id=id_unc,
+                canonical_uuid=str(id_unc).lower(),
+                home_sheet="خرید-فروش",
+                latest_revision=1,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash=base_hash,
+            ),
+            PriorIdentityState(
+                stable_id=id_edt,
+                canonical_uuid=str(id_edt).lower(),
+                home_sheet="خرید-فروش",
+                latest_revision=1,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash=base_hash,
+            ),
+            PriorIdentityState(
+                stable_id=id_vod,
+                canonical_uuid=str(id_vod).lower(),
+                home_sheet="خرید-فروش",
+                latest_revision=2,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash=base_hash,
+            ),
+            PriorIdentityState(
+                stable_id=id_rea,
+                canonical_uuid=str(id_rea).lower(),
+                home_sheet="خرید-فروش",
+                latest_revision=3,
+                lifecycle=IdentityLifecycle.VOIDED,
+                source_hash=None,
+            ),
+        ]
+    )
+
+    # Current Snapshot: contains id_ins, id_edt, id_unc, id_rea; id_vod is absent
+    current_snap = build_source_workbook_snapshot(
         [
             SourceSheetInput(
                 sheet_name="خرید-فروش",
                 rows=[
-                    SourceRowInput(
-                        stable_id=id1,
-                        source_values=_sample_buy_sell_row(),
-                    )
+                    SourceRowInput(stable_id=id_ins, source_values=row_base),
+                    SourceRowInput(stable_id=id_edt, source_values=row_mutated),
+                    SourceRowInput(stable_id=id_unc, source_values=row_base),
+                    SourceRowInput(stable_id=id_rea, source_values=row_base),
                 ],
             ),
             SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[]),
@@ -625,30 +770,81 @@ def test_retry_idempotency_and_state_advancement() -> None:
             SourceSheetInput(sheet_name="لیست کسبه", rows=[]),
         ]
     )
-    computed_hash = snap.sheets["خرید-فروش"].rows[0].source_hash
 
-    # Prior state has identical identity and hash
+    # Step 1: Execute initial change plan
+    plan_1 = plan_source_changes(current_snap, prior_initial)
+    assert plan_1.total_counts.insert_count == 1
+    assert plan_1.total_counts.edit_count == 2  # 1 edit + 1 reactivate
+    assert plan_1.total_counts.void_count == 1
+    assert plan_1.total_counts.unchanged_count == 1
+
+    # Step 2: Advance prior state
+    prior_advanced = _advance_prior_registry(prior_initial, plan_1)
+
+    # Step 3: Run plan again with same current snapshot and advanced prior state
+    plan_2 = plan_source_changes(current_snap, prior_advanced)
+
+    # Verify zero active mutations on retry!
+    assert plan_2.total_counts.insert_count == 0
+    assert plan_2.total_counts.edit_count == 0
+    assert plan_2.total_counts.void_count == 0
+    assert plan_2.total_counts.unchanged_count == 4  # all 4 present rows are unchanged
+    assert len(plan_2.items) == 4
+    assert all(it.action == PlanAction.UNCHANGED for it in plan_2.items)
+
+
+# --- 9. Null vs Empty Text and Sensitivity ---
+
+
+def test_null_vs_empty_text_distinction_in_change_plan() -> None:
+    """Verify changing null to empty text changes hash and emits EDIT item."""
+    id1 = _make_uuid7(b"0000000000000001")
+
+    row_none = {"party_name_raw": None, "phone_number_raw": None}
+    row_empty = {"party_name_raw": "", "phone_number_raw": ""}
+
+    snap_none = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[]),
+            SourceSheetInput(
+                sheet_name="لیست کسبه",
+                rows=[SourceRowInput(stable_id=id1, source_values=row_none)],
+            ),
+        ]
+    )
+    hash_none = snap_none.sheets["لیست کسبه"].rows[0].source_hash
+
     prior = build_prior_identity_registry(
         [
             PriorIdentityState(
                 stable_id=id1,
                 canonical_uuid=str(id1).lower(),
-                home_sheet="خرید-فروش",
+                home_sheet="لیست کسبه",
                 latest_revision=1,
                 lifecycle=IdentityLifecycle.ACTIVE,
-                source_hash=computed_hash,
+                source_hash=hash_none,
             )
         ]
     )
 
-    plan = plan_source_changes(snap, prior)
-    assert plan.total_counts.insert_count == 0
-    assert plan.total_counts.edit_count == 0
-    assert plan.total_counts.void_count == 0
-    assert plan.total_counts.unchanged_count == 1
-    assert len(plan.items) == 1
-    assert plan.items[0].action == PlanAction.UNCHANGED
-    assert plan.items[0].planned_revision is None
+    snap_empty = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[]),
+            SourceSheetInput(
+                sheet_name="لیست کسبه",
+                rows=[SourceRowInput(stable_id=id1, source_values=row_empty)],
+            ),
+        ]
+    )
+
+    plan = plan_source_changes(snap_empty, prior)
+    assert plan.total_counts.edit_count == 1
+    assert plan.total_counts.unchanged_count == 0
+    assert plan.items[0].action == PlanAction.EDIT
 
 
 def test_single_field_sensitivity_and_canonical_equivalences() -> None:
@@ -816,11 +1012,11 @@ def test_per_sheet_counts_breakdown() -> None:
     assert plan.per_sheet_counts["لیست کسبه"].insert_count == 0
 
 
-# --- 9. Immutability and Defensive Copies ---
+# --- 10. Immutability and Tamper Resistance Across All Collections ---
 
 
-def test_defensive_copies_prevent_caller_mutation() -> None:
-    """Verify mutating caller dictionaries after build does not alter snapshot."""
+def test_immutability_and_tamper_resistance_across_all_models() -> None:
+    """Verify exposed snapshot, prior and plan collections are strictly immutable."""
     id1 = _make_uuid7(b"0000000000000001")
     caller_dict = _sample_buy_sell_row()
 
@@ -834,25 +1030,51 @@ def test_defensive_copies_prevent_caller_mutation() -> None:
         SourceSheetInput(sheet_name="لیست کسبه", rows=[]),
     ]
     snap = build_source_workbook_snapshot(sheets)
-
-    # Mutate original caller dictionary
-    caller_dict["notes_raw"] = "MUTATED_BY_CALLER"
-
     v_row = snap.sheets["خرید-فروش"].rows[0]
+
+    # 1. Caller dict mutation does not affect snapshot
+    caller_dict["notes_raw"] = "MUTATED"
     assert v_row.raw_values["notes_raw"] == "توضیحات فاکتور"
 
-    # Attempt direct mutation of exposed snapshot MappingProxyType
+    # 2. Direct mutation on snap.sheets raises TypeError
     with pytest.raises(TypeError):
-        v_row.raw_values["notes_raw"] = "ATTEMPTED_MUTATION"  # type: ignore[index]
+        snap.sheets["خرید-فروش"] = None  # type: ignore[index]
+
+    # 3. Direct mutation on all_rows_by_id raises TypeError
+    with pytest.raises(TypeError):
+        snap.all_rows_by_id[id1] = None  # type: ignore[index]
+
+    # 4. Direct mutation on raw_values raises TypeError
+    with pytest.raises(TypeError):
+        v_row.raw_values["notes_raw"] = "TAMPER"  # type: ignore[index]
+
+    # 5. Prior registry immutability
+    prior = build_prior_identity_registry(
+        [
+            PriorIdentityState(
+                stable_id=id1,
+                canonical_uuid=str(id1).lower(),
+                home_sheet="خرید-فروش",
+                latest_revision=1,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash=v_row.source_hash,
+            )
+        ]
+    )
+    with pytest.raises(TypeError):
+        prior.identities[id1] = None  # type: ignore[index]
+
+    # 6. Plan result immutability
+    plan = plan_source_changes(snap, prior)
+    with pytest.raises(TypeError):
+        plan.per_sheet_counts["خرید-فروش"] = None  # type: ignore[index]
+    with pytest.raises(TypeError):
+        plan.current_sheet_snapshot_hashes["خرید-فروش"] = "tamper"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        plan.current_sheet_row_counts["خرید-فروش"] = 999  # type: ignore[index]
 
 
-def test_invalid_snapshot_argument_raises_error() -> None:
-    """Verify passing non-snapshot to plan_source_changes raises typed error."""
-    with pytest.raises(SourceChangePlanError):
-        plan_source_changes("invalid_argument")  # type: ignore[arg-type]
-
-
-# --- 10. Synthetic 15,000-Row Complexity Benchmark ---
+# --- 11. Synthetic 15,000-Row Complexity Benchmark ---
 
 
 def test_synthetic_15000_row_complexity_benchmark() -> None:
@@ -910,42 +1132,69 @@ def test_synthetic_15000_row_complexity_benchmark() -> None:
     assert plan.total_counts.insert_count == 7500
     assert plan.total_counts.edit_count == 7500
 
-    # Ensure efficient sub-second execution for 15,000 items
-    assert build_duration < 10.0, f"Snapshot build too slow: {build_duration:.2f}s"
-    assert plan_duration < 2.0, f"Planning too slow: {plan_duration:.2f}s"
+    # Ensure efficient reproducible sub-second execution thresholds for 15,000 items
+    assert build_duration < 5.0, f"Snapshot build too slow: {build_duration:.2f}s"
+    assert plan_duration < 1.0, f"Planning too slow: {plan_duration:.2f}s"
 
 
-# --- 11. Hypothesis Property Tests ---
+# --- 12. Expanded Hypothesis Property Tests ---
 
 
 @given(
     permutation_seed=st.integers(min_value=0, max_value=1000),
 )
-def test_property_change_plan_arbitrary_permutation_invariance(
+def test_property_change_plan_expanded_permutations_invariance(
     permutation_seed: int,
 ) -> None:
-    """Hypothesis test: arbitrary permutations of sheets/rows produce identical plan."""
+    """Hypothesis test: arbitrary permutations of all inputs yield identical plan."""
     ids = [_make_uuid7(i.to_bytes(16, "big")) for i in range(1, 9)]
 
+    rng = random.Random(permutation_seed)
+
+    def _permute_dict_keys(d: Mapping[str, Any]) -> dict[str, Any]:
+        items = list(d.items())
+        rng.shuffle(items)
+        return dict(items)
+
     rows_bf = [
-        SourceRowInput(stable_id=ids[0], source_values=_sample_buy_sell_row()),
-        SourceRowInput(stable_id=ids[1], source_values=_sample_buy_sell_row()),
+        SourceRowInput(
+            stable_id=ids[0],
+            source_values=_permute_dict_keys(_sample_buy_sell_row()),
+        ),
+        SourceRowInput(
+            stable_id=ids[1],
+            source_values=_permute_dict_keys(_sample_buy_sell_row()),
+        ),
     ]
     rows_dp = [
-        SourceRowInput(stable_id=ids[2], source_values=_sample_receipts_payments_row()),
-        SourceRowInput(stable_id=ids[3], source_values=_sample_receipts_payments_row()),
+        SourceRowInput(
+            stable_id=ids[2],
+            source_values=_permute_dict_keys(_sample_receipts_payments_row()),
+        ),
+        SourceRowInput(
+            stable_id=ids[3],
+            source_values=_permute_dict_keys(_sample_receipts_payments_row()),
+        ),
     ]
     rows_vk = [
         SourceRowInput(
-            stable_id=ids[4], source_values=_sample_inventory_movements_row()
+            stable_id=ids[4],
+            source_values=_permute_dict_keys(_sample_inventory_movements_row()),
         ),
         SourceRowInput(
-            stable_id=ids[5], source_values=_sample_inventory_movements_row()
+            stable_id=ids[5],
+            source_values=_permute_dict_keys(_sample_inventory_movements_row()),
         ),
     ]
     rows_lk = [
-        SourceRowInput(stable_id=ids[6], source_values=_sample_business_parties_row()),
-        SourceRowInput(stable_id=ids[7], source_values=_sample_business_parties_row()),
+        SourceRowInput(
+            stable_id=ids[6],
+            source_values=_permute_dict_keys(_sample_business_parties_row()),
+        ),
+        SourceRowInput(
+            stable_id=ids[7],
+            source_values=_permute_dict_keys(_sample_business_parties_row()),
+        ),
     ]
 
     base_sheets = [
@@ -956,7 +1205,6 @@ def test_property_change_plan_arbitrary_permutation_invariance(
     ]
 
     # Permute sheets and rows
-    rng = random.Random(permutation_seed)
     permuted_sheets: list[SourceSheetInput] = []
     shuffled_sheets = list(base_sheets)
     rng.shuffle(shuffled_sheets)
@@ -971,8 +1219,42 @@ def test_property_change_plan_arbitrary_permutation_invariance(
     snap1 = build_source_workbook_snapshot(base_sheets)
     snap2 = build_source_workbook_snapshot(permuted_sheets)
 
-    plan1 = plan_source_changes(snap1)
-    plan2 = plan_source_changes(snap2)
+    # Observable snapshot outputs must be identical
+    for sheet_name in RAW_CONTRACT_REGISTRY.sheets:
+        assert snap1.sheets[sheet_name].rows == snap2.sheets[sheet_name].rows
+        assert (
+            snap1.sheets[sheet_name].sheet_snapshot_hash
+            == snap2.sheets[sheet_name].sheet_snapshot_hash
+        )
+    assert snap1.all_rows_by_id == snap2.all_rows_by_id
+
+    # Prior state list permutation
+    prior_list_base = [
+        PriorIdentityState(
+            stable_id=ids[0],
+            canonical_uuid=str(ids[0]).lower(),
+            home_sheet="خرید-فروش",
+            latest_revision=1,
+            lifecycle=IdentityLifecycle.ACTIVE,
+            source_hash=snap1.sheets["خرید-فروش"].rows[0].source_hash,
+        ),
+        PriorIdentityState(
+            stable_id=ids[2],
+            canonical_uuid=str(ids[2]).lower(),
+            home_sheet="دریافت-پرداخت",
+            latest_revision=2,
+            lifecycle=IdentityLifecycle.ACTIVE,
+            source_hash="0" * 64,  # will edit
+        ),
+    ]
+    prior_list_shuffled = list(prior_list_base)
+    rng.shuffle(prior_list_shuffled)
+
+    prior_reg1 = build_prior_identity_registry(prior_list_base)
+    prior_reg2 = build_prior_identity_registry(prior_list_shuffled)
+
+    plan1 = plan_source_changes(snap1, prior_reg1)
+    plan2 = plan_source_changes(snap2, prior_reg2)
 
     assert plan1.total_counts == plan2.total_counts
     assert len(plan1.items) == len(plan2.items)
