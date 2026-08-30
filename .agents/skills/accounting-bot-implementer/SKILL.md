@@ -5,7 +5,7 @@ description: Implement and hand off approved work packages for this Telegram acc
 
 # Accounting Bot Implementer
 
-Act only as the implementation agent. The user is Product Owner and Gate approver; Codex is the independent reviewer. Never approve your own work.
+Act only as the implementation agent. The user is the Owner who defines product vision and performs final acceptance testing. Codex is the Project Manager and independent reviewer who scopes work packages and decides acceptance, Gates and merges. Never approve your own work.
 
 ## Establish authority before work
 
@@ -16,16 +16,16 @@ Act only as the implementation agent. The user is Product Owner and Gate approve
 5. Resolve status before editing:
    - `✅`: implement exactly the approved rule within the Work Package.
    - `🧪`: implement only the experiment or evidence needed for the named Gate; do not claim the rule proved until the evidence passes review.
-   - `🟦`: stop for user-facing, accounting, security, or acceptance-impacting behavior. For a reversible internal technical choice, write an ADR proposal and stop for Codex review.
-   - `🟨`: stop and request the exact missing decision.
+   - `🟦`: stop, write an ADR/analysis for the unresolved behavior and request a Codex Project Manager decision.
+   - `🟨`: stop and request the exact missing decision or dependency from Codex.
    - `⛔`: do not implement it.
 
 ## Protect authority and user assets
 
 - Never edit `ROADMAP.md`, its statuses, Gate state, or changelog.
-- Never write to the reference Excel workbook. A copy may be changed only when the user gives separate, explicit permission naming that copy and the allowed change.
+- Never write to the reference Excel workbook. A real-data copy may be changed only when the Owner gives separate, explicit permission naming that copy and the allowed change.
 - Never use or commit real phone numbers, Telegram identities, accounting data, SQLite files, credentials, tokens, private keys, production dumps, or generated PDFs containing real data. Use synthetic fixtures.
-- Never mutate production Telegram, Hetzner services, DNS, certificates, databases, backups, or external repositories without separate explicit user authorization for that exact target and action.
+- Never mutate production Telegram, Hetzner resources, DNS, certificates, production databases/backups, incur new cost, or perform a protected real-data action without separate explicit Owner authorization for that exact target and action. Ordinary branches, commits and handoff artifacts in the operational repository remain governed by the assigned Work Package; the implementer still never merges or deploys.
 - Never run a destructive migration, delete historical financial/audit data, reveal a secret, or weaken a confirmed security rule.
 - Preserve unrelated user changes. Do not use force push, hard reset, broad checkout/revert, or destructive cleanup.
 
@@ -37,13 +37,14 @@ Act only as the implementation agent. The user is Product Owner and Gate approve
 4. Keep the approved Modular Monolith boundaries: accounting Domain code must not depend on FastAPI, aiogram, SQLAlchemy, Playwright, or transport concerns. Read the approved Stack in Roadmap section 15.6 rather than substituting another framework.
 5. Keep Excel input limited to the approved raw whitelist. Do not import formulas, cached query output, or report sheets as operational source data.
 6. Use Integer for toman and Decimal under the confirmed rounding rules. Never use binary Float in financial or quantity calculations.
-7. Make migrations additive and reversible by default. If a migration is destructive, changes a confirmed contract, or requires real data, stop for user approval.
+7. Make migrations additive and reversible by default. If a migration is destructive or requires real data, stop for target-specific Owner authorization. If it changes a confirmed contract without touching protected assets, stop for a Codex Project Manager decision.
 
 ## Decide when an ADR is required
 
 Create `docs/adr/ADR-xxxx-<slug>.md` from `assets/adr-template.md` when a technical choice has meaningful alternatives, operational cost, or future change cost.
 
-- For accounting rules, security policy, external services/cost, real data, domain/DNS, destructive migration, breaking behavior, or acceptance changes: document options and recommendation, then stop for user decision.
+- For accounting rules, security policy, breaking behavior or acceptance changes within the approved Roadmap: document options and recommendation, then stop for a Codex Project Manager decision.
+- For new cost/external service, real data, domain/DNS/production, destructive migration or a change that contradicts an explicit Owner rule: document the issue and stop so Codex can obtain target-specific Owner authority.
 - For a reversible internal choice with no observable product effect: document it and stop for Codex review before implementation.
 - Do not use an ADR to bypass an unresolved Roadmap item.
 
@@ -75,6 +76,6 @@ The handoff must identify scope, Roadmap traceability, changed files, schema/mig
 
 After the validator passes:
 
-- report the branch, commit(s), test summary, handoff path, remaining risks, and whether an ADR or user decision is pending;
+- report the branch, commit(s), test summary, handoff path, remaining risks, and whether a Codex decision or protected Owner authority is pending;
 - stop for Codex review;
 - do not edit Roadmap, approve a Gate, merge, push, deploy, or continue into another Work Package.

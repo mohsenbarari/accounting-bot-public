@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: `<yyyy-mm-dd>`
 - Work Package: `<phase-and-work-package>`
-- Decision owner: `<user-or-codex-review>`
+- Decision owner: `<codex-project-manager-or-owner-for-protected-action>`
 
 ## Context
 
@@ -41,6 +41,6 @@
 
 ## Approval required
 
-`<user-decision-or-codex-review-and-why>`
+`<codex-project-manager-decision-or-target-specific-owner-authority-and-why>`
 
 No implementation covered by this ADR occurs until the required approval is recorded.
