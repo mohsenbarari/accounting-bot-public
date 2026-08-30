@@ -9,7 +9,7 @@ This public repository is the governed operational source for the Telegram accou
 - Product implementation: not started
 - Reference Excel modification: not authorized
 
-No final product code may be implemented until the Product Owner explicitly approves G0 in [ROADMAP.md](ROADMAP.md).
+Product implementation starts only after the Codex Project Manager records an evidence-backed G0 approval in [ROADMAP.md](ROADMAP.md). G0 is now approved; later work remains bounded by phase Gates and protected-asset rules.
 
 ## Sources of authority
 
@@ -17,7 +17,7 @@ No final product code may be implemented until the Product Owner explicitly appr
 - [Architecture Decision Records](docs/adr/) capture the accepted O-52 through O-56 architecture decisions without replacing the Roadmap.
 - [accounting-bot-implementer](.agents/skills/accounting-bot-implementer/SKILL.md) governs future Antigravity work packages and handoffs.
 
-The Product Owner approves requirements, Gate transitions and merges. Antigravity implements bounded approved work packages. Codex performs independent review.
+The Owner defines the product vision, performs final acceptance testing and reports corrections. Codex acts as Project Manager and independent reviewer, maintaining the Roadmap and deciding work-package acceptance, Gates and merges. Antigravity only implements bounded approved work packages and cannot self-approve.
 
 ## Protected and local-only assets
 
