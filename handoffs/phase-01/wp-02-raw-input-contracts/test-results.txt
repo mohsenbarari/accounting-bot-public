@@ -1,6 +1,6 @@
 WORK PACKAGE: WP-02: Raw input contract registry
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-08-30T17:38:00Z
+RECORDED AT UTC: 2026-08-30T17:57:00Z
 
 COMMAND 1
 Exact command: uv --version
@@ -18,13 +18,13 @@ COMMAND 3
 Exact command: uv sync --frozen --all-packages --all-groups
 Exit code: 0
 Relevant output:
-Checked 81 packages in 3ms
+Checked 81 packages in 2ms
 
 COMMAND 4
 Exact command: uv run ruff format --check .
 Exit code: 0
 Relevant output:
-30 files already formatted
+32 files already formatted
 
 COMMAND 5
 Exact command: uv run ruff check .
@@ -49,13 +49,13 @@ configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 33 items
+collected 36 items
 
-tests/test_architecture_guard.py ..............     [ 42%]
-tests/test_imports.py .......                       [ 63%]
-tests/test_raw_input_contracts.py ............      [100%]
+tests/test_architecture_guard.py ..............     [ 38%]
+tests/test_imports.py .......                       [ 58%]
+tests/test_raw_input_contracts.py ...............   [100%]
 
-=================== 33 passed in 1.16s ====================
+=================== 36 passed in 0.69s ====================
 
 COMMAND 8
 Exact command: git diff --check origin/main...HEAD
@@ -70,13 +70,19 @@ Relevant output:
 (clean; no forbidden files or sensitive extensions tracked in git)
 
 COMMAND 10
+Exact command: git grep -n -i -E '(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})' -- ':!ROADMAP.md' ':!docs/adr/*' ':!.agents/*' ':!handoffs/*' ':!uv.lock' || true
+Exit code: 0
+Relevant output:
+(clean; no passwords, secrets, private keys, IP addresses, or real phone numbers found in source or test files)
+
+COMMAND 11
 Exact command: python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-02-raw-input-contracts/
 Exit code: 0
 Relevant output:
 Handoff validation passed.
 
 FINAL SUMMARY
-Passed: 10
+Passed: 11
 Failed: 0
 Skipped: 0
 Blocked: 0
