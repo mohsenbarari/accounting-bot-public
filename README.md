@@ -36,8 +36,8 @@ This repository uses Python 3.13 and `uv` for workspace dependency management.
 # Install Python 3.13 via uv
 uv python install 3.13
 
-# Install all workspace dependencies
-uv sync --all-packages
+# Install all workspace dependencies and groups
+uv sync --all-packages --all-groups
 ```
 
 ### Quality and Testing Commands
@@ -55,5 +55,5 @@ uv run pytest
 
 # Verify lockfile consistency
 uv lock --check
-uv sync --frozen --all-packages
+uv sync --frozen --all-packages --all-groups
 ```
