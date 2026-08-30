@@ -6,7 +6,8 @@
 - Work Package: WP-03: Canonical source values and deterministic hashing
 - Branch/worktree: antigravity/phase-01-canonical-source-hashing
 - Commit(s):
-  - pending local commit
+  - `4a31183` (feat(contracts): implement canonical Jalali date parsing and deterministic hashing)
+  - `633553f` (docs(handoff): finalize WP-03 handoff documentation)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
