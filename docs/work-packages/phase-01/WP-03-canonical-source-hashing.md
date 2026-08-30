@@ -2,9 +2,13 @@
 
 - Phase: 1 — source and data-model foundation
 - Gate contribution: G1 canonical-value/change-detection foundation only; this Work Package cannot close G1
-- Status: Issued — awaiting Antigravity implementation and Codex review
+- Status: Accepted and merged
 - Issued by: Codex Project Manager
 - Issued on: 2026-08-30
+- Accepted by: Codex Project Manager
+- Accepted on: 2026-08-30
+- Review evidence: PR #13 and final CI Run `33329429229`
+- Merge commit: `6be9fef5d2b9922c51f2beab6b9c178b4795a243`
 - Required skill: `accounting-bot-implementer`
 - Branch: `antigravity/phase-01-canonical-source-hashing`
 - Baseline: latest clean `origin/main` containing this Work Package and ADR-0006

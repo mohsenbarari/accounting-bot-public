@@ -1,8 +1,8 @@
 # نقشه راه سامانه گزارش حسابداری تلگرام
 
-> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 و WP-02 پذیرفته شده‌اند، WP-03 صادر شده و G1 باز است
+> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-03 پذیرفته و ادغام شده‌اند و G1 باز است
 >
-> نسخه: 0.34
+> نسخه: 0.35
 >
 > آخرین به‌روزرسانی: 2026-08-30
 >
@@ -586,7 +586,7 @@
 - ✅ طبق O-28/O-42، برای ترتیب دقیق، ممیزی و رقابت 100 میلی‌ثانیه‌ای، زمان UTC با دقت بالا نیز در داخل سیستم ذخیره می‌شود ولی نمایش کاربر ایران است.
 - ✅ تاریخ خام اکسل بدون بازنویسی حفظ می‌شود؛ در دیتابیس یک تاریخ Canonical قابل Query به‌همراه اجزای شمسی سال/ماه/روز و کلید سال مالی نگهداری می‌شود. تبدیل دست‌نویس ممنوع، نسخه کتابخانه و `calculation_version` ثابت و منطقه زمانی `Asia/Tehran` مرجع است.
 - ✅ کتابخانه تبدیل شمسی `persiantools` همراه `zoneinfo` انتخاب شد؛ نسخه دقیق در `uv.lock` قفل می‌شود.
-- 🧪 این ترکیب با مرز نوروز، سال کبیسه، پایان ماه، تبدیل رفت‌وبرگشت، تاریخ نامعتبر و `Asia/Tehran` آزمون خواهد شد.
+- ✅ `persiantools 6.2.0` و `zoneinfo` در WP-03 با مرز نوروز، کبیسه/غیرکبیسه، پایان همه خانواده ماه‌ها، تبدیل رفت‌وبرگشت، رقم‌ها/جداکننده‌های مجاز و نامعتبر، Raw preservation و عبور نیمه‌شب `Asia/Tehran` آزمون شدند؛ تاریخ مالی همچنان مستقل از زمان Save/Import است.
 - ✅ Save نزدیک نیمه‌شب مرز مالی را تغییر نمی‌دهد؛ تاریخ ثبت‌شده در شیت ورودی تنها ملاک روز حسابداری است و زمان Save/Import فقط برای Audit به وقت ایران ثبت می‌شود.
 
 ## 17. امنیت، حریم خصوصی و ممیزی
@@ -774,7 +774,7 @@
 
 - ✅ WP-01 اسکلت Monorepo مصوب، Python 3.13، `uv`/Lockfile، مرز خودکار Domain، کنترل‌های Ruff/mypy/pytest و CI دو سکویی را ایجاد کرد؛ Codex آن را پس از Handoff، اصلاحات و Run نهایی PR #7 پذیرفت. این شاهد فقط زیرساخت G1 است و خود G1 را نمی‌بندد.
 - ✅ WP-02 قرارداد نسخه‌دار و عمیقاً تغییرناپذیر ورودی خام چهار شیت، نگاشت دقیق `Z/P/P/D`، تفکیک Literal/Formula/Cached/Derived/Unlisted، نوع‌های بدون Float و ناوردایی‌های ساختاری را با Fixture صرفاً ساختگی تثبیت کرد؛ Codex آن را پس از بازبینی مستقل، یک دور اصلاح، 36 آزمون و CI دو سکویی PR #10 پذیرفت. این شاهد مرز منبع G1 است و خود G1 را نمی‌بندد.
-- 🧪 WP-03 برای Canonicalization نسخه‌دار تاریخ/عدد، `source_hash` و `sheet_snapshot_hash` طبق O-68/ADR-0006 صادر شد؛ پذیرش آن منوط به Golden Vector، Property Test، آزمون مرز تقویم/منطقه زمانی، Handoff و CI دو سکویی است و خود G1 را نمی‌بندد.
+- ✅ WP-03 قرارداد Canonical نسخه‌دار تاریخ/عدد، `source_hash` و `sheet_snapshot_hash` را طبق O-68/ADR-0006 پیاده کرد؛ Codex پس از بازبینی مستقل، یک دور اصلاح Grammar/TypeTag/Property Test/اسکن، 64 آزمون و CI دو سکویی PR #13 آن را پذیرفت. این شاهد تغییر قطعی منبع و شیت است و خود G1 را نمی‌بندد.
 - تهیه نسخه پشتیبان کنترل‌شده از اکسل.
 - اجرای کنترل‌شده UUIDv7، Source/Ledger/Sheet SHA-256 و سال مالی پس از دریافت اجازه جداگانه تغییر کپی اکسل.
 - تعریف Whitelist ورودی خام چهار شیت و جداسازی Raw Immutable از Formula/Function/Query/Cached Value اکسل.
@@ -1485,7 +1485,7 @@
 - **تصمیم:** `source-hash.v1` و `sheet-snapshot-hash.v1` با SHA-256 روی UTF-8 JSON آرایه‌ای تایپ‌دار، فشرده و دارای Golden Vector ساخته می‌شوند. ترتیب فیلدهای سطر دقیقاً از `raw-source-contract.v1` و ترتیب Snapshot از UUIDv7 Canonical است؛ شناسه فنی در Source Hash نیست ولی با Hash سطر در Snapshot جفت می‌شود. Null/Text صریح، Raw Text بدون Normalize، Integer/Decimal بدون Float و تاریخ شمسی Canonical با `persiantools`/`jalali-date.v1` هستند.
 - **مرز:** `ledger_hash` تا تثبیت Financial Event/Resolver/Calculation Version در فاز 2 مؤجل است. WP-03 هیچ XLSX Parser، Schema/Revision/Void، قاعده مالی یا دسترسی Excel/داده واقعی ایجاد نمی‌کند.
 - **نسخه‌بندی:** هر تغییر مؤثر بر bytes یا معنا، نسخه تازه و Migration/Rebuild شاهددار می‌خواهد و حق بازتفسیر خاموش Hash نسخه 1 وجود ندارد.
-- **شاهد لازم:** Golden bytes/digest برای هر چهار شیت، Property Test ترتیب، اثر Insert/Edit/Delete، مرزهای Decimal/Null/Text، نوروز/کبیسه/تاریخ نامعتبر/`Asia/Tehran` و CI Windows/Linux در WP-03.
+- **شاهد اجرا:** WP-03 با Golden bytes/digest چهار شیت و Snapshot، حساسیت تک‌تک فیلدهای Raw، Property Test ترتیب Mapping/Snapshot، اثر Insert/Edit/Delete، مرزهای Decimal/Null/Text/TypeTag، آزمون تقویم/`Asia/Tehran` و 64 آزمون موفق پذیرفته شد؛ CI نهایی Windows/Linux در Run `33329429229` و Merge Commit برابر `6be9fef` است.
 - **تاریخ تصمیم:** 2026-08-30.
 
 ## 22. ریسک‌های اصلی
@@ -1558,6 +1558,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.35 | 2026-08-30 | ثبت پذیرش شاهددار WP-03 توسط Codex مدیر پروژه پس از بازبینی مستقل و یک دور اصلاح: سخت‌گیری Grammar رقم/جداکننده، خطای تایپ‌شده TypeTag، حذف فهرست تکراری شیت و تغییر خارج Scope mypy، Fixture کاملاً ساختگی و اسکن شکست‌پذیر، حساسیت همه فیلدهای Raw و Property Test permutation؛ تثبیت `persiantools 6.2.0`، Golden Vectorهای چهار شیت/Snapshot و `source-hash.v1`/`sheet-snapshot-hash.v1`؛ موفقیت 64 آزمون و CI Windows/Linux Run `33329429229`، ادغام PR #13 با Commit `6be9fef` و حفظ G1 در وضعیت باز |
 | 0.34 | 2026-08-30 | بستن O-68 و ثبت ADR-0006 برای Canonical UTF-8 JSON آرایه‌ای تایپ‌دار، نسخه‌های `jalali-date.v1`/`source-hash.v1`/`sheet-snapshot-hash.v1`، قواعد صریح Null/Text/Integer/Decimal/تاریخ شمسی و UUIDv7 مرتب؛ تعویق آگاهانه `ledger_hash` تا فاز 2؛ صدور WP-03 با Golden Vector، Property Test، آزمون تقویم/`Asia/Tehran` و حفاظت کامل Excel/داده واقعی، بدون بستن G1 |
 | 0.33 | 2026-08-30 | ثبت پذیرش شاهددار WP-02 توسط Codex مدیر پروژه: بازبینی مستقل و یک دور اصلاح Antigravity برای Deep Immutability، یکتایی سراسری نام فیلد و مرز واقعی `A:XFD`؛ تطبیق قرارداد دقیق چهار شیت و شناسه‌های `Z/P/P/D`، حذف Formula/Cached/Derived/Unlisted از Raw، نبود Float و حفاظت کامل Excel/داده واقعی؛ موفقیت 36 آزمون، Handoff/Acceptance Matrix/Test Results، اسکن دارایی/Secret و CI نهایی Linux/Windows در Run `33326970537`؛ ادغام PR #10 با Commit `5c99749` بدون بستن G1 |
 | 0.32 | 2026-08-30 | ثبت پذیرش شاهددار WP-01 توسط Codex مدیر پروژه: دو چرخه Review/اصلاح Antigravity، Handoff/Acceptance Matrix/Test Results معتبر، قفل `uv 0.12.7` و Sync Frozen همه Workspaceها/Groupها، مرز خودکار Domain، اسکن پاک دارایی/Secret، موفقیت 21 آزمون و CI نهایی Linux/Windows در Run `33324657599`، ادغام PR #7 با Commit `4f9ad3e`؛ تبدیل شاهد نخستین Handoff و Baseline تکرارپذیر به ✅ بدون بستن G1 |
