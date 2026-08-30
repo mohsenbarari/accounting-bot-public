@@ -1,6 +1,6 @@
 WORK PACKAGE: WP-04: Validated full-source snapshots and deterministic change planning
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-08-30T19:26:00Z
+RECORDED AT UTC: 2026-08-30T19:41:00Z
 
 COMMAND 1
 Exact command: uv --version
@@ -24,7 +24,7 @@ COMMAND 4
 Exact command: uv run ruff format --check .
 Exit code: 0
 Relevant output:
-44 files already formatted
+46 files already formatted
 
 COMMAND 5
 Exact command: uv run ruff check .
@@ -49,17 +49,17 @@ configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 84 items
+collected 85 items
 
 tests/test_architecture_guard.py ..............      [ 16%]
 tests/test_canonical_date.py ..........              [ 28%]
-tests/test_canonical_hashing.py ..................   [ 50%]
-tests/test_imports.py .......                        [ 58%]
-tests/test_raw_input_contracts.py ...............    [ 76%]
-tests/test_source_change_plan.py ................... [ 98%]
-.                                                    [100%]
+tests/test_canonical_hashing.py ..................   [ 49%]
+tests/test_imports.py .......                        [ 57%]
+tests/test_raw_input_contracts.py ...............    [ 75%]
+tests/test_source_change_plan.py ................... [ 97%]
+..                                                   [100%]
 
-==================== 84 passed in 4.12s ====================
+==================== 85 passed in 5.26s ====================
 
 COMMAND 8
 Exact command: git diff --check origin/main...HEAD
