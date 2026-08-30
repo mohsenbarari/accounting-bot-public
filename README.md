@@ -25,3 +25,35 @@ The Owner defines the product vision, performs final acceptance testing and repo
 Real Excel workbooks, SQLite databases, phone numbers, Telegram identities, credentials, production artifacts and generated PDFs must never be committed. Pre-G0 inspection scripts and working artifacts remain local and are excluded by `.gitignore`; they are not the product implementation.
 
 Deployment hostnames, IP addresses and secrets belong only in ignored local environment files or the deployment secret store. Public examples use placeholders and synthetic data.
+
+## Development and Quality Toolchain
+
+This repository uses Python 3.13 and `uv` for workspace dependency management.
+
+### Setup and Bootstrap
+
+```bash
+# Install Python 3.13 via uv
+uv python install 3.13
+
+# Install all workspace dependencies and groups
+uv sync --all-packages --all-groups
+```
+
+### Quality and Testing Commands
+
+```bash
+# Format and lint checks
+uv run ruff format --check .
+uv run ruff check .
+
+# Static type checking
+uv run mypy .
+
+# Run test suite
+uv run pytest
+
+# Verify lockfile consistency
+uv lock --check
+uv sync --frozen --all-packages --all-groups
+```

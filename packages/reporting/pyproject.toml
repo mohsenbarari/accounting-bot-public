@@ -1,0 +1,21 @@
+[project]
+name = "accounting-reporting"
+version = "0.1.0"
+description = "Reporting engine, Jinja2 templates, Persian calendar formatting and PDF generation"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "accounting-domain",
+    "accounting-contracts",
+    "jinja2>=3.1.0",
+    "persiantools>=3.0.0",
+    "playwright>=1.49.0",
+]
+
+[tool.uv.sources]
+accounting-domain = { workspace = true }
+accounting-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

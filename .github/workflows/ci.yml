@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  linux-checks:
+    name: Linux (Ubuntu) - Quality & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.12.7"
+          enable-cache: true
+
+      - name: Install Python 3.13
+        run: uv python install 3.13
+
+      - name: Verify Lockfile
+        run: uv lock --check
+
+      - name: Sync dependencies (Frozen)
+        run: uv sync --frozen --all-packages --all-groups
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Ruff lint check
+        run: uv run ruff check .
+
+      - name: mypy type check
+        run: uv run mypy .
+
+      - name: Run pytest suite
+        run: uv run pytest
+
+  windows-checks:
+    name: Windows - Quality & Tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.12.7"
+          enable-cache: true
+
+      - name: Install Python 3.13
+        run: uv python install 3.13
+
+      - name: Verify Lockfile
+        run: uv lock --check
+
+      - name: Sync dependencies (Frozen)
+        run: uv sync --frozen --all-packages --all-groups
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Ruff lint check
+        run: uv run ruff check .
+
+      - name: mypy type check
+        run: uv run mypy .
+
+      - name: Run pytest suite
+        run: uv run pytest
