@@ -1,8 +1,8 @@
 # نقشه راه سامانه گزارش حسابداری تلگرام
 
-> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-03 پذیرفته و ادغام شده‌اند و G1 باز است
+> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-03 پذیرفته و ادغام شده‌اند، WP-04 صادر شده و G1 باز است
 >
-> نسخه: 0.35
+> نسخه: 0.36
 >
 > آخرین به‌روزرسانی: 2026-08-30
 >
@@ -569,7 +569,7 @@
 
 > وضعیت این زیربخش: ✅ معماری و خانواده فناوری‌های O-52 تا O-56 تأیید شده‌اند. نسخه دقیق بسته‌ها هنگام ساخت Baseline فنی در `uv.lock` قفل می‌شود؛ Spikeها و آزمون‌های ذکرشده همچنان شرط عبور Gate مربوط هستند.
 
-- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد فنی Canonical و Hash منبع O-68 نیز در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md) ثبت شده است؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
+- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد Canonical/Hash منبع O-68 در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md) و قرارداد Snapshot کامل/Change Plan منبع O-69 در [ADR-0007](docs/adr/ADR-0007-full-snapshot-change-plan.md) ثبت شده‌اند؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
 
 - ✅ ساختار کلان: Monorepo با Modular Monolith برای بخش سرور و یک Agent مستقل ویندوز. هسته Domain و قواعد حسابداری Python خالص و مستقل از FastAPI، Telegram و دیتابیس می‌ماند؛ API/Webhook و Workerها Processهای جدا ولی مصرف‌کننده همان کد دامنه‌اند.
 - ✅ زبان پایه: Python 3.13 برای Agent و سرور، با `pyproject.toml` و Lockfile قطعی. یک Spike روی کپی مجاز اکسل باید پیش از G1 سازگاری COM، بسته‌بندی و نسخه Python را اثبات کند.
@@ -775,6 +775,7 @@
 - ✅ WP-01 اسکلت Monorepo مصوب، Python 3.13، `uv`/Lockfile، مرز خودکار Domain، کنترل‌های Ruff/mypy/pytest و CI دو سکویی را ایجاد کرد؛ Codex آن را پس از Handoff، اصلاحات و Run نهایی PR #7 پذیرفت. این شاهد فقط زیرساخت G1 است و خود G1 را نمی‌بندد.
 - ✅ WP-02 قرارداد نسخه‌دار و عمیقاً تغییرناپذیر ورودی خام چهار شیت، نگاشت دقیق `Z/P/P/D`، تفکیک Literal/Formula/Cached/Derived/Unlisted، نوع‌های بدون Float و ناوردایی‌های ساختاری را با Fixture صرفاً ساختگی تثبیت کرد؛ Codex آن را پس از بازبینی مستقل، یک دور اصلاح، 36 آزمون و CI دو سکویی PR #10 پذیرفت. این شاهد مرز منبع G1 است و خود G1 را نمی‌بندد.
 - ✅ WP-03 قرارداد Canonical نسخه‌دار تاریخ/عدد، `source_hash` و `sheet_snapshot_hash` را طبق O-68/ADR-0006 پیاده کرد؛ Codex پس از بازبینی مستقل، یک دور اصلاح Grammar/TypeTag/Property Test/اسکن، 64 آزمون و CI دو سکویی PR #13 آن را پذیرفت. این شاهد تغییر قطعی منبع و شیت است و خود G1 را نمی‌بندد.
+- 🧪 WP-04 برای پیاده‌سازی `source-change-plan.v1` طبق O-69/ADR-0007 صادر شد: Snapshot تایپ‌شده و کامل چهار شیت، رجیستری همه هویت‌های Active/Voided، برنامه قطعی Insert/Edit/`void`/بدون‌تغییر، Revision بعدی، منع انتقال UUID میان شیت‌ها و Property Test ترتیب/Idempotency؛ این بسته هیچ Excel/SQLite/Import Commit واقعی ندارد و پس از Handoff و بازبینی Codex تعیین تکلیف می‌شود.
 - تهیه نسخه پشتیبان کنترل‌شده از اکسل.
 - اجرای کنترل‌شده UUIDv7، Source/Ledger/Sheet SHA-256 و سال مالی پس از دریافت اجازه جداگانه تغییر کپی اکسل.
 - تعریف Whitelist ورودی خام چهار شیت و جداسازی Raw Immutable از Formula/Function/Query/Cached Value اکسل.
@@ -1488,6 +1489,16 @@
 - **شاهد اجرا:** WP-03 با Golden bytes/digest چهار شیت و Snapshot، حساسیت تک‌تک فیلدهای Raw، Property Test ترتیب Mapping/Snapshot، اثر Insert/Edit/Delete، مرزهای Decimal/Null/Text/TypeTag، آزمون تقویم/`Asia/Tehran` و 64 آزمون موفق پذیرفته شد؛ CI نهایی Windows/Linux در Run `33329429229` و Merge Commit برابر `6be9fef` است.
 - **تاریخ تصمیم:** 2026-08-30.
 
+### O-69 — Snapshot کامل و برنامه تغییر قطعی منبع
+
+- **وضعیت:** ✅ بسته؛ قرارداد فنی نسخه 1 توسط Codex مدیر پروژه تصویب و در ADR-0007 ثبت شد.
+- **موضوع:** جلوگیری از تبدیل Snapshot ناقص به حذف کاذب و تولید نتیجه یکسان Insert/Edit/`void`/بدون‌تغییر مستقل از ترتیب شیت و ردیف.
+- **تصمیم:** `source-change-plan.v1` فقط یک `ValidatedSourceWorkbookSnapshot` تایپ‌شده را می‌پذیرد که دقیقاً هر چهار شیت WP-02 را یک‌بار دارد، UUID/Raw/Hash هر ردیف را با WP-03 بازتولید کرده و UUID را در کل Workbook یکتا می‌داند؛ فلگ‌هایی مانند `allow_void`/`is_complete` و Hash مورداعتماد Caller مجاز نیستند. وضعیت قبلی همه هویت‌های Active و Voided، Home Sheet و آخرین Revision را نگه می‌دارد و Plan با ترتیب شیت رجیستری سپس bytes UUID ساخته می‌شود.
+- **انتقال‌ها:** هویت تازه Insert با Revision 1؛ Active با Hash یکسان بدون‌تغییر؛ Active با Hash متفاوت Edit و Revision بعدی؛ Active غایب فقط در Snapshot کامل `void` و Tombstone Revision بعدی؛ Voided غایب بدون رویداد؛ بازگشت Voided در همان شیت Edit/فعال‌سازی دوباره و Revision بعدی است. انتقال UUID شناخته‌شده به شیت دیگر خطای هویتی سراسری است و به Void+Insert تبدیل نمی‌شود.
+- **مرز:** اعتبار Source Contract شرط لازم است ولی به‌تنهایی اجازه Commit نیست؛ Requiredness/Business Validation، Parser اکسل، فایل Snapshot، SQLite، `import_id`، Commit اتمیک، Outbox و دامنه اثر مؤجل‌اند. WP-04 فقط مدل/Planner خالص و شواهد ساختگی را می‌سازد و هیچ دسترسی به Excel یا داده واقعی ندارد.
+- **شاهد لازم:** جدول انتقال کامل، رد Missing/Duplicate/Unknown Sheet و UUID سراسری/Relocation، Deep Immutability، شمارش/Revision دقیق، Property Test جایگشت و Retry منطقی، Hash شیت مطابق WP-03 و شاهد نبود مقایسه درجه دو روی 15,000 ردیف ساختگی.
+- **تاریخ تصمیم:** 2026-08-30.
+
 ## 22. ریسک‌های اصلی
 
 | ریسک | اثر | اقدام کنترلی پیشنهادی |
@@ -1558,6 +1569,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.36 | 2026-08-30 | بستن O-69 و ثبت ADR-0007 برای Snapshot تایپ‌شده کامل چهار شیت، یکتایی سراسری UUID/Home Sheet دائمی، رجیستری Active/Voided و Plan قطعی Insert/Edit/`void`/بدون‌تغییر با Revision بعدی، بازفعال‌سازی Voided به‌عنوان Edit و منع انتقال میان شیت‌ها؛ صدور WP-04 با Property/Idempotency/Immutability و شاهد کارایی 15,000 ردیف ساختگی، بدون Excel، SQLite یا بستن G1 |
 | 0.35 | 2026-08-30 | ثبت پذیرش شاهددار WP-03 توسط Codex مدیر پروژه پس از بازبینی مستقل و یک دور اصلاح: سخت‌گیری Grammar رقم/جداکننده، خطای تایپ‌شده TypeTag، حذف فهرست تکراری شیت و تغییر خارج Scope mypy، Fixture کاملاً ساختگی و اسکن شکست‌پذیر، حساسیت همه فیلدهای Raw و Property Test permutation؛ تثبیت `persiantools 6.2.0`، Golden Vectorهای چهار شیت/Snapshot و `source-hash.v1`/`sheet-snapshot-hash.v1`؛ موفقیت 64 آزمون و CI Windows/Linux Run `33329429229`، ادغام PR #13 با Commit `6be9fef` و حفظ G1 در وضعیت باز |
 | 0.34 | 2026-08-30 | بستن O-68 و ثبت ADR-0006 برای Canonical UTF-8 JSON آرایه‌ای تایپ‌دار، نسخه‌های `jalali-date.v1`/`source-hash.v1`/`sheet-snapshot-hash.v1`، قواعد صریح Null/Text/Integer/Decimal/تاریخ شمسی و UUIDv7 مرتب؛ تعویق آگاهانه `ledger_hash` تا فاز 2؛ صدور WP-03 با Golden Vector، Property Test، آزمون تقویم/`Asia/Tehran` و حفاظت کامل Excel/داده واقعی، بدون بستن G1 |
 | 0.33 | 2026-08-30 | ثبت پذیرش شاهددار WP-02 توسط Codex مدیر پروژه: بازبینی مستقل و یک دور اصلاح Antigravity برای Deep Immutability، یکتایی سراسری نام فیلد و مرز واقعی `A:XFD`؛ تطبیق قرارداد دقیق چهار شیت و شناسه‌های `Z/P/P/D`، حذف Formula/Cached/Derived/Unlisted از Raw، نبود Float و حفاظت کامل Excel/داده واقعی؛ موفقیت 36 آزمون، Handoff/Acceptance Matrix/Test Results، اسکن دارایی/Secret و CI نهایی Linux/Windows در Run `33326970537`؛ ادغام PR #10 با Commit `5c99749` بدون بستن G1 |
