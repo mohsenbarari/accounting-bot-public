@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Work Package: Phase 0 — Architecture baseline
-- Decision owner: Product Owner؛ ثبت و بازبینی توسط Codex
+- Decision owner: مالک محصول برای تصمیم اصلی؛ حاکمیت اجرای فعلی با Codex مدیر پروژه طبق Roadmap 0.31
 
 ## Context
 
@@ -58,7 +58,7 @@ Option A انتخاب شده است: `FastAPI`، `Pydantic v2`، `SQLAlchemy 2.0
 
 ## Migration and rollback impact
 
-Rollback برنامه باید با Schema فعلی سازگار باشد. Migration مخرب، حذف تاریخچه مالی/ممیزی یا Queue و تغییر Backend دیتابیس نیازمند Backup، Rehearsal، ADR و تأیید جداگانه کاربر است.
+Rollback برنامه باید با Schema فعلی سازگار باشد. Migration مخرب، حذف تاریخچه مالی/ممیزی یا Queue و اقدام روی داده واقعی نیازمند Backup، Rehearsal، ADR و اختیار هدف‌دار مالک است.
 
 ## Reconsideration triggers
 
@@ -68,4 +68,4 @@ Rollback برنامه باید با Schema فعلی سازگار باشد. Migra
 
 ## Approval required
 
-این تصمیم در O-54 و مراحل Import تأیید شده است. افزودن Broker یا تغییر دیتابیس تصمیم تازه و منوط به ADR و تأیید کاربر است؛ اجرای فعلی پس از G0 آغاز می‌شود.
+این تصمیم در O-54 و مراحل Import تأیید شده و G0 در 2026-08-30 بسته شده است. افزودن Broker یا تغییر Backend دیتابیس به ADR و تصمیم Codex مدیر پروژه نیاز دارد؛ هزینه یا سرویس تازه و اقدام Production اختیار هدف‌دار مالک را می‌خواهد.
