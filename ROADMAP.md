@@ -1,8 +1,8 @@
 # نقشه راه سامانه گزارش حسابداری تلگرام
 
-> وضعیت سند: مصوب برای شروع فاز 1؛ G0 در 2026-08-30 توسط Codex مدیر پروژه بسته شد
+> وضعیت سند: فاز 1 فعال؛ G0 بسته و WP-01 در 2026-08-30 توسط Codex مدیر پروژه پذیرفته شد
 >
-> نسخه: 0.31
+> نسخه: 0.32
 >
 > آخرین به‌روزرسانی: 2026-08-30
 >
@@ -737,8 +737,8 @@
 - 🧪 هیچ Agentی بدون اجازه صریح فایل Excel مرجع، شماره/داده واقعی، Telegram تولید، سرور/DNS تولید، Secret، Migration مخرب یا وضعیت‌های Roadmap را تغییر ندهد.
 - ✅ مخزن عمومی مستقل با یک Root Commit تازه ساخته و کل تاریخ آن پیش از انتشار Scan شد؛ Excel، SQLite، داده/شماره واقعی، Credential، IP/شناسه مخزن خصوصی و Artifact داخلی در آن وجود ندارند و مقادیر استقرار فقط با Placeholder محیطی نمایش داده می‌شوند.
 - ✅ Antigravity در نشست واقعی نسخه Project Scope مخزن عملیاتی را از طریق مسیر Global در `/skills` کشف کرد و Dry Run ارائه‌شده توسط کاربر نشان داد پیش از G0 کدنویسی را رد و Roadmap/Excel/داده واقعی/`main`/Production را محافظت می‌کند.
-- 🧪 تولید Handoff کامل، Acceptance Matrix و Test Results معتبر و توقف برای بازبینی Codex باید در نخستین Work Package شاهددار پس از تصویب G0 اثبات شود؛ این شاهد اجرایی با Dry Run خواندنی پیش از G0 یکی نیست و بسته‌شدن Gate همان Work Package را کنترل می‌کند.
-- 🧪 `uv.lock` نصب تکرارپذیر Agent و Server را روی محیط‌های هدف بدهد و CI در صورت Lockfile ناسازگار، Ruff، mypy یا آزمون ناموفق شکست بخورد.
+- ✅ نخستین Work Package شاهددار پس از G0 با Handoff کامل، Acceptance Matrix، Test Results، توقف مجری و دو چرخه بازبینی/اصلاح مستقل انجام شد؛ WP-01 در PR #7 با Merge Commit `4f9ad3eae9ccfe376a917ec7a9653bcc7e7fc128` پذیرفته شد.
+- ✅ `uv` نسخه `0.12.7` و `uv.lock` نصب Frozen همه Workspaceها/Groupها را روی Linux و Windows تکرار کردند و CI نهایی Run `33324657599` در Lock check، Ruff، mypy و 21 آزمون روی هر دو سیستم موفق شد.
 - 🧪 Docker Compose آزمایشی شامل Caddy، API/Webhook، Worker و PostgreSQL با Healthcheck، Restart و Migration کنترل‌شده بالا بیاید و بازیابی پس از Restart میزبان را بدون از دست‌رفتن Job اثبات کند.
 
 ## 20. فازهای اجرایی و دروازه‌ها
@@ -772,6 +772,7 @@
 
 ### فاز 1 — تثبیت منبع و مدل داده
 
+- ✅ WP-01 اسکلت Monorepo مصوب، Python 3.13، `uv`/Lockfile، مرز خودکار Domain، کنترل‌های Ruff/mypy/pytest و CI دو سکویی را ایجاد کرد؛ Codex آن را پس از Handoff، اصلاحات و Run نهایی PR #7 پذیرفت. این شاهد فقط زیرساخت G1 است و خود G1 را نمی‌بندد.
 - تهیه نسخه پشتیبان کنترل‌شده از اکسل.
 - اجرای کنترل‌شده UUIDv7، Source/Ledger/Sheet SHA-256 و سال مالی پس از دریافت اجازه جداگانه تغییر کپی اکسل.
 - تعریف Whitelist ورودی خام چهار شیت و جداسازی Raw Immutable از Formula/Function/Query/Cached Value اکسل.
@@ -1545,6 +1546,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.32 | 2026-08-30 | ثبت پذیرش شاهددار WP-01 توسط Codex مدیر پروژه: دو چرخه Review/اصلاح Antigravity، Handoff/Acceptance Matrix/Test Results معتبر، قفل `uv 0.12.7` و Sync Frozen همه Workspaceها/Groupها، مرز خودکار Domain، اسکن پاک دارایی/Secret، موفقیت 21 آزمون و CI نهایی Linux/Windows در Run `33324657599`، ادغام PR #7 با Commit `4f9ad3e`؛ تبدیل شاهد نخستین Handoff و Baseline تکرارپذیر به ✅ بدون بستن G1 |
 | 0.31 | 2026-08-30 | اجرای تصمیم تازه مالک درباره حاکمیت: Codex به‌عنوان مدیر پروژه/بازبین مسئول Roadmap، Work Package، ADR، Gate و Merge شد؛ Antigravity مجری بدون خودتأییدی ماند؛ مالک چشم‌انداز و آزمون پذیرش نهایی/اصلاحات را برعهده گرفت؛ مجوزهای ویژه Excel/داده/Secret/Production/هزینه/عملیات مخرب حفظ شدند؛ شواهد فاز صفر بررسی، G0 توسط مدیر پروژه بسته و فاز 1 مجاز شد؛ معیار G3/G7، O-46/O-47/O-49/O-50، ریسک‌ها و تعریف پایان هماهنگ شدند |
 | 0.30 | 2026-08-30 | ثبت شاهد واقعی `/skills` و Dry Run ارائه‌شده توسط کاربر: کشف Skill پروژه‌ای، تشخیص تصویب‌نشدن G0، رد کدنویسی و حفاظت صحیح Roadmap/Excel/داده/`main`/Production؛ تغییر فاز صفر به «آماده تصویب» بدون بستن G0؛ تفکیک شاهد موفق پیش از G0 از آزمون Handoff کامل که در نخستین Work Package پس از G0 انجام می‌شود |
 | 0.29 | 2026-08-30 | ثبت اصلاح کاربر مبنی بر وجود فقط یک Volume متصل و تکمیل شاهد فاز صفر: ساخت دایرکتوری مستقل و Bind Mount پایدار `/srv/accounting-bot` بدون Format یا دست‌زدن به داده موجود؛ Clone عمومی و بدون Credential در `workspace` و تطبیق Commit/Worktree؛ تبدیل نصب Global مستقل Skill به Symlink مدیریت‌شده Project Scope همراه Backup، Hash و Validator موفق؛ باقی‌ماندن فقط `/skills` و Dry Run واقعی به‌صورت 🧪 و عدم تغییر G0 |

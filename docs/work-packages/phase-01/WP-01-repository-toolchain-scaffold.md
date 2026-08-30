@@ -2,9 +2,13 @@
 
 - Phase: 1 — source and data-model foundation
 - Gate contribution: G1 foundation only; this Work Package cannot close G1
-- Status: Authorized for implementation
+- Status: Accepted and merged
 - Issued by: Codex Project Manager
 - Issued on: 2026-08-30
+- Accepted by: Codex Project Manager
+- Accepted on: 2026-08-30
+- Review evidence: PR #7 and final CI Run `33324657599`
+- Merge commit: `4f9ad3eae9ccfe376a917ec7a9653bcc7e7fc128`
 - Required skill: `accounting-bot-implementer`
 - Branch: `antigravity/phase-01-repository-toolchain`
 - Baseline: latest clean `origin/main` containing this Work Package
