@@ -1,0 +1,22 @@
+[project]
+name = "accounting-persistence"
+version = "0.1.0"
+description = "Persistence layer, SQLAlchemy models and Alembic migrations"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "accounting-domain",
+    "accounting-contracts",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+    "psycopg[binary]>=3.2.0",
+    "pydantic>=2.10.0",
+]
+
+[tool.uv.sources]
+accounting-domain = { workspace = true }
+accounting-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

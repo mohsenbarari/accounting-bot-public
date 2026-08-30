@@ -1,0 +1,78 @@
+[project]
+name = "accounting-bot-workspace"
+version = "0.1.0"
+description = "Monorepo workspace for Telegram accounting reporting system"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "apps/*",
+    "packages/*",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "hypothesis>=6.112.0",
+    "testcontainers[postgres]>=4.9.0",
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+extend-exclude = [
+    ".agents",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "C4",
+    "UP",
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+exclude = [
+    "^\\.agents/",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "persiantools.*",
+    "watchdog.*",
+    "win32com.*",
+    "pythoncom.*",
+    "win32gui.*",
+    "win32con.*",
+    "win32process.*",
+    "playwright.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"

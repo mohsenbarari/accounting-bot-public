@@ -1,0 +1,11 @@
+[project]
+name = "accounting-domain"
+version = "0.1.0"
+description = "Pure Python accounting domain models and calculation engine"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

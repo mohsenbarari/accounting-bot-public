@@ -1,0 +1,26 @@
+[project]
+name = "accounting-local-agent"
+version = "0.1.0"
+description = "Windows local agent for Excel monitoring, streaming XLSX ingestion and sync"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "accounting-domain",
+    "accounting-contracts",
+    "watchdog>=5.0.0",
+    "lxml>=5.3.0",
+    "httpx>=0.28.0",
+    "cryptography>=44.0.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "pyinstaller>=6.11.0",
+    "pywin32>=308; sys_platform == 'win32'",
+]
+
+[tool.uv.sources]
+accounting-domain = { workspace = true }
+accounting-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

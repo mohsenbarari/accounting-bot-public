@@ -1,0 +1,27 @@
+[project]
+name = "accounting-server-api"
+version = "0.1.0"
+description = "FastAPI server application for Sync endpoints and Telegram Webhook"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "accounting-domain",
+    "accounting-contracts",
+    "accounting-persistence",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "sqlalchemy>=2.0.36",
+    "psycopg[binary]>=3.2.0",
+    "aiogram>=3.17.0",
+]
+
+[tool.uv.sources]
+accounting-domain = { workspace = true }
+accounting-contracts = { workspace = true }
+accounting-persistence = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

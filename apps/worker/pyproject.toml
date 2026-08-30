@@ -1,0 +1,30 @@
+[project]
+name = "accounting-worker"
+version = "0.1.0"
+description = "Background worker process for durable PostgreSQL queue, reporting and Telegram delivery"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "accounting-domain",
+    "accounting-contracts",
+    "accounting-persistence",
+    "accounting-reporting",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "sqlalchemy>=2.0.36",
+    "psycopg[binary]>=3.2.0",
+    "aiogram>=3.17.0",
+    "persiantools>=3.0.0",
+    "jinja2>=3.1.0",
+    "playwright>=1.49.0",
+]
+
+[tool.uv.sources]
+accounting-domain = { workspace = true }
+accounting-contracts = { workspace = true }
+accounting-persistence = { workspace = true }
+accounting-reporting = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
