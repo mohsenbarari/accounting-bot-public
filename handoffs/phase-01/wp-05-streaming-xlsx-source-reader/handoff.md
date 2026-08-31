@@ -19,6 +19,7 @@
   - `137f9e7` (docs(handoff): update round 3 review commits and validation status in WP-05 handoff)
   - `e3e69d1` (fix(local_agent): address Codex review round 4 findings R4-01-R4-06 in streaming XLSX reader (WP-05))
   - `42d9825` (docs(handoff): record round 4 review implementation commits and test evidence in WP-05 handoff)
+  - `15488ac` (docs(handoff): update commit list in WP-05 handoff)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -38,12 +39,14 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
   - Safe package relationship resolution (`_rels/.rels`, `xl/_rels/workbook.xml.rels`) for Transitional and Strict SpreadsheetML, validating unique `officeDocument` and `sharedStrings` targets.
   - Multi-pass streaming algorithm: Pass 1 discovers array and data-table formula coverage bounding boxes across each sheet with fast interval indexing and collects candidate Shared String Table (SST) references; SST pass selectively decodes only referenced indices; Pass 2 streams row elements, validates row 1 exact Persian and technical ID headers without stripping, evaluates row activity exclusively from literal inputs before decoding other fields, decodes cell literals, filters covered cells, verifies UUIDv7 format and global uniqueness, and constructs WP-04 snapshot inputs.
   - Strict text and leaf validation: Unsupported child tags inside text and value leaf nodes (`t` and `v`) raise `XlsxCellError(REASON_CELL_UNKNOWN_TYPE)` instead of false conversion; XML comments inside text nodes are preserved; strict worksheet root connection ignores nested worksheets inside `extLst`.
+  - Raw preservation & numeric validation (Finding R5-01): Text in numeric/financial columns (`inlineStr`, `t="str"`, shared strings) retains exact original `str` (spaces, leading zeros, Persian/Arabic digits) in `raw_values`; financial numeric XML (`t=""` or `t="n"` with `v` element text) directly becomes `Decimal` (never `int` or `float`), preserving exact scale/precision; strict numeric XML regex applies only to numeric XML; active rows with explicit blank text in required numeric columns raise `XlsxCellError(REASON_CELL_INVALID_NUMERIC_LEXEME)`; true missing cells remain `None`.
   - Exact Persian & technical headers matching: Validates all required Persian headers and technical ID headers (`record_id`) on row 1 with strict string equality (no `.strip()`), rejecting formula-backed or array-formula covered headers.
   - Selective SST index decoding: Decodes only SST indices needed for active source inputs (excluding derived columns, non-whitelisted columns, formula cells, formula-covered cells, optional headers, and inactive rows). Corrupt SST strings at unused indices (e.g. index 0) do not fail parsing.
   - Strict numeric/SST grammar: Strict regex `^(?:0|[1-9][0-9]*)$` for SST indices; domain and canonical date validation errors directly consumed and mapped to `XlsxCellError` with coordinate metadata and zero data leakage.
 - Public exports in `apps/local_agent/src/accounting_local_agent/__init__.py`.
 - Documentation in `apps/local_agent/README.md`.
 - Comprehensive unit, integration, property and 15,000-row streaming benchmark tests in `tests/test_xlsx_source_reader.py`.
+- Standalone regression test suite in `tests/test_xlsx_source_reader_raw_contract_regressions.py` covering text Raw preservation, financial Decimal XML, blank activity handling, and 4-sheet independent oracle verification.
 - Handoff package and acceptance evidence.
 
 ### Out of scope
@@ -69,10 +72,8 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 
 | File | Change | Reason |
 |---|---|---|
-| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Addressed Codex review round 4 findings R4-01–R4-06: strict leaf node validation, root worksheet ancestry check, exact header matching without strip, selective SST index collection & decoding, strict numeric & SST grammar, canonical error mapping, and streaming performance optimizations |
-| `tests/test_xlsx_source_reader.py` | Modified | Addressed Codex review round 4 findings: full test coverage for R4-01 through R4-06, 11 referenced test names, real XLSX planner lifecycle, Hypothesis order invariance, and 15,000-row streaming benchmark |
-| `apps/local_agent/src/accounting_local_agent/__init__.py` | Modified | Export public reader function, result types, and errors |
-| `apps/local_agent/README.md` | Modified | Document reader architecture, streaming execution strategy, supported profile, and blank-row rules |
+| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Addressed Codex review round 5 finding R5-01 (Raw preservation and canonical numeric validation): preserved exact raw str for text in numeric columns, returned Decimal directly for financial numeric XML, canonical validation in active rows with typed XlsxCellError, fast coordinate parsing, and row decode memoization |
+| `tests/test_xlsx_source_reader_raw_contract_regressions.py` | Added | Standalone regression test suite for R5-A: Raw text preservation, financial Decimal scale preservation, blank cell activity matrix, and 4-sheet independent oracle |
 | `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Updated handoff document, acceptance matrix, and test results |
 
 ## Schema and migrations
@@ -89,11 +90,11 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 | `uv --version` | 0 | Verify uv version 0.12.7 |
 | `uv lock --check` | 0 | Verify lockfile consistency |
 | `uv sync --frozen --all-packages --all-groups` | 0 | Verify frozen dependencies installation |
-| `uv run ruff format --check .` | 0 | Verify formatting compliance across 52 files |
+| `uv run ruff format --check .` | 0 | Verify formatting compliance across 53 files |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
-| `uv run mypy .` | 0 | Verify strict static typing across 19 source files |
-| `uv run pytest -v` | 0 | Execute all 127 unit, benchmark, integration and property tests |
-| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (14.3065s under 15.0s) and peak memory (80.75 MiB under 128.0 MiB) |
+| `uv run mypy .` | 0 | Verify strict static typing across 20 source files |
+| `uv run pytest -v` | 0 | Execute all 131 unit, benchmark, integration, property and standalone regression tests |
+| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (14.4418s under 15.0s) and peak memory (79.22 MiB under 128.0 MiB) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
 | `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
 | `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); sys.exit(0 if res.returncode == 1 else 1)"` | 0 | Verify zero sensitive credentials, IPs or real phone numbers in code/tests |
@@ -132,4 +133,4 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 
 ## Stop state
 
-Implementation is stopped pending independent Codex review. Gate G1 remains open. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation is stopped pending independent Codex review. Gate G1 remains OPEN. No Gate approval, merge, push, deploy, or next Work Package has been performed.

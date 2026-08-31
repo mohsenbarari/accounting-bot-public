@@ -23,16 +23,20 @@ from types import MappingProxyType
 from typing import Any
 
 from accounting_contracts.canonical_date import (
+    CanonicalDateError,
     InvalidDateError,
     parse_canonical_jalali_date,
 )
-from accounting_contracts.canonical_hashing import CanonicalValueError
+from accounting_contracts.canonical_hashing import (
+    CanonicalValueError,
+    TypeTag,
+    canonicalize_value,
+)
 from accounting_contracts.raw_input_contracts import (
     RAW_CONTRACT_REGISTRY,
     RawColumnContract,
     RawSheetContract,
     ValueKind,
-    is_valid_excel_column,
 )
 from accounting_contracts.source_change_plan import (
     DuplicateIdentityError,
@@ -101,6 +105,19 @@ _TAG_IS = tuple(f"{{{ns}}}is" for ns in _VALID_SPREADSHEETML_NAMESPACES)
 _TAG_SI = tuple(f"{{{ns}}}si" for ns in _VALID_SPREADSHEETML_NAMESPACES)
 _TAG_T = tuple(f"{{{ns}}}t" for ns in _VALID_SPREADSHEETML_NAMESPACES)
 _TAG_R = tuple(f"{{{ns}}}r" for ns in _VALID_SPREADSHEETML_NAMESPACES)
+
+_TAG_T_SET = set(_TAG_T) | {"t"}
+_TAG_R_SET = set(_TAG_R) | {"r"}
+_TAG_IGNORE_IS = {
+    f"{{{ns}}}{name}"
+    for ns in _VALID_SPREADSHEETML_NAMESPACES
+    for name in ("rPh", "phoneticPr")
+} | {"rPh", "phoneticPr"}
+_TAG_IGNORE_R = {
+    f"{{{ns}}}{name}"
+    for ns in _VALID_SPREADSHEETML_NAMESPACES
+    for name in ("rPr", "rPh", "phoneticPr")
+} | {"rPr", "rPh", "phoneticPr"}
 
 # Strict fullmatch regexes (R5)
 _CELL_REF_STRICT_REGEX = re.compile(r"^[A-Za-z]{1,3}[1-9][0-9]*$")
@@ -417,18 +434,11 @@ def _extract_text_from_si_or_is(
     """
     text_fragments: list[str] = []
     for child in elem:
-        if not isinstance(child.tag, str):
+        c_tag = child.tag
+        if not isinstance(c_tag, str):
             continue
-        q = etree.QName(child)
-        if q.namespace not in _VALID_SPREADSHEETML_NAMESPACES:
-            raise XlsxCellError(
-                REASON_CELL_UNKNOWN_TYPE,
-                sheet_name=sheet_name,
-                cell_ref=cell_ref,
-                physical_row_number=physical_row_number,
-            )
 
-        if q.localname == "t":
+        if c_tag in _TAG_T_SET:
             raw_t = _extract_t_or_v_leaf_text(
                 child,
                 sheet_name=sheet_name,
@@ -436,19 +446,12 @@ def _extract_text_from_si_or_is(
                 physical_row_number=physical_row_number,
             )
             text_fragments.append(_decode_ooxml_escapes(raw_t))
-        elif q.localname == "r":
+        elif c_tag in _TAG_R_SET:
             for r_child in child:
-                if not isinstance(r_child.tag, str):
+                rc_tag = r_child.tag
+                if not isinstance(rc_tag, str):
                     continue
-                rq = etree.QName(r_child)
-                if rq.namespace not in _VALID_SPREADSHEETML_NAMESPACES:
-                    raise XlsxCellError(
-                        REASON_CELL_UNKNOWN_TYPE,
-                        sheet_name=sheet_name,
-                        cell_ref=cell_ref,
-                        physical_row_number=physical_row_number,
-                    )
-                if rq.localname == "t":
+                if rc_tag in _TAG_T_SET:
                     raw_t = _extract_t_or_v_leaf_text(
                         r_child,
                         sheet_name=sheet_name,
@@ -456,7 +459,7 @@ def _extract_text_from_si_or_is(
                         physical_row_number=physical_row_number,
                     )
                     text_fragments.append(_decode_ooxml_escapes(raw_t))
-                elif rq.localname in ("rPr", "rPh", "phoneticPr"):
+                elif rc_tag in _TAG_IGNORE_R:
                     continue
                 else:
                     raise XlsxCellError(
@@ -465,7 +468,7 @@ def _extract_text_from_si_or_is(
                         cell_ref=cell_ref,
                         physical_row_number=physical_row_number,
                     )
-        elif q.localname in ("rPh", "phoneticPr"):
+        elif c_tag in _TAG_IGNORE_IS:
             continue
         else:
             raise XlsxCellError(
@@ -495,17 +498,28 @@ _CELL_REF_PARSER_REGEX = re.compile(r"^([A-Z]{1,3})([1-9][0-9]*)$")
 
 
 def _parse_cell_ref(ref: str) -> tuple[str, int, int]:
-    """Parse cell coordinate reference strictly using regex parser (R5)."""
-    m = _CELL_REF_PARSER_REGEX.match(ref)
-    if m is None:
+    """Parse cell coordinate reference strictly using fast string slicing (R5)."""
+    col_letter = ref.rstrip("0123456789")
+    row_part = ref[len(col_letter) :]
+
+    if (
+        not col_letter
+        or not row_part
+        or not col_letter.isalpha()
+        or not col_letter.isupper()
+        or not row_part.isdigit()
+        or row_part.startswith("0")
+    ):
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
 
-    col_letter = m.group(1)
-    row_num = int(m.group(2))
-
-    if not is_valid_excel_column(col_letter):
+    if not (1 <= len(col_letter) <= 3):
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
 
+    col_num = _parse_col_and_num(col_letter)
+    if col_num < 1 or col_num > 16384:
+        raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
+
+    row_num = int(row_part)
     if row_num > MAX_PHYSICAL_ROW:
         raise XlsxStructureError(
             REASON_STRUCTURE_ROW_OUT_OF_BOUNDS,
@@ -513,7 +527,6 @@ def _parse_cell_ref(ref: str) -> tuple[str, int, int]:
             physical_row_number=row_num,
         )
 
-    col_num = _parse_col_and_num(col_letter)
     return col_letter, col_num, row_num
 
 
@@ -795,11 +808,16 @@ def _discover_sheet_metadata_and_needed_sst(
                         if has_sst and f_elem is None:
                             cell_ref = c_elem.get("r")
                             if cell_ref:
-                                m = _CELL_REF_PARSER_REGEX.match(cell_ref)
-                                if m is not None:
-                                    col_let = m.group(1)
+                                col_let = cell_ref.rstrip("0123456789")
+                                row_part = cell_ref[len(col_let) :]
+                                if (
+                                    col_let
+                                    and row_part
+                                    and row_part.isdigit()
+                                    and not row_part.startswith("0")
+                                ):
                                     col_num = _parse_col_and_num(col_let)
-                                    c_row = int(m.group(2))
+                                    c_row = int(row_part)
                                     if c_row == physical_row_num:
                                         if physical_row_num == 1:
                                             if (
@@ -1117,49 +1135,27 @@ def _decode_cell_literal_value(
             physical_row_number=physical_row_num,
         )
 
-    # If this is a raw column
-    if field_contract is not None:
-        if field_contract.field_name == "date_raw":
-            raise XlsxCellError(
-                REASON_CELL_NUMERIC_XML_IN_TEXT_FIELD,
-                sheet_name=sheet_name,
-                cell_ref=cell_ref,
-                physical_row_number=physical_row_num,
-            )
-        if field_contract.value_kind in (
-            ValueKind.INTEGER_TOMAN,
-            ValueKind.DECIMAL,
-        ):
-            try:
-                dec = Decimal(raw_num_str)
-                if (
-                    field_contract.value_kind == ValueKind.INTEGER_TOMAN
-                    and dec % 1 != 0
-                ):
-                    raise XlsxCellError(
-                        REASON_CELL_INVALID_NUMERIC_LEXEME,
-                        sheet_name=sheet_name,
-                        cell_ref=cell_ref,
-                        physical_row_number=physical_row_num,
-                    )
-                return (
-                    int(dec)
-                    if field_contract.value_kind == ValueKind.INTEGER_TOMAN
-                    else dec
-                )
-            except (InvalidOperation, ValueError) as e:
-                raise XlsxCellError(
-                    REASON_CELL_INVALID_NUMERIC_LEXEME,
-                    sheet_name=sheet_name,
-                    cell_ref=cell_ref,
-                    physical_row_number=physical_row_num,
-                ) from e
-        if field_contract.value_kind == ValueKind.RAW_TEXT:
-            return raw_num_str
+    # If this column is stable_id -> numeric XML is forbidden
+    if is_stable_id:
+        raise XlsxCellError(
+            REASON_CELL_NUMERIC_XML_IN_TEXT_FIELD,
+            sheet_name=sheet_name,
+            cell_ref=cell_ref,
+            physical_row_number=physical_row_num,
+        )
+
+    # If this is date_raw -> numeric XML is forbidden
+    if field_contract is not None and field_contract.field_name == "date_raw":
+        raise XlsxCellError(
+            REASON_CELL_NUMERIC_XML_IN_TEXT_FIELD,
+            sheet_name=sheet_name,
+            cell_ref=cell_ref,
+            physical_row_number=physical_row_num,
+        )
 
     try:
         return Decimal(raw_num_str)
-    except InvalidOperation as e:
+    except (InvalidOperation, ValueError) as e:
         raise XlsxCellError(
             REASON_CELL_INVALID_NUMERIC_LEXEME,
             sheet_name=sheet_name,
@@ -1196,7 +1192,7 @@ def _decode_row_column_value(
         return None
 
     field = raw_col_by_letter.get(col_letter)
-    val = _decode_cell_literal_value(
+    return _decode_cell_literal_value(
         c_el,
         col_letter,
         physical_row_num,
@@ -1205,65 +1201,6 @@ def _decode_row_column_value(
         is_id,
         shared_strings_map,
     )
-    if field is not None and val is not None:
-        if field.value_kind in (ValueKind.INTEGER_TOMAN, ValueKind.DECIMAL):
-            if isinstance(val, str):
-                val_str = val.strip()
-                if not val_str:
-                    return None
-                if (
-                    not _NUMERIC_XML_STRICT_REGEX.fullmatch(val_str)
-                    or "e" in val_str.lower()
-                ):
-                    raise XlsxCellError(
-                        REASON_CELL_INVALID_NUMERIC_LEXEME,
-                        sheet_name=sheet_name,
-                        cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
-                        physical_row_number=physical_row_num,
-                    )
-                if field.value_kind == ValueKind.INTEGER_TOMAN and "." in val_str:
-                    raise XlsxCellError(
-                        REASON_CELL_INVALID_NUMERIC_LEXEME,
-                        sheet_name=sheet_name,
-                        cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
-                        physical_row_number=physical_row_num,
-                    )
-                try:
-                    return (
-                        int(val_str)
-                        if field.value_kind == ValueKind.INTEGER_TOMAN
-                        else Decimal(val_str)
-                    )
-                except (ValueError, InvalidOperation) as exc:
-                    raise XlsxCellError(
-                        REASON_CELL_INVALID_NUMERIC_LEXEME,
-                        sheet_name=sheet_name,
-                        cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
-                        physical_row_number=physical_row_num,
-                    ) from exc
-            elif isinstance(val, Decimal):
-                if field.value_kind == ValueKind.INTEGER_TOMAN:
-                    if val % 1 != 0:
-                        raise XlsxCellError(
-                            REASON_CELL_INVALID_NUMERIC_LEXEME,
-                            sheet_name=sheet_name,
-                            cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
-                            physical_row_number=physical_row_num,
-                        )
-                    return int(val)
-        elif field.field_name == "date_raw":
-            if isinstance(val, str):
-                try:
-                    _cached_parse_canonical_jalali_date(val.strip())
-                except InvalidDateError as exc:
-                    raise XlsxCellError(
-                        REASON_CELL_INVALID_NUMERIC_LEXEME,
-                        sheet_name=sheet_name,
-                        cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
-                        physical_row_number=physical_row_num,
-                    ) from exc
-
-    return val
 
 
 def _read_sheet_snapshot_and_locations(
@@ -1281,6 +1218,18 @@ def _read_sheet_snapshot_and_locations(
     req_headers = dict(sheet_contract.required_headers_by_column)
     if sheet_contract.stable_id_column.required_header is not None:
         req_headers[stable_id_col] = sheet_contract.stable_id_column.required_header
+
+    col_validation_specs: list[tuple[RawColumnContract, TypeTag]] = []
+    for col in sheet_contract.raw_columns:
+        if col.field_name == "date_raw":
+            tag = TypeTag.JALALI_DATE
+        elif col.value_kind == ValueKind.INTEGER_TOMAN:
+            tag = TypeTag.INTEGER_TOMAN
+        elif col.value_kind == ValueKind.DECIMAL:
+            tag = TypeTag.DECIMAL
+        else:
+            tag = TypeTag.RAW_TEXT
+        col_validation_specs.append((col, tag))
 
     rows_inputs: list[SourceRowInput] = []
     locations: dict[uuid.UUID, SourceRowLocation] = {}
@@ -1463,7 +1412,8 @@ def _read_sheet_snapshot_and_locations(
                                 physical_row_number=1,
                             )
 
-                        # Check row activity from candidate literal cells (R3, R4-03)
+                        # Check row activity from candidate literal cells (R3, R5-01)
+                        decoded_cells: dict[str, Any] = {}
                         has_activity = False
                         for act_col in activity_cols:
                             act_val = _decode_row_column_value(
@@ -1477,6 +1427,7 @@ def _read_sheet_snapshot_and_locations(
                                 raw_col_by_letter=raw_col_by_letter,
                                 shared_strings_map=shared_strings_map,
                             )
+                            decoded_cells[act_col] = act_val
                             if act_val is not None:
                                 if isinstance(act_val, str):
                                     if act_val.strip() != "":
@@ -1533,18 +1484,74 @@ def _read_sheet_snapshot_and_locations(
                                 )
 
                             row_raw_values: dict[str, Any] = {}
-                            for col in sheet_contract.raw_columns:
-                                val = _decode_row_column_value(
-                                    row_c_elems,
-                                    col.column_letter,
-                                    is_id=False,
-                                    physical_row_num=physical_row_num,
-                                    covered_by_col=covered_by_col,
-                                    sheet_contract=sheet_contract,
-                                    sheet_name=sheet_name,
-                                    raw_col_by_letter=raw_col_by_letter,
-                                    shared_strings_map=shared_strings_map,
-                                )
+                            for col, type_tag in col_validation_specs:
+                                col_let = col.column_letter
+                                if col_let in decoded_cells:
+                                    val = decoded_cells[col_let]
+                                else:
+                                    val = _decode_row_column_value(
+                                        row_c_elems,
+                                        col_let,
+                                        is_id=False,
+                                        physical_row_num=physical_row_num,
+                                        covered_by_col=covered_by_col,
+                                        sheet_contract=sheet_contract,
+                                        sheet_name=sheet_name,
+                                        raw_col_by_letter=raw_col_by_letter,
+                                        shared_strings_map=shared_strings_map,
+                                    )
+                                    decoded_cells[col_let] = val
+
+                                if val is not None:
+                                    if type_tag == TypeTag.RAW_TEXT:
+                                        if isinstance(val, bool) or not isinstance(
+                                            val, str
+                                        ):
+                                            raise XlsxCellError(
+                                                REASON_CELL_INVALID_NUMERIC_LEXEME,
+                                                sheet_name=sheet_name,
+                                                cell_ref=f"{col_let}{physical_row_num}",
+                                                physical_row_number=physical_row_num,
+                                            )
+                                    elif type_tag == TypeTag.JALALI_DATE:
+                                        if isinstance(val, bool) or not isinstance(
+                                            val, str
+                                        ):
+                                            raise XlsxCellError(
+                                                REASON_CELL_INVALID_NUMERIC_LEXEME,
+                                                sheet_name=sheet_name,
+                                                cell_ref=f"{col_let}{physical_row_num}",
+                                                physical_row_number=physical_row_num,
+                                            )
+                                        try:
+                                            _cached_parse_canonical_jalali_date(val)
+                                        except (
+                                            InvalidDateError,
+                                            CanonicalDateError,
+                                        ) as exc:
+                                            raise XlsxCellError(
+                                                REASON_CELL_INVALID_NUMERIC_LEXEME,
+                                                sheet_name=sheet_name,
+                                                cell_ref=f"{col_let}{physical_row_num}",
+                                                physical_row_number=physical_row_num,
+                                            ) from exc
+                                    else:
+                                        try:
+                                            canonicalize_value(type_tag, val)
+                                        except (
+                                            CanonicalValueError,
+                                            CanonicalDateError,
+                                            InvalidDateError,
+                                            InvalidOperation,
+                                            ValueError,
+                                        ) as exc:
+                                            raise XlsxCellError(
+                                                REASON_CELL_INVALID_NUMERIC_LEXEME,
+                                                sheet_name=sheet_name,
+                                                cell_ref=f"{col_let}{physical_row_num}",
+                                                physical_row_number=physical_row_num,
+                                            ) from exc
+
                                 row_raw_values[col.field_name] = val
 
                             rows_inputs.append(
