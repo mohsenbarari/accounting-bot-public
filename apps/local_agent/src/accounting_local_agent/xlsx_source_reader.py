@@ -377,7 +377,13 @@ def _secure_iterparse(
     )
 
 
-def _decode_ooxml_escapes(text: str) -> str:
+def _decode_ooxml_escapes(
+    text: str,
+    *,
+    sheet_name: str | None = None,
+    cell_ref: str | None = None,
+    physical_row_number: int | None = None,
+) -> str:
     """Decode single-pass OpenXML _xHHHH_ character escapes safely."""
     if "_x" not in text:
         return text
@@ -391,7 +397,12 @@ def _decode_ooxml_escapes(text: str) -> str:
     try:
         return decoded.encode("utf-16", "surrogatepass").decode("utf-16")
     except UnicodeDecodeError as e:
-        raise XlsxCellError(REASON_CELL_UNPAIRED_SURROGATE) from e
+        raise XlsxCellError(
+            REASON_CELL_UNPAIRED_SURROGATE,
+            sheet_name=sheet_name,
+            cell_ref=cell_ref,
+            physical_row_number=physical_row_number,
+        ) from e
     except Exception:
         return decoded
 
@@ -446,7 +457,14 @@ def _extract_text_from_si_or_is(
                 cell_ref=cell_ref,
                 physical_row_number=physical_row_number,
             )
-            text_fragments.append(_decode_ooxml_escapes(raw_t))
+            text_fragments.append(
+                _decode_ooxml_escapes(
+                    raw_t,
+                    sheet_name=sheet_name,
+                    cell_ref=cell_ref,
+                    physical_row_number=physical_row_number,
+                )
+            )
         elif c_tag in _TAG_R_SET:
             for r_child in child:
                 rc_tag = r_child.tag
@@ -459,7 +477,14 @@ def _extract_text_from_si_or_is(
                         cell_ref=cell_ref,
                         physical_row_number=physical_row_number,
                     )
-                    text_fragments.append(_decode_ooxml_escapes(raw_t))
+                    text_fragments.append(
+                        _decode_ooxml_escapes(
+                            raw_t,
+                            sheet_name=sheet_name,
+                            cell_ref=cell_ref,
+                            physical_row_number=physical_row_number,
+                        )
+                    )
                 elif rc_tag in _TAG_IGNORE_R:
                     continue
                 else:
@@ -614,7 +639,7 @@ def _parse_relationships_file(
 def _parse_shared_strings_table(
     zf: zipfile.ZipFile,
     shared_strings_path: str,
-    needed_indices: set[int] | None = None,
+    needed_consumers: dict[int, tuple[str, str, int]] | set[int] | None = None,
 ) -> dict[int, str]:
     """Parse sharedStrings.xml streaming <si> elements (R3, R6)."""
     if shared_strings_path not in zf.namelist():
@@ -662,9 +687,22 @@ def _parse_shared_strings_table(
                             REASON_STRUCTURE_INVALID_SHEET_HIERARCHY
                         )
 
-                    # Decode string only if needed_indices is None or needed (R3, R4-03)
-                    if needed_indices is None or current_idx in needed_indices:
-                        strings_map[current_idx] = _extract_text_from_si_or_is(elem)
+                    # Decode string only if needed_consumers is None or needed
+                    if needed_consumers is None or current_idx in needed_consumers:
+                        loc = (
+                            needed_consumers.get(current_idx)
+                            if isinstance(needed_consumers, dict)
+                            else None
+                        )
+                        s_name = loc[0] if loc else None
+                        c_ref = loc[1] if loc else None
+                        r_num = loc[2] if loc else None
+                        strings_map[current_idx] = _extract_text_from_si_or_is(
+                            elem,
+                            sheet_name=s_name,
+                            cell_ref=c_ref,
+                            physical_row_number=r_num,
+                        )
 
                     current_idx += 1
 
@@ -687,13 +725,19 @@ def _discover_sheet_metadata_and_needed_sst(
     has_sst: bool,
 ) -> tuple[
     dict[int, list[tuple[int, int]]],
-    set[int],
-    set[int],
-    list[tuple[int, list[tuple[int, int]], list[tuple[int, int]]]],
+    dict[int, tuple[str, str, int]],
+    dict[int, tuple[str, str, int]],
+    list[
+        tuple[
+            int,
+            list[tuple[int, str, int]],
+            list[tuple[int, str, str, XlsxCellError | None]],
+        ]
+    ],
 ]:
     """Pass 1: Discover formula coverage and candidate SST indices (R4-03, R6).
 
-    Returns (covered, header_sst, initial_data_sst, candidate_rows).
+    Returns (covered, header_sst_consumers, data_sst_consumers, candidate_rows).
     """
     raw_col_by_letter = {c.column_letter: c for c in sheet_contract.raw_columns}
     stable_id_col = sheet_contract.stable_id_column.column_letter
@@ -705,33 +749,16 @@ def _discover_sheet_metadata_and_needed_sst(
     sst_rx = _SST_INDEX_STRICT_REGEX
     num_rx = _NUMERIC_XML_STRICT_REGEX
 
-    candidate_header_sst: list[tuple[int, int]] = []
+    candidate_header_cells: list[
+        tuple[int, str, str, str, str, XlsxCellError | None]
+    ] = []
     candidate_data_rows: list[
-        tuple[int, list[int], list[tuple[int, int]], list[tuple[int, int]]]
+        tuple[
+            int,
+            list[tuple[int, str, str, str, str, XlsxCellError | None]],
+        ]
     ] = []
     raw_covered_by_col: dict[int, list[tuple[int, int]]] = {}
-
-    def _safe_leaf(v_node: etree._Element, c_ref: str, r_num: int) -> str | None:
-        try:
-            return _extract_t_or_v_leaf_text(
-                v_node,
-                sheet_name=sheet_name,
-                cell_ref=c_ref,
-                physical_row_number=r_num,
-            )
-        except XlsxCellError:
-            return None
-
-    def _safe_inline(c_node: etree._Element, c_ref: str, r_num: int) -> str | None:
-        try:
-            return _extract_text_from_si_or_is(
-                c_node,
-                sheet_name=sheet_name,
-                cell_ref=c_ref,
-                physical_row_number=r_num,
-            )
-        except XlsxCellError:
-            return None
 
     with zf.open(worksheet_path, "r") as stream:
         try:
@@ -773,10 +800,9 @@ def _discover_sheet_metadata_and_needed_sst(
                         continue
 
                     physical_row_num = int(row_r)
-
-                    non_sst_act_cols: list[int] = []
-                    act_sst_cells: list[tuple[int, int]] = []
-                    sec_sst_cells: list[tuple[int, int]] = []
+                    row_cells: list[
+                        tuple[int, str, str, str, str, XlsxCellError | None]
+                    ] = []
 
                     for c_elem in elem:
                         if c_elem.tag not in _TAG_C:
@@ -836,149 +862,134 @@ def _discover_sheet_metadata_and_needed_sst(
                                     if 1 <= col_num <= MAX_EXCEL_COLUMN_INDEX:
                                         c_row = int(m.group(2))
                                         if c_row == physical_row_num:
-                                            if physical_row_num == 1:
-                                                if (
-                                                    has_sst
-                                                    and col_let in req_headers
-                                                    and c_elem.get("t") == "s"
-                                                ):
-                                                    v_el = (
-                                                        c_elem.find("{*}v")
-                                                        if has_children
-                                                        else None
-                                                    )
-                                                    if v_el is not None:
-                                                        v_t = _safe_leaf(
-                                                            v_el, cell_ref, 1
-                                                        )
-                                                        if (
-                                                            v_t is not None
-                                                            and sst_rx.fullmatch(v_t)
-                                                        ):
-                                                            candidate_header_sst.append(
-                                                                (col_num, int(v_t))
-                                                            )
-                                            else:
-                                                is_act = col_let in activity_cols_set
-                                                is_retained = col_let in retained_cols
-                                                c_t = (c_elem.get("t") or "").strip()
-                                                if is_act:
-                                                    if c_t == "inlineStr":
-                                                        is_t = _safe_inline(
-                                                            c_elem,
-                                                            cell_ref,
-                                                            physical_row_num,
-                                                        )
-                                                        if is_t is not None and (
-                                                            is_t.strip() != ""
-                                                            or is_t in ("0", "۰")
-                                                        ):
-                                                            non_sst_act_cols.append(
-                                                                col_num
-                                                            )
-                                                    elif c_t in ("", "n"):
-                                                        v_el = (
-                                                            c_elem.find("{*}v")
-                                                            if has_children
-                                                            else None
-                                                        )
-                                                        if v_el is not None:
-                                                            v_t = _safe_leaf(
-                                                                v_el,
-                                                                cell_ref,
-                                                                physical_row_num,
-                                                            )
-                                                            if (
-                                                                v_t is not None
-                                                                and v_t.strip() != ""
-                                                                and num_rx.fullmatch(
-                                                                    v_t.strip()
-                                                                )
-                                                            ):
-                                                                non_sst_act_cols.append(
-                                                                    col_num
-                                                                )
-                                                    elif c_t == "str":
-                                                        v_el = (
-                                                            c_elem.find("{*}v")
-                                                            if has_children
-                                                            else None
-                                                        )
-                                                        if v_el is not None:
-                                                            v_t = _safe_leaf(
-                                                                v_el,
-                                                                cell_ref,
-                                                                physical_row_num,
-                                                            )
-                                                            if v_t is not None and (
-                                                                v_t.strip() != ""
-                                                                or v_t in ("0", "۰")
-                                                            ):
-                                                                non_sst_act_cols.append(
-                                                                    col_num
-                                                                )
-                                                    elif c_t == "s" and has_sst:
-                                                        v_el = (
-                                                            c_elem.find("{*}v")
-                                                            if has_children
-                                                            else None
-                                                        )
-                                                        if v_el is not None:
-                                                            v_t = _safe_leaf(
-                                                                v_el,
-                                                                cell_ref,
-                                                                physical_row_num,
-                                                            )
-                                                            if (
-                                                                v_t is not None
-                                                                and sst_rx.fullmatch(
-                                                                    v_t
-                                                                )
-                                                            ):
-                                                                act_sst_cells.append(
-                                                                    (
-                                                                        col_num,
-                                                                        int(v_t),
-                                                                    )
-                                                                )
-                                                elif (
-                                                    is_retained
-                                                    and c_t == "s"
-                                                    and has_sst
-                                                ):
-                                                    v_el = (
-                                                        c_elem.find("{*}v")
-                                                        if has_children
-                                                        else None
-                                                    )
-                                                    if v_el is not None:
-                                                        v_t = _safe_leaf(
-                                                            v_el,
-                                                            cell_ref,
-                                                            physical_row_num,
-                                                        )
-                                                        if (
-                                                            v_t is not None
-                                                            and sst_rx.fullmatch(v_t)
-                                                        ):
-                                                            sec_sst_cells.append(
-                                                                (
-                                                                    col_num,
-                                                                    int(v_t),
-                                                                )
-                                                            )
+                                            c_t = (c_elem.get("t") or "").strip()
+                                            val_str = ""
+                                            exc: XlsxCellError | None = None
 
-                    if physical_row_num >= 2 and (
-                        non_sst_act_cols or act_sst_cells or sec_sst_cells
-                    ):
-                        candidate_data_rows.append(
-                            (
-                                physical_row_num,
-                                non_sst_act_cols,
-                                act_sst_cells,
-                                sec_sst_cells,
-                            )
-                        )
+                                            if c_t == "inlineStr":
+                                                is_el = (
+                                                    c_elem.find("{*}is")
+                                                    if has_children
+                                                    else None
+                                                )
+                                                if is_el is not None:
+                                                    try:
+                                                        val_str = (
+                                                            _extract_text_from_si_or_is(
+                                                                is_el,
+                                                                sheet_name=sheet_name,
+                                                                cell_ref=cell_ref,
+                                                                physical_row_number=(
+                                                                    physical_row_num
+                                                                ),
+                                                            )
+                                                        )
+                                                    except XlsxCellError as e:
+                                                        exc = e
+                                            elif c_t == "str":
+                                                v_el = (
+                                                    c_elem.find("{*}v")
+                                                    if has_children
+                                                    else None
+                                                )
+                                                if v_el is not None:
+                                                    try:
+                                                        v_raw = (
+                                                            _extract_t_or_v_leaf_text(
+                                                                v_el,
+                                                                sheet_name=sheet_name,
+                                                                cell_ref=cell_ref,
+                                                                physical_row_number=(
+                                                                    physical_row_num
+                                                                ),
+                                                            )
+                                                        )
+                                                        val_str = _decode_ooxml_escapes(
+                                                            v_raw,
+                                                            sheet_name=sheet_name,
+                                                            cell_ref=cell_ref,
+                                                            physical_row_number=physical_row_num,
+                                                        )
+                                                    except XlsxCellError as e:
+                                                        exc = e
+                                            elif c_t == "s":
+                                                v_el = (
+                                                    c_elem.find("{*}v")
+                                                    if has_children
+                                                    else None
+                                                )
+                                                if v_el is not None:
+                                                    try:
+                                                        val_str = (
+                                                            _extract_t_or_v_leaf_text(
+                                                                v_el,
+                                                                sheet_name=sheet_name,
+                                                                cell_ref=cell_ref,
+                                                                physical_row_number=(
+                                                                    physical_row_num
+                                                                ),
+                                                            )
+                                                        )
+                                                    except XlsxCellError as e:
+                                                        exc = e
+                                                else:
+                                                    exc = XlsxCellError(
+                                                        REASON_CELL_INVALID_SST_INDEX,
+                                                        sheet_name=sheet_name,
+                                                        cell_ref=cell_ref,
+                                                        physical_row_number=physical_row_num,
+                                                    )
+                                            elif c_t in ("", "n"):
+                                                v_el = (
+                                                    c_elem.find("{*}v")
+                                                    if has_children
+                                                    else None
+                                                )
+                                                if v_el is not None:
+                                                    try:
+                                                        val_str = (
+                                                            _extract_t_or_v_leaf_text(
+                                                                v_el,
+                                                                sheet_name=sheet_name,
+                                                                cell_ref=cell_ref,
+                                                                physical_row_number=(
+                                                                    physical_row_num
+                                                                ),
+                                                            )
+                                                        )
+                                                    except XlsxCellError as e:
+                                                        exc = e
+
+                                            if physical_row_num == 1:
+                                                if col_let in req_headers:
+                                                    candidate_header_cells.append(
+                                                        (
+                                                            col_num,
+                                                            col_let,
+                                                            cell_ref,
+                                                            c_t,
+                                                            val_str,
+                                                            exc,
+                                                        )
+                                                    )
+                                            else:
+                                                if (
+                                                    col_let in retained_cols
+                                                    or col_let in activity_cols_set
+                                                ):
+                                                    row_cells.append(
+                                                        (
+                                                            col_num,
+                                                            col_let,
+                                                            cell_ref,
+                                                            c_t,
+                                                            val_str,
+                                                            exc,
+                                                        )
+                                                    )
+
+                    if physical_row_num >= 2 and row_cells:
+                        candidate_data_rows.append((physical_row_num, row_cells))
 
                     elem.clear()
                     while elem.getprevious() is not None:
@@ -1001,56 +1012,175 @@ def _discover_sheet_metadata_and_needed_sst(
                 merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         merged_covered_by_col[col_n] = merged
 
-    header_sst_needed: set[int] = set()
-    if has_sst:
-        for col_num, s_idx in candidate_header_sst:
-            if not _is_cell_covered(merged_covered_by_col, col_num, 1):
-                header_sst_needed.add(s_idx)
-
-    initial_data_sst_needed: set[int] = set()
-    candidate_sst_rows: list[
-        tuple[int, list[tuple[int, int]], list[tuple[int, int]]]
-    ] = []
-
+    header_sst_consumers: dict[int, tuple[str, str, int]] = {}
     if has_sst:
         for (
-            row_num,
-            non_sst_act_cols,
-            act_sst_cells,
-            sec_sst_cells,
-        ) in candidate_data_rows:
-            valid_non_sst_act = [
-                c
-                for c in non_sst_act_cols
-                if not _is_cell_covered(merged_covered_by_col, c, row_num)
-            ]
-            valid_act_sst = [
-                (c, s_idx)
-                for c, s_idx in act_sst_cells
-                if not _is_cell_covered(merged_covered_by_col, c, row_num)
-            ]
-            valid_sec_sst = [
-                (c, s_idx)
-                for c, s_idx in sec_sst_cells
-                if not _is_cell_covered(merged_covered_by_col, c, row_num)
-            ]
+            col_num,
+            _col_let,
+            cell_ref,
+            c_t,
+            val_str,
+            exc,
+        ) in candidate_header_cells:
+            if not _is_cell_covered(merged_covered_by_col, col_num, 1):
+                if c_t == "s":
+                    if exc is not None:
+                        raise exc
+                    if not sst_rx.fullmatch(val_str):
+                        raise XlsxCellError(
+                            REASON_CELL_INVALID_SST_INDEX,
+                            sheet_name=sheet_name,
+                            cell_ref=cell_ref,
+                            physical_row_number=1,
+                        )
+                    if len(val_str) > 10:
+                        raise XlsxCellError(
+                            REASON_CELL_SST_INDEX_OUT_OF_RANGE,
+                            sheet_name=sheet_name,
+                            cell_ref=cell_ref,
+                            physical_row_number=1,
+                        )
+                    s_idx = int(val_str)
+                    if s_idx not in header_sst_consumers:
+                        header_sst_consumers[s_idx] = (
+                            sheet_name,
+                            cell_ref,
+                            1,
+                        )
 
-            if valid_non_sst_act:
-                # Row is active from non-SST cells; add all its SST references
-                for _, s_idx in valid_act_sst:
-                    initial_data_sst_needed.add(s_idx)
-                for _, s_idx in valid_sec_sst:
-                    initial_data_sst_needed.add(s_idx)
-            elif valid_act_sst:
-                # Activity depends on SST string; add act_sst to initial decode set
-                for _, s_idx in valid_act_sst:
-                    initial_data_sst_needed.add(s_idx)
-                candidate_sst_rows.append((row_num, valid_act_sst, valid_sec_sst))
+    initial_data_sst_consumers: dict[int, tuple[str, str, int]] = {}
+    candidate_sst_rows: list[
+        tuple[
+            int,
+            list[tuple[int, str, int]],
+            list[tuple[int, str, str, XlsxCellError | None]],
+        ]
+    ] = []
+
+    for row_num, row_cells in candidate_data_rows:
+        uncovered_act_cells: list[
+            tuple[int, str, str, str, str, XlsxCellError | None]
+        ] = []
+        uncovered_sec_cells: list[
+            tuple[int, str, str, str, str, XlsxCellError | None]
+        ] = []
+
+        for col_num, col_let, cell_ref, c_t, val_str, exc in row_cells:
+            if _is_cell_covered(merged_covered_by_col, col_num, row_num):
+                continue
+            if col_let in activity_cols_set:
+                uncovered_act_cells.append(
+                    (col_num, col_let, cell_ref, c_t, val_str, exc)
+                )
+            elif col_let in retained_cols and c_t == "s" and has_sst:
+                uncovered_sec_cells.append(
+                    (col_num, col_let, cell_ref, c_t, val_str, exc)
+                )
+
+        has_literal_act = False
+        act_sst_cells: list[tuple[int, str, int]] = []
+
+        for (
+            col_num,
+            _col_let,
+            cell_ref,
+            c_t,
+            val_str,
+            exc,
+        ) in uncovered_act_cells:
+            if exc is not None:
+                raise exc
+            if c_t == "inlineStr":
+                if val_str.strip() != "" or val_str in ("0", "۰"):
+                    has_literal_act = True
+            elif c_t == "str":
+                if val_str.strip() != "" or val_str in ("0", "۰"):
+                    has_literal_act = True
+            elif c_t in ("", "n"):
+                stripped = val_str.strip()
+                if stripped != "" and num_rx.fullmatch(stripped):
+                    has_literal_act = True
+            elif c_t == "s" and has_sst:
+                if not sst_rx.fullmatch(val_str):
+                    raise XlsxCellError(
+                        REASON_CELL_INVALID_SST_INDEX,
+                        sheet_name=sheet_name,
+                        cell_ref=cell_ref,
+                        physical_row_number=row_num,
+                    )
+                if len(val_str) > 10:
+                    raise XlsxCellError(
+                        REASON_CELL_SST_INDEX_OUT_OF_RANGE,
+                        sheet_name=sheet_name,
+                        cell_ref=cell_ref,
+                        physical_row_number=row_num,
+                    )
+                act_sst_cells.append((col_num, cell_ref, int(val_str)))
+
+        if has_literal_act:
+            if has_sst:
+                for _, ref, s_idx in act_sst_cells:
+                    if s_idx not in initial_data_sst_consumers:
+                        initial_data_sst_consumers[s_idx] = (
+                            sheet_name,
+                            ref,
+                            row_num,
+                        )
+                for (
+                    _col_num,
+                    _col_let,
+                    cell_ref,
+                    _c_t,
+                    val_str,
+                    exc,
+                ) in uncovered_sec_cells:
+                    if exc is not None:
+                        raise exc
+                    if not sst_rx.fullmatch(val_str):
+                        raise XlsxCellError(
+                            REASON_CELL_INVALID_SST_INDEX,
+                            sheet_name=sheet_name,
+                            cell_ref=cell_ref,
+                            physical_row_number=row_num,
+                        )
+                    if len(val_str) > 10:
+                        raise XlsxCellError(
+                            REASON_CELL_SST_INDEX_OUT_OF_RANGE,
+                            sheet_name=sheet_name,
+                            cell_ref=cell_ref,
+                            physical_row_number=row_num,
+                        )
+                    s_idx = int(val_str)
+                    if s_idx not in initial_data_sst_consumers:
+                        initial_data_sst_consumers[s_idx] = (
+                            sheet_name,
+                            cell_ref,
+                            row_num,
+                        )
+        elif act_sst_cells:
+            if has_sst:
+                for _, ref, s_idx in act_sst_cells:
+                    if s_idx not in initial_data_sst_consumers:
+                        initial_data_sst_consumers[s_idx] = (
+                            sheet_name,
+                            ref,
+                            row_num,
+                        )
+                candidate_sst_rows.append(
+                    (
+                        row_num,
+                        act_sst_cells,
+                        [
+                            (c, ref, v_str, e)
+                            for c, _, ref, _, v_str, e in uncovered_sec_cells
+                        ],
+                    )
+                )
 
     return (
         merged_covered_by_col,
-        header_sst_needed,
-        initial_data_sst_needed,
+        header_sst_consumers,
+        initial_data_sst_consumers,
         candidate_sst_rows,
     )
 
@@ -1223,7 +1353,12 @@ def _decode_cell_literal_value(
             cell_ref=cell_ref,
             physical_row_number=physical_row_num,
         )
-        return _decode_ooxml_escapes(raw_val)
+        return _decode_ooxml_escapes(
+            raw_val,
+            sheet_name=sheet_name,
+            cell_ref=cell_ref,
+            physical_row_number=physical_row_num,
+        )
 
     # 4. Numeric XML (t="n" or omitted)
     v_elem = c_elem.find("{*}v")
@@ -1887,52 +2022,90 @@ def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
         sheet_parts[s_name] = ws_path
 
     # Step 6: Pass 1 on sheets -> collect formula coverage and needed SST (R4-03, R6)
-    initial_sst_needed: set[int] = set()
+    initial_sst_consumers: dict[int, tuple[str, str, int]] = {}
     formula_coverage_by_sheet: dict[str, dict[int, list[tuple[int, int]]]] = {}
     candidate_sst_rows_by_sheet: dict[
-        str, list[tuple[int, list[tuple[int, int]], list[tuple[int, int]]]]
+        str,
+        list[
+            tuple[
+                int,
+                list[tuple[int, str, int]],
+                list[tuple[int, str, str, XlsxCellError | None]],
+            ]
+        ],
     ] = {}
     has_sst = bool(shared_strings_path)
 
     for s_name in approved_sheets:
         ws_path = sheet_parts[s_name]
         sheet_contract = RAW_CONTRACT_REGISTRY.sheets[s_name]
-        cov, h_sst, d_sst, c_rows = _discover_sheet_metadata_and_needed_sst(
+        cov, h_consumers, d_consumers, c_rows = _discover_sheet_metadata_and_needed_sst(
             zf, ws_path, s_name, sheet_contract, has_sst
         )
         formula_coverage_by_sheet[s_name] = cov
         candidate_sst_rows_by_sheet[s_name] = c_rows
         if has_sst:
-            initial_sst_needed.update(h_sst)
-            initial_sst_needed.update(d_sst)
+            for s_idx, h_loc in h_consumers.items():
+                if s_idx not in initial_sst_consumers:
+                    initial_sst_consumers[s_idx] = h_loc
+            for s_idx, d_loc in d_consumers.items():
+                if s_idx not in initial_sst_consumers:
+                    initial_sst_consumers[s_idx] = d_loc
 
     # Step 7: Parse SST if present, decoding only needed indices (R4-03, R6)
     shared_strings_map: dict[int, str] = {}
-    if shared_strings_path and initial_sst_needed:
+    if shared_strings_path and initial_sst_consumers:
         shared_strings_map = _parse_shared_strings_table(
-            zf, shared_strings_path, needed_indices=initial_sst_needed
+            zf, shared_strings_path, needed_consumers=initial_sst_consumers
         )
 
     if has_sst and candidate_sst_rows_by_sheet and shared_strings_path:
-        sec_sst_needed: set[int] = set()
+        sec_sst_consumers: dict[int, tuple[str, str, int]] = {}
         for s_name in approved_sheets:
-            for _row_num, act_sst, sec_sst in candidate_sst_rows_by_sheet.get(
+            for row_num, act_sst, sec_sst in candidate_sst_rows_by_sheet.get(
                 s_name, []
             ):
                 is_active = False
-                for _col_num, s_idx in act_sst:
-                    s_val = shared_strings_map.get(s_idx, "")
+                for _col_num, cell_ref, s_idx in act_sst:
+                    if s_idx not in shared_strings_map:
+                        raise XlsxCellError(
+                            REASON_CELL_SST_INDEX_OUT_OF_RANGE,
+                            sheet_name=s_name,
+                            cell_ref=cell_ref,
+                            physical_row_number=row_num,
+                        )
+                    s_val = shared_strings_map[s_idx]
                     if s_val.strip() != "" or s_val in ("0", "۰"):
                         is_active = True
                         break
                 if is_active:
-                    for _col_num, s_idx in sec_sst:
-                        if s_idx not in shared_strings_map:
-                            sec_sst_needed.add(s_idx)
+                    for _col_num, cell_ref, val_str, exc in sec_sst:
+                        if exc is not None:
+                            raise exc
+                        if not _SST_INDEX_STRICT_REGEX.fullmatch(val_str):
+                            raise XlsxCellError(
+                                REASON_CELL_INVALID_SST_INDEX,
+                                sheet_name=s_name,
+                                cell_ref=cell_ref,
+                                physical_row_number=row_num,
+                            )
+                        if len(val_str) > 10:
+                            raise XlsxCellError(
+                                REASON_CELL_SST_INDEX_OUT_OF_RANGE,
+                                sheet_name=s_name,
+                                cell_ref=cell_ref,
+                                physical_row_number=row_num,
+                            )
+                        s_idx = int(val_str)
+                        if (
+                            s_idx not in shared_strings_map
+                            and s_idx not in sec_sst_consumers
+                        ):
+                            sec_sst_consumers[s_idx] = (s_name, cell_ref, row_num)
 
-        if sec_sst_needed:
+        if sec_sst_consumers:
             sec_strings = _parse_shared_strings_table(
-                zf, shared_strings_path, needed_indices=sec_sst_needed
+                zf, shared_strings_path, needed_consumers=sec_sst_consumers
             )
             shared_strings_map.update(sec_strings)
 
@@ -1949,18 +2122,18 @@ def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
         )
         all_sheet_inputs.append(SourceSheetInput(sheet_name=s_name, rows=s_rows))
 
-        for u, loc in s_locations.items():
+        for u, row_loc in s_locations.items():
             if u in all_locations:
                 raise XlsxIdentityError(
                     REASON_IDENTITY_DUPLICATE_UUID,
-                    sheet_name=loc.sheet_name,
+                    sheet_name=row_loc.sheet_name,
                     cell_ref=(
                         f"{sheet_contract.stable_id_column.column_letter}"
-                        f"{loc.physical_row_number}"
+                        f"{row_loc.physical_row_number}"
                     ),
-                    physical_row_number=loc.physical_row_number,
+                    physical_row_number=row_loc.physical_row_number,
                 )
-            all_locations[u] = loc
+            all_locations[u] = row_loc
 
     # Step 9: Construct WP-04 snapshot with exception mapping (R4-04)
     try:
