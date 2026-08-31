@@ -32,7 +32,7 @@ from accounting_contracts.raw_input_contracts import (
 SOURCE_HASH_VERSION: str = "source-hash.v1"
 SHEET_SNAPSHOT_HASH_VERSION: str = "sheet-snapshot-hash.v1"
 
-HEX_DIGEST_64_REGEX = re.compile(r"^[0-9a-f]{64}$")
+HEX_DIGEST_64_REGEX = re.compile(r"\A[0-9a-f]{64}\Z")
 INTEGER_TOMAN_REGEX = re.compile(r"^[+-]?[0-9]+$")
 DECIMAL_REGEX = re.compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$")
 
@@ -311,7 +311,7 @@ def compute_sheet_snapshot_hash(
             )
             raise InvalidUUIDError(msg)
 
-        if not isinstance(source_hash, str) or not HEX_DIGEST_64_REGEX.match(
+        if not isinstance(source_hash, str) or not HEX_DIGEST_64_REGEX.fullmatch(
             source_hash
         ):
             raise InvalidHashError(
