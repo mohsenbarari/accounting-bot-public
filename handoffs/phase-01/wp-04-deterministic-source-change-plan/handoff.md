@@ -9,6 +9,7 @@
   - `41c979f` (feat(contracts): implement validated full-source snapshots and deterministic change planning)
   - `fec8c02` (fix(contracts): address Codex review feedback for WP-04)
   - `bf715ab` (fix(contracts): address Round 2 review feedback for WP-04)
+  - `fb74703` (fix(contracts): enforce authoritative raw field ordering and independent permutation verification)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -62,6 +63,7 @@ Implement the smallest pure, deeply immutable and deterministic source-boundary 
 | File | Change | Reason |
 |---|---|---|
 | `packages/contracts/src/accounting_contracts/source_change_plan.py` | Created | Complete snapshot validator, prior identity registry, and deterministic change planning engine |
+| `packages/contracts/src/accounting_contracts/canonical_hashing.py` | Modified | Tighten HEX_DIGEST_64_REGEX to \A[0-9a-f]{64}\Z and enforce fullmatch to strictly reject newline-padded hashes |
 | `packages/contracts/src/accounting_contracts/__init__.py` | Modified | Export public source change plan classes, functions and constants |
 | `packages/contracts/README.md` | Modified | Document source change plan contract and boundaries |
 | `tests/test_source_change_plan.py` | Created | Deterministic tests for snapshot validation, transition table, order invariance, idempotency, benchmark and property testing |
@@ -71,7 +73,7 @@ Implement the smallest pure, deeply immutable and deterministic source-boundary 
 
 - Schema impact: none
 - Migration files: none
-- Backward compatibility: fully backward-compatible contract addition
+- Backward compatibility: fully backward-compatible contract addition; `canonical_hashing` update strictly enforces existing 64-hex lowercase format without changing valid golden vector hashes
 - Data migration/real data used: none
 
 ## Commands and exit codes
@@ -84,7 +86,8 @@ Implement the smallest pure, deeply immutable and deterministic source-boundary 
 | `uv run ruff format --check .` | 0 | Verify formatting compliance |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
 | `uv run mypy .` | 0 | Verify strict static typing across 17 files |
-| `uv run pytest -v` | 0 | Execute all 88 unit, benchmark and property tests |
+| `uv run pytest -v` | 0 | Execute all 89 unit, benchmark and property tests |
+| `uv run pytest tests/test_source_change_plan.py -k test_synthetic_15000_row_complexity_benchmark -s` | 0 | Run 15,000-row synthetic benchmark displaying separate build duration (2.7934s < 5.0s) and plan duration (0.2910s < 1.0s) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace or line-ending defects against origin/main |
 | `! git ls-files \| grep -E '\.(xlsx\|xls\|xlsm\|sqlite\|sqlite3\|db\|pdf\|key\|pem\|env)$'` | 0 | Verify zero forbidden extensions or database/secret files tracked in git |
 | `! git grep -n -i -E '(password\s*[:=]\|secret\s*[:=]\|bearer\s+[A-Za-z0-9]\|BEGIN RSA\|BEGIN OPENSSH\|09[0-9]{9}\|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})' -- ':!ROADMAP.md' ':!docs/adr/*' ':!.agents/*' ':!handoffs/*' ':!uv.lock'` | 0 | Verify zero sensitive patterns, private keys, IP addresses or real phone numbers in source/tests |
