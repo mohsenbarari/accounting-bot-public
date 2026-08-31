@@ -13,6 +13,8 @@
   - `f2f6dc5` (docs(handoff): remove trailing whitespace in test results log)
   - `daedaff` (fix(local_agent): address Codex review round 2 findings R1-R9 in streaming XLSX reader (WP-05))
   - `14f6ddf` (docs(handoff): record round 2 review implementation commits and test evidence in WP-05 handoff)
+  - `ee17401` (docs(handoff): update commit list in WP-05 handoff)
+  - `d2e725c` (fix(local_agent): address Codex review round 3 findings R1-R6 in streaming XLSX reader (WP-05))
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -29,9 +31,9 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
   - Immutable dataclasses `SourceRowLocation` and `XlsxSourceReadResult`.
   - Typed exceptions: `XlsxSourceReadError`, `XlsxPackageError`, `XlsxStructureError`, `XlsxHeaderError`, `XlsxCellError`, `XlsxFormulaCoverageError`, `XlsxIdentityError`.
   - Main streaming entrypoint `read_xlsx_source_snapshot(path: Path | str) -> XlsxSourceReadResult`.
-  - Safe package relationship resolution (`.rels`, `xl/_rels/workbook.xml.rels`) for Transitional and Strict SpreadsheetML.
-  - Multi-pass streaming algorithm: Pass 1 discovers array and data-table formula coverage bounding boxes across each sheet with fast interval indexing; Pass 2 streams row elements, checks row 1 headers, evaluates row activity exclusively from literal inputs before decoding other fields, decodes cell literals, filters covered cells, verifies UUIDv7 format and global uniqueness, and constructs WP-04 snapshot inputs.
-  - Full support for literal decoding: shared strings, inline strings, direct strings, OOXML escape decoding (`_xHHHH_`), direct `Decimal` parsing from numeric XML without binary float approximations, strict numeric ASCII grammar validation, and strict rejection of numeric XML in `date_raw`/`stable_id`, boolean `b` and error `e` cell types.
+  - Safe package relationship resolution (`_rels/.rels`, `xl/_rels/workbook.xml.rels`) for Transitional and Strict SpreadsheetML, validating unique `officeDocument` and `sharedStrings` targets.
+  - Multi-pass streaming algorithm: Pass 1 discovers array and data-table formula coverage bounding boxes across each sheet with fast interval indexing and collects referenced Shared String Table (SST) indices; SST pass selectively decodes only referenced indices; Pass 2 streams row elements, checks row 1 headers, evaluates row activity exclusively from literal inputs before decoding other fields, decodes cell literals, filters covered cells, verifies UUIDv7 format and global uniqueness, and constructs WP-04 snapshot inputs.
+  - Full support for literal decoding: shared strings, inline strings, direct strings, OOXML escape decoding (`_xHHHH_`), direct `Decimal` parsing from numeric XML without binary float approximations, strict numeric ASCII grammar validation, and strict rejection of numeric XML in `date_raw`/`stable_id`, textual scientific exponents (`1e2`), and boolean `b` and error `e` cell types.
 - Public exports in `apps/local_agent/src/accounting_local_agent/__init__.py`.
 - Documentation in `apps/local_agent/README.md`.
 - Comprehensive unit, integration, property and 15,000-row streaming benchmark tests in `tests/test_xlsx_source_reader.py`.
@@ -60,10 +62,10 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 
 | File | Change | Reason |
 |---|---|---|
-| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Addressed Codex review findings R1–R7: direct XML hierarchy, package & XML security, pre-decode classification & row activity, text preservation & phonetic guide exclusion, strict numeric XML grammar, interval formula indexing, and machine-readable error reasons |
-| `tests/test_xlsx_source_reader.py` | Modified | Addressed Codex review findings R8–R9: cross-platform memory measurement, comprehensive test suite covering all review axes R1–R9 and XR-01–XR-13 |
+| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Addressed Codex review findings R1–R6: parser-driven DTD/entity rejection, text preservation & phonetic guide exclusion, selective SST decoding, package relationship ambiguity rejection, public error mapping, and streaming performance optimizations |
+| `tests/test_xlsx_source_reader.py` | Modified | Addressed Codex review findings R1–R6: comprehensive test suite covering all review axes R1–R6 and criteria XR-01–XR-13 |
 | `apps/local_agent/src/accounting_local_agent/__init__.py` | Modified | Export public reader function, result types, and errors |
-| `apps/local_agent/README.md` | Modified | Document reader architecture, supported profile, and blank-row rules |
+| `apps/local_agent/README.md` | Modified | Document reader architecture, streaming execution strategy, supported profile, and blank-row rules |
 | `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Updated handoff document, acceptance matrix, and test results |
 
 ## Schema and migrations
@@ -83,8 +85,8 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 | `uv run ruff format --check .` | 0 | Verify formatting compliance across 52 files |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
 | `uv run mypy .` | 0 | Verify strict static typing across 19 source files |
-| `uv run pytest -v` | 0 | Execute all 115 unit, benchmark, integration and property tests |
-| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (12.2768s under 15.0s) and peak memory (79.68 MiB under 128.0 MiB) |
+| `uv run pytest -v` | 0 | Execute all 110 unit, benchmark, integration and property tests |
+| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (12.9501s under 15.0s) and peak memory (80.61 MiB under 128.0 MiB) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
 | `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
 | `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); sys.exit(0 if res.returncode == 1 else 1)"` | 0 | Verify zero sensitive credentials, IPs or real phone numbers in code/tests |
