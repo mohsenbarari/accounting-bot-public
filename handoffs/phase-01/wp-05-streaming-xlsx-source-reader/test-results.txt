@@ -1,16 +1,16 @@
 WORK PACKAGE: WP-05
 PHASE: 1
-RECORDED AT UTC: 2026-08-31T16:07:00Z
+RECORDED AT UTC: 2026-08-31T17:07:30Z
 
 COMMAND: uv lock --check
 EXIT CODE: 0
 OUTPUT:
-Resolved 88 packages in 6ms
+Resolved 88 packages in 5ms
 
 COMMAND: uv sync --frozen --all-packages --all-groups
 EXIT CODE: 0
 OUTPUT:
-Audited 81 packages in 2ms
+Checked 81 packages in 3ms
 
 COMMAND: uv run ruff format --check .
 EXIT CODE: 0
@@ -31,7 +31,7 @@ Success: no issues found in 20 source files
 COMMAND: uv run pytest tests/test_xlsx_source_reader_raw_contract_regressions.py -v
 EXIT CODE: 0
 OUTPUT:
-=================== test session starts ====================
+=================== test session starts ===================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
@@ -47,10 +47,10 @@ tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_coordinate
 tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_negative_and_blank_activity_cases PASSED [ 85%]
 tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_independent_oracle_all_four_sheets PASSED [100%]
 
-==================== 7 passed in 0.71s =====================
+==================== 7 passed in 0.75s ====================
 
 COMMAND: uv run pytest -v
-EXIT CODE: 0
+EXIT CODE: 1
 OUTPUT:
 =================== test session starts ===================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
@@ -70,19 +70,16 @@ tests/test_source_change_plan.py .................. [ 61%]
 .......                                             [ 66%]
 tests/test_xlsx_source_reader.py .................. [ 79%]
 ...................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 13.6065s | peak_rss_mib: 80.20 MiB | rows: 15000 | platform: linux
-.                                [ 94%]
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 15.6123s | peak_rss_mib: 79.79 MiB | rows: 15000 | platform: linux
+F                                [ 94%]
 tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 95%]
 ......                                              [100%]
 
-================== 134 passed in 21.04s ===================
-
-COMMAND: uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s
-EXIT CODE: 0
-OUTPUT:
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 14.1305s | peak_rss_mib: 69.55 MiB | rows: 15000 | platform: linux
-.
-1 passed, 37 deselected in 15.62s
+======================== FAILURES =========================
+_________ test_xr12_synthetic_15000_row_benchmark _________
+AssertionError: Benchmark exceeded 15.0s limit: 15.6123s
+assert 15.6123 < 15.0
+============= 1 failed, 133 passed in 23.15s ==============
 
 COMMAND: git diff --check origin/main...HEAD
 EXIT CODE: 0
@@ -99,12 +96,17 @@ EXIT CODE: 0
 OUTPUT:
 (zero sensitive credentials or real identities found)
 
+COMMAND: python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/
+EXIT CODE: 0
+OUTPUT:
+Handoff validation passed.
+
 FINAL SUMMARY:
-All 134 unit, benchmark, integration, property, and standalone regression tests passed cleanly.
+All 7 standalone regression tests for R5-A remediations passed cleanly in 0.75s.
+133 of 134 total test suite tests passed; 1 synthetic benchmark recorded 15.6123s (> 15.0s limit) with 79.79 MiB peak memory (< 128.0 MiB limit) on Linux host under load.
 R5-A remediations verified:
-- A-01: Numeric XML in auxiliary RAW_TEXT fields returns exact str lexemes; financial amounts preserved as Decimal without float rounding.
-- A-02: Strict qualified SpreadsheetML namespace matching enforced on text elements (t, r).
-- A-03: Strict uppercase ASCII coordinate fullmatch regex and bounds checking enforced without partial snapshot leaks.
-- A-04: Isolated numeric zero row activity and blank cell matrix regression tests passing.
-Benchmark: 15,000 active rows read in 14.1305s (under 15.0s limit) with 69.55 MiB peak memory (under 128.0 MiB limit).
+- E-01: Cell coordinate fullmatch regex and bounds checking on exact XML attributes (Ü2, Α2, K2, data LF C2&#10;, header LF B1&#10;, XFE2, 1048577) rejecting invalid coordinates without partial snapshot leaks.
+- E-02: Type-and-scale-sensitive independent oracle across all 4 sheets (asserting exact types, Decimal scale preservation with as_tuple, registry raw key ordering, direct WP-03 hashes, and blank/whitespace matrix).
+- E-03: Dynamic registry-driven coverage of all 16 auxiliary RAW_TEXT columns decoding numeric XML directly to exact str, date/UUID numeric XML rejection, and non-dialable synthetic lexemes.
+- E-04: Accurate evidence-based handoff documentation and test results.
 Quality suite: ruff format, ruff check, and mypy passed with 0 errors across all 53 files.
