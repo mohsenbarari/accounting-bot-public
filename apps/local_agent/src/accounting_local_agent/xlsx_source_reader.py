@@ -22,6 +22,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from accounting_contracts.canonical_date import (
+    InvalidDateError,
+    parse_canonical_jalali_date,
+)
+from accounting_contracts.canonical_hashing import CanonicalValueError
 from accounting_contracts.raw_input_contracts import (
     RAW_CONTRACT_REGISTRY,
     RawColumnContract,
@@ -31,10 +36,12 @@ from accounting_contracts.raw_input_contracts import (
 )
 from accounting_contracts.source_change_plan import (
     DuplicateIdentityError,
+    InvalidIdentityError,
     SourceChangePlanError,
     SourceRowInput,
     SourceSheetInput,
     ValidatedSourceWorkbookSnapshot,
+    _parse_and_validate_uuid7,
     build_source_workbook_snapshot,
 )
 from lxml import etree  # type: ignore[import-untyped]
@@ -102,7 +109,7 @@ _OOXML_ESCAPE_REGEX = re.compile(r"_x([0-9a-fA-F]{4})_")
 _NUMERIC_XML_STRICT_REGEX = re.compile(
     r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
 )
-_SST_INDEX_STRICT_REGEX = re.compile(r"^[0-9]+$")
+_SST_INDEX_STRICT_REGEX = re.compile(r"^(?:0|[1-9][0-9]*)$")
 
 # --- Machine-Readable Reason Codes (R7) ---
 REASON_PACKAGE_NOT_FOUND = "XLSX_PACKAGE_NOT_FOUND"
@@ -252,76 +259,78 @@ class SourceRowLocation:
             raise XlsxStructureError(
                 REASON_STRUCTURE_ROW_OUT_OF_BOUNDS,
                 sheet_name=self.sheet_name,
-                physical_row_number=self.physical_row_number
-                if isinstance(self.physical_row_number, int)
-                and not isinstance(self.physical_row_number, bool)
-                else None,
+                physical_row_number=(
+                    self.physical_row_number
+                    if isinstance(self.physical_row_number, int)
+                    and not isinstance(self.physical_row_number, bool)
+                    else None
+                ),
             )
 
 
 @dataclass(frozen=True, slots=True)
 class XlsxSourceReadResult:
-    """Immutable result of a complete XLSX source extraction."""
+    """Immutable result of read_xlsx_source_snapshot."""
 
     snapshot: ValidatedSourceWorkbookSnapshot
     locations_by_uuid: MappingProxyType[uuid.UUID, SourceRowLocation]
     version: str = XLSX_SOURCE_READER_VERSION
 
     def __post_init__(self) -> None:
-        if self.version != XLSX_SOURCE_READER_VERSION:
-            raise XlsxStructureError(REASON_STRUCTURE_INVALID_VERSION)
-
         if not isinstance(self.snapshot, ValidatedSourceWorkbookSnapshot):
             raise XlsxStructureError(REASON_STRUCTURE_INVALID_SNAPSHOT_TYPE)
 
+        if (
+            not isinstance(self.version, str)
+            or self.version != XLSX_SOURCE_READER_VERSION
+        ):
+            raise XlsxStructureError(REASON_STRUCTURE_INVALID_VERSION)
+
         if isinstance(self.locations_by_uuid, (Mapping, MappingProxyType)):
-            loc_dict = dict(self.locations_by_uuid)
+            object.__setattr__(
+                self,
+                "locations_by_uuid",
+                MappingProxyType(dict(self.locations_by_uuid)),
+            )
         else:
-            raise XlsxStructureError(REASON_STRUCTURE_LOCATION_IDENTITY_MISMATCH)
+            raise XlsxStructureError(REASON_STRUCTURE_INVALID_SNAPSHOT_TYPE)
 
-        # Invariant 1: Exact match with snapshot identities
         snapshot_uuids = set(self.snapshot.all_rows_by_id.keys())
-        loc_uuids = set(loc_dict.keys())
-        if loc_uuids != snapshot_uuids:
+        location_uuids = set(self.locations_by_uuid.keys())
+
+        if snapshot_uuids != location_uuids:
             raise XlsxStructureError(REASON_STRUCTURE_LOCATION_IDENTITY_MISMATCH)
 
-        # Invariant 2: Location sheet matches snapshot row sheet
-        sheet_rows_seen: dict[str, set[int]] = {
-            s: set() for s in RAW_CONTRACT_REGISTRY.sheets
-        }
-        for u, loc in loc_dict.items():
+        seen_locations: set[tuple[str, int]] = set()
+        for u, loc in self.locations_by_uuid.items():
             if not isinstance(loc, SourceRowLocation):
-                raise XlsxStructureError(REASON_STRUCTURE_LOCATION_IDENTITY_MISMATCH)
-            expected_sheet = self.snapshot.all_rows_by_id[u].sheet_name
-            if loc.sheet_name != expected_sheet:
+                raise XlsxStructureError(REASON_STRUCTURE_INVALID_SNAPSHOT_TYPE)
+
+            row = self.snapshot.all_rows_by_id[u]
+            if loc.sheet_name != row.sheet_name:
                 raise XlsxStructureError(
                     REASON_STRUCTURE_LOCATION_SHEET_MISMATCH,
                     sheet_name=loc.sheet_name,
                 )
-            if loc.physical_row_number in sheet_rows_seen[loc.sheet_name]:
+
+            loc_key = (loc.sheet_name, loc.physical_row_number)
+            if loc_key in seen_locations:
                 raise XlsxStructureError(
                     REASON_STRUCTURE_DUPLICATE_LOCATION_ROW,
                     sheet_name=loc.sheet_name,
                     physical_row_number=loc.physical_row_number,
                 )
-            sheet_rows_seen[loc.sheet_name].add(loc.physical_row_number)
-
-        # Invariant 3: Ordering by UUID bytes
-        sorted_keys = tuple(sorted(loc_dict.keys(), key=lambda k: k.bytes))
-        if tuple(loc_dict.keys()) != sorted_keys:
-            loc_dict = {k: loc_dict[k] for k in sorted_keys}
-
-        object.__setattr__(self, "locations_by_uuid", MappingProxyType(loc_dict))
+            seen_locations.add(loc_key)
 
 
 def _get_secure_xml_parser() -> etree.XMLParser:
-    """Create a securely configured lxml XMLParser rejecting DTDs and entities."""
+    """Construct a secure lxml parser rejecting DTDs, external entities and network."""
     return etree.XMLParser(
-        load_dtd=False,
-        dtd_validation=False,
-        attribute_defaults=False,
         resolve_entities=False,
         no_network=True,
+        dtd_validation=False,
+        load_dtd=False,
+        attribute_defaults=False,
         recover=False,
         huge_tree=False,
         strip_cdata=False,
@@ -369,6 +378,32 @@ def _decode_ooxml_escapes(text: str) -> str:
         return decoded
 
 
+def _extract_t_or_v_leaf_text(
+    elem: etree._Element,
+    *,
+    sheet_name: str | None = None,
+    cell_ref: str | None = None,
+    physical_row_number: int | None = None,
+) -> str:
+    """Extract text from leaf, preserving comments and rejecting bad children."""
+    if len(elem) == 0:
+        return elem.text or ""
+
+    parts = [elem.text or ""]
+    for ch in elem:
+        if ch.tag is etree.Comment:
+            if ch.tail:
+                parts.append(ch.tail)
+            continue
+        raise XlsxCellError(
+            REASON_CELL_UNKNOWN_TYPE,
+            sheet_name=sheet_name,
+            cell_ref=cell_ref,
+            physical_row_number=physical_row_number,
+        )
+    return "".join(parts)
+
+
 def _extract_text_from_si_or_is(
     elem: etree._Element,
     *,
@@ -376,13 +411,9 @@ def _extract_text_from_si_or_is(
     cell_ref: str | None = None,
     physical_row_number: int | None = None,
 ) -> str:
-    """Extract and decode plain text from <si> or <is> element.
+    """Extract plain text from an <si> or <is> element (R2, R4-01).
 
-    Valid children of <si>/<is> are:
-    - <t>: plain text fragment.
-    - <r>: rich text run (containing <rPr>, <t>, <rPh>, <phoneticPr>).
-    - <rPh>, <phoneticPr>: phonetic guide elements (excluded from source text).
-    Any other child tag or foreign namespace is an invalid cell structure (R2).
+    Rejects unknown child tags, decodes escaped fragments, and handles phonetic tags.
     """
     text_fragments: list[str] = []
     for child in elem:
@@ -398,7 +429,12 @@ def _extract_text_from_si_or_is(
             )
 
         if q.localname == "t":
-            raw_t = child.text or ""
+            raw_t = _extract_t_or_v_leaf_text(
+                child,
+                sheet_name=sheet_name,
+                cell_ref=cell_ref,
+                physical_row_number=physical_row_number,
+            )
             text_fragments.append(_decode_ooxml_escapes(raw_t))
         elif q.localname == "r":
             for r_child in child:
@@ -413,7 +449,12 @@ def _extract_text_from_si_or_is(
                         physical_row_number=physical_row_number,
                     )
                 if rq.localname == "t":
-                    raw_t = r_child.text or ""
+                    raw_t = _extract_t_or_v_leaf_text(
+                        r_child,
+                        sheet_name=sheet_name,
+                        cell_ref=cell_ref,
+                        physical_row_number=physical_row_number,
+                    )
                     text_fragments.append(_decode_ooxml_escapes(raw_t))
                 elif rq.localname in ("rPr", "rPh", "phoneticPr"):
                     continue
@@ -438,6 +479,11 @@ def _extract_text_from_si_or_is(
 
 
 @lru_cache(maxsize=16384)
+def _cached_parse_canonical_jalali_date(date_str: str) -> Any:
+    return parse_canonical_jalali_date(date_str)
+
+
+@lru_cache(maxsize=16384)
 def _parse_col_and_num(col_letter: str) -> int:
     col_num = 0
     for char in col_letter:
@@ -445,23 +491,22 @@ def _parse_col_and_num(col_letter: str) -> int:
     return col_num
 
 
-@lru_cache(maxsize=131072)
+_CELL_REF_PARSER_REGEX = re.compile(r"^([A-Z]{1,3})([1-9][0-9]*)$")
+
+
 def _parse_cell_ref(ref: str) -> tuple[str, int, int]:
-    """Parse cell coordinate reference strictly using fullmatch (R5)."""
-    if not _CELL_REF_STRICT_REGEX.fullmatch(ref):
+    """Parse cell coordinate reference strictly using regex parser (R5)."""
+    m = _CELL_REF_PARSER_REGEX.match(ref)
+    if m is None:
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
 
-    # Split letters and digits
-    idx = 0
-    while idx < len(ref) and ref[idx].isalpha():
-        idx += 1
-    col_letter = ref[:idx].upper()
-    row_num = int(ref[idx:])
+    col_letter = m.group(1)
+    row_num = int(m.group(2))
 
     if not is_valid_excel_column(col_letter):
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
 
-    if not (1 <= row_num <= MAX_PHYSICAL_ROW):
+    if row_num > MAX_PHYSICAL_ROW:
         raise XlsxStructureError(
             REASON_STRUCTURE_ROW_OUT_OF_BOUNDS,
             cell_ref=ref,
@@ -614,7 +659,7 @@ def _parse_shared_strings_table(
                             REASON_STRUCTURE_INVALID_SHEET_HIERARCHY
                         )
 
-                    # Decode string only if needed_indices is None or needed (R3)
+                    # Decode string only if needed_indices is None or needed (R3, R4-03)
                     if needed_indices is None or current_idx in needed_indices:
                         strings_map[current_idx] = _extract_text_from_si_or_is(elem)
 
@@ -632,50 +677,79 @@ def _parse_shared_strings_table(
 
 
 def _discover_sheet_metadata_and_needed_sst(
-    zf: zipfile.ZipFile, worksheet_path: str, sheet_name: str
+    zf: zipfile.ZipFile,
+    worksheet_path: str,
+    sheet_name: str,
+    sheet_contract: RawSheetContract,
+    has_sst: bool,
 ) -> tuple[dict[int, list[tuple[int, int]]], set[int]]:
-    """Pass 1: Discover formula coverage intervals and collect SST indices (R3, R6).
+    """Pass 1: Discover formula coverage and candidate SST indices (R4-03, R6).
 
     Returns (covered_by_col, needed_sst_indices).
     """
     raw_covered_by_col: dict[int, list[tuple[int, int]]] = {}
-    needed_sst_indices: set[int] = set()
+    candidate_header_sst: list[tuple[int, int]] = []
+    candidate_data_sst: list[tuple[int, bool, list[tuple[int, int, bool]]]] = []
+
+    raw_col_by_letter = {c.column_letter: c for c in sheet_contract.raw_columns}
+    stable_id_col = sheet_contract.stable_id_column.column_letter
+    activity_cols = set(sheet_contract.activity_columns)
+    req_headers = dict(sheet_contract.required_headers_by_column)
+    if sheet_contract.stable_id_column.required_header is not None:
+        req_headers[stable_id_col] = sheet_contract.stable_id_column.required_header
+    retained_cols = set(raw_col_by_letter.keys()) | {stable_id_col}
+    sst_rx = _SST_INDEX_STRICT_REGEX
 
     with zf.open(worksheet_path, "r") as stream:
         try:
-            # Stream end events and clean up subtrees continuously (R6)
             context = _secure_iterparse(stream, events=("end",))
-            doctype_checked = False
+            root_checked = False
             for _, elem in context:
-                if not doctype_checked:
-                    doctype_checked = True
-                    tree = elem.getroottree()
+                tree = elem.getroottree()
+                if not root_checked:
+                    root_checked = True
                     if tree is not None and tree.docinfo.doctype:
                         raise XlsxStructureError(
                             REASON_STRUCTURE_MALFORMED_XML, sheet_name=sheet_name
                         )
+                    root = tree.getroot() if tree is not None else None
+                    if root is None or root.tag not in _TAG_WORKSHEET:
+                        raise XlsxStructureError(
+                            REASON_STRUCTURE_INVALID_ROOT, sheet_name=sheet_name
+                        )
 
-                # event == "end"
                 if elem.tag in _TAG_ROW:
-                    # Discard rows outside sheetData
                     parent = elem.getparent()
                     if (
                         parent is None
                         or parent.tag not in _TAG_SHEET_DATA
                         or parent.getparent() is None
                         or parent.getparent().tag not in _TAG_WORKSHEET
+                        or parent.getparent() != elem.getroottree().getroot()
                     ):
                         elem.clear()
                         while elem.getprevious() is not None:
                             del elem.getparent()[0]
                         continue
 
+                    row_r = elem.get("r")
+                    if not row_r or not _ROW_NUM_STRICT_REGEX.fullmatch(row_r):
+                        elem.clear()
+                        while elem.getprevious() is not None:
+                            del elem.getparent()[0]
+                        continue
+
+                    physical_row_num = int(row_r)
+
+                    has_literal_act = False
+                    row_sst_candidates: list[tuple[int, int, bool]] = []
+
                     for c_elem in elem:
                         if c_elem.tag not in _TAG_C:
                             continue
 
-                        # Formula coverage check
-                        f_elem = c_elem.find("{*}f")
+                        has_children = len(c_elem) > 0
+                        f_elem = c_elem.find("{*}f") if has_children else None
                         if f_elem is not None:
                             f_type = (f_elem.get("t") or "").strip().lower()
                             if f_type in ("array", "datatable"):
@@ -704,7 +778,6 @@ def _discover_sheet_metadata_and_needed_sst(
                                         sheet_name=sheet_name,
                                     ) from e
 
-                                # Anchor must be inside bounded range (WP-05 spec) (R6)
                                 if not (
                                     min_c <= a_col <= max_c and min_r <= a_row <= max_r
                                 ):
@@ -719,18 +792,85 @@ def _discover_sheet_metadata_and_needed_sst(
                                         raw_covered_by_col[c] = []
                                     raw_covered_by_col[c].append((min_r, max_r))
 
-                        # Collect referenced SST index if t="s" (R3)
-                        c_t = c_elem.get("t")
-                        if c_t == "s":
-                            v_elem = c_elem.find("{*}v")
-                            if (
-                                v_elem is not None
-                                and v_elem.text
-                                and _SST_INDEX_STRICT_REGEX.fullmatch(
-                                    v_elem.text.strip()
-                                )
-                            ):
-                                needed_sst_indices.add(int(v_elem.text.strip()))
+                        if has_sst and f_elem is None:
+                            cell_ref = c_elem.get("r")
+                            if cell_ref:
+                                m = _CELL_REF_PARSER_REGEX.match(cell_ref)
+                                if m is not None:
+                                    col_let = m.group(1)
+                                    col_num = _parse_col_and_num(col_let)
+                                    c_row = int(m.group(2))
+                                    if c_row == physical_row_num:
+                                        if physical_row_num == 1:
+                                            if (
+                                                col_let in req_headers
+                                                and c_elem.get("t") == "s"
+                                            ):
+                                                v_el = (
+                                                    c_elem.find("{*}v")
+                                                    if has_children
+                                                    else None
+                                                )
+                                                if v_el is not None:
+                                                    v_text = _extract_t_or_v_leaf_text(
+                                                        v_el
+                                                    )
+                                                    if sst_rx.fullmatch(v_text):
+                                                        candidate_header_sst.append(
+                                                            (col_num, int(v_text))
+                                                        )
+                                        else:
+                                            is_act = col_let in activity_cols
+                                            is_retained = col_let in retained_cols
+                                            c_t = (c_elem.get("t") or "").strip()
+                                            if is_act:
+                                                if c_t in ("", "n", "str"):
+                                                    v_el = (
+                                                        c_elem.find("{*}v")
+                                                        if has_children
+                                                        else None
+                                                    )
+                                                    if (
+                                                        v_el is not None
+                                                        and (v_el.text or "") != ""
+                                                    ):
+                                                        has_literal_act = True
+                                                elif c_t == "inlineStr":
+                                                    is_el = (
+                                                        c_elem.find("{*}is")
+                                                        if has_children
+                                                        else None
+                                                    )
+                                                    if is_el is not None:
+                                                        has_literal_act = True
+
+                                            if is_retained and c_t == "s":
+                                                v_el = (
+                                                    c_elem.find("{*}v")
+                                                    if has_children
+                                                    else None
+                                                )
+                                                if v_el is not None:
+                                                    v_text = _extract_t_or_v_leaf_text(
+                                                        v_el
+                                                    )
+                                                    if sst_rx.fullmatch(v_text):
+                                                        row_sst_candidates.append(
+                                                            (
+                                                                col_num,
+                                                                int(v_text),
+                                                                is_act,
+                                                            )
+                                                        )
+
+                    if (
+                        has_sst
+                        and physical_row_num >= 2
+                        and (has_literal_act or row_sst_candidates)
+                    ):
+                        candidate_data_sst.append(
+                            (physical_row_num, has_literal_act, row_sst_candidates)
+                        )
 
                     elem.clear()
                     while elem.getprevious() is not None:
@@ -742,7 +882,6 @@ def _discover_sheet_metadata_and_needed_sst(
                 REASON_STRUCTURE_MALFORMED_XML, sheet_name=sheet_name
             ) from e
 
-    # Build sorted, merged non-overlapping interval index for O(log K) lookups (R6)
     merged_covered_by_col: dict[int, list[tuple[int, int]]] = {}
     for col_n, intervals in raw_covered_by_col.items():
         intervals.sort(key=lambda item: item[0])
@@ -753,6 +892,26 @@ def _discover_sheet_metadata_and_needed_sst(
             else:
                 merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         merged_covered_by_col[col_n] = merged
+
+    needed_sst_indices: set[int] = set()
+    if has_sst:
+        for col_num, s_idx in candidate_header_sst:
+            if not _is_cell_covered(merged_covered_by_col, col_num, 1):
+                needed_sst_indices.add(s_idx)
+
+        for row_num, has_lit_act, cand_list in candidate_data_sst:
+            has_valid_act = has_lit_act
+            if not has_valid_act:
+                for col_num, _s_idx, is_act in cand_list:
+                    if is_act and not _is_cell_covered(
+                        merged_covered_by_col, col_num, row_num
+                    ):
+                        has_valid_act = True
+                        break
+            if has_valid_act:
+                for col_num, s_idx, _is_act in cand_list:
+                    if not _is_cell_covered(merged_covered_by_col, col_num, row_num):
+                        needed_sst_indices.add(s_idx)
 
     return merged_covered_by_col, needed_sst_indices
 
@@ -789,7 +948,7 @@ def _decode_cell_literal_value(
     cell_type = (c_elem.get("t") or "").strip()
     cell_ref = c_elem.get("r") or f"{col_letter}{physical_row_num}"
 
-    # Verify that cell children are structurally valid and not conflicting (R1)
+    # Verify that cell children are structurally valid and not conflicting (R1, R4-01)
     v_count = 0
     is_count = 0
     f_count = 0
@@ -872,20 +1031,27 @@ def _decode_cell_literal_value(
     # 1. Shared string (t="s")
     if cell_type == "s":
         v_elem = c_elem.find("{*}v")
-        if (
-            v_elem is None
-            or v_elem.text is None
-            or not v_elem.text.strip()
-            or not _SST_INDEX_STRICT_REGEX.fullmatch(v_elem.text.strip())
-        ):
-            # t="s" without valid SST index is an error, not an empty cell (R3)
+        if v_elem is None:
             raise XlsxCellError(
                 REASON_CELL_INVALID_SST_INDEX,
                 sheet_name=sheet_name,
                 cell_ref=cell_ref,
                 physical_row_number=physical_row_num,
             )
-        s_idx = int(v_elem.text.strip())
+        v_text = _extract_t_or_v_leaf_text(
+            v_elem,
+            sheet_name=sheet_name,
+            cell_ref=cell_ref,
+            physical_row_number=physical_row_num,
+        )
+        if not _SST_INDEX_STRICT_REGEX.fullmatch(v_text):
+            raise XlsxCellError(
+                REASON_CELL_INVALID_SST_INDEX,
+                sheet_name=sheet_name,
+                cell_ref=cell_ref,
+                physical_row_number=physical_row_num,
+            )
+        s_idx = int(v_text)
         if s_idx not in shared_strings_map:
             raise XlsxCellError(
                 REASON_CELL_SST_INDEX_OUT_OF_RANGE,
@@ -912,16 +1078,25 @@ def _decode_cell_literal_value(
         v_elem = c_elem.find("{*}v")
         if v_elem is None:
             return None
-        # <v/> or <v></v> is explicit empty string "" (R4)
-        raw_val = v_elem.text if v_elem.text is not None else ""
+        raw_val = _extract_t_or_v_leaf_text(
+            v_elem,
+            sheet_name=sheet_name,
+            cell_ref=cell_ref,
+            physical_row_number=physical_row_num,
+        )
         return _decode_ooxml_escapes(raw_val)
 
     # 4. Numeric XML (t="n" or omitted)
     v_elem = c_elem.find("{*}v")
-    if v_elem is None or v_elem.text is None:
+    if v_elem is None:
         return None
-    raw_num_str = v_elem.text
-    if raw_num_str == "":
+    raw_num_str = _extract_t_or_v_leaf_text(
+        v_elem,
+        sheet_name=sheet_name,
+        cell_ref=cell_ref,
+        physical_row_number=physical_row_num,
+    )
+    if raw_num_str == "" and not any(isinstance(ch, etree._Comment) for ch in v_elem):
         return None
 
     # Enforce strict finite ASCII numeric grammar using fullmatch (R5)
@@ -956,8 +1131,23 @@ def _decode_cell_literal_value(
             ValueKind.DECIMAL,
         ):
             try:
-                return Decimal(raw_num_str)
-            except InvalidOperation as e:
+                dec = Decimal(raw_num_str)
+                if (
+                    field_contract.value_kind == ValueKind.INTEGER_TOMAN
+                    and dec % 1 != 0
+                ):
+                    raise XlsxCellError(
+                        REASON_CELL_INVALID_NUMERIC_LEXEME,
+                        sheet_name=sheet_name,
+                        cell_ref=cell_ref,
+                        physical_row_number=physical_row_num,
+                    )
+                return (
+                    int(dec)
+                    if field_contract.value_kind == ValueKind.INTEGER_TOMAN
+                    else dec
+                )
+            except (InvalidOperation, ValueError) as e:
                 raise XlsxCellError(
                     REASON_CELL_INVALID_NUMERIC_LEXEME,
                     sheet_name=sheet_name,
@@ -969,8 +1159,13 @@ def _decode_cell_literal_value(
 
     try:
         return Decimal(raw_num_str)
-    except InvalidOperation:
-        return raw_num_str
+    except InvalidOperation as e:
+        raise XlsxCellError(
+            REASON_CELL_INVALID_NUMERIC_LEXEME,
+            sheet_name=sheet_name,
+            cell_ref=cell_ref,
+            physical_row_number=physical_row_num,
+        ) from e
 
 
 def _decode_row_column_value(
@@ -989,38 +1184,85 @@ def _decode_row_column_value(
     c_el = row_c_elems.get(col_letter)
     if c_el is None:
         return None
-    f_el = c_el.find("{*}f")
+    f_el = c_el.find("{*}f") if len(c_el) > 0 else None
     if f_el is not None:
         return None
-    col_num = _parse_col_and_num(col_letter)
-    if covered_by_col and _is_cell_covered(covered_by_col, col_num, physical_row_num):
-        return None
+    if covered_by_col:
+        col_num = _parse_col_and_num(col_letter)
+        if _is_cell_covered(covered_by_col, col_num, physical_row_num):
+            return None
 
     if not is_id and col_letter not in raw_col_by_letter:
         return None
 
+    field = raw_col_by_letter.get(col_letter)
     val = _decode_cell_literal_value(
         c_el,
         col_letter,
         physical_row_num,
         sheet_name,
-        raw_col_by_letter.get(col_letter),
+        field,
         is_id,
         shared_strings_map,
     )
-    # Textual inputs in numeric columns reject exponents like "1e2" (R5)
-    field = raw_col_by_letter.get(col_letter)
-    if field is not None and field.value_kind in (
-        ValueKind.INTEGER_TOMAN,
-        ValueKind.DECIMAL,
-    ):
-        if isinstance(val, str) and ("e" in val.lower()):
-            raise XlsxCellError(
-                REASON_CELL_INVALID_NUMERIC_LEXEME,
-                sheet_name=sheet_name,
-                cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
-                physical_row_number=physical_row_num,
-            )
+    if field is not None and val is not None:
+        if field.value_kind in (ValueKind.INTEGER_TOMAN, ValueKind.DECIMAL):
+            if isinstance(val, str):
+                val_str = val.strip()
+                if not val_str:
+                    return None
+                if (
+                    not _NUMERIC_XML_STRICT_REGEX.fullmatch(val_str)
+                    or "e" in val_str.lower()
+                ):
+                    raise XlsxCellError(
+                        REASON_CELL_INVALID_NUMERIC_LEXEME,
+                        sheet_name=sheet_name,
+                        cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
+                        physical_row_number=physical_row_num,
+                    )
+                if field.value_kind == ValueKind.INTEGER_TOMAN and "." in val_str:
+                    raise XlsxCellError(
+                        REASON_CELL_INVALID_NUMERIC_LEXEME,
+                        sheet_name=sheet_name,
+                        cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
+                        physical_row_number=physical_row_num,
+                    )
+                try:
+                    return (
+                        int(val_str)
+                        if field.value_kind == ValueKind.INTEGER_TOMAN
+                        else Decimal(val_str)
+                    )
+                except (ValueError, InvalidOperation) as exc:
+                    raise XlsxCellError(
+                        REASON_CELL_INVALID_NUMERIC_LEXEME,
+                        sheet_name=sheet_name,
+                        cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
+                        physical_row_number=physical_row_num,
+                    ) from exc
+            elif isinstance(val, Decimal):
+                if field.value_kind == ValueKind.INTEGER_TOMAN:
+                    if val % 1 != 0:
+                        raise XlsxCellError(
+                            REASON_CELL_INVALID_NUMERIC_LEXEME,
+                            sheet_name=sheet_name,
+                            cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
+                            physical_row_number=physical_row_num,
+                        )
+                    return int(val)
+        elif field.field_name == "date_raw":
+            if isinstance(val, str):
+                try:
+                    _cached_parse_canonical_jalali_date(val.strip())
+                except InvalidDateError as exc:
+                    raise XlsxCellError(
+                        REASON_CELL_INVALID_NUMERIC_LEXEME,
+                        sheet_name=sheet_name,
+                        cell_ref=c_el.get("r") or f"{col_letter}{physical_row_num}",
+                        physical_row_number=physical_row_num,
+                    ) from exc
+
     return val
 
 
@@ -1032,11 +1274,13 @@ def _read_sheet_snapshot_and_locations(
     shared_strings_map: dict[int, str],
     covered_by_col: dict[int, list[tuple[int, int]]],
 ) -> tuple[list[SourceRowInput], dict[uuid.UUID, SourceRowLocation]]:
-    """Pass 2: Parse worksheet rows, check headers, decode literals, check activity."""
+    """Pass 3: Parse worksheet rows, check headers, decode literals (R4-01..R4-04)."""
     raw_col_by_letter = {c.column_letter: c for c in sheet_contract.raw_columns}
     stable_id_col = sheet_contract.stable_id_column.column_letter
     activity_cols = tuple(sheet_contract.activity_columns)
-    req_headers = sheet_contract.required_headers_by_column
+    req_headers = dict(sheet_contract.required_headers_by_column)
+    if sheet_contract.stable_id_column.required_header is not None:
+        req_headers[stable_id_col] = sheet_contract.stable_id_column.required_header
 
     rows_inputs: list[SourceRowInput] = []
     locations: dict[uuid.UUID, SourceRowLocation] = {}
@@ -1045,20 +1289,24 @@ def _read_sheet_snapshot_and_locations(
 
     with zf.open(worksheet_path, "r") as stream:
         try:
-            # Stream end events to validate hierarchy and extract rows (R1, R6)
             context = _secure_iterparse(stream, events=("end",))
             doctype_checked = False
 
             for _, elem in context:
+                tree = elem.getroottree()
                 if not doctype_checked:
                     doctype_checked = True
-                    tree = elem.getroottree()
                     if tree is not None and tree.docinfo.doctype:
                         raise XlsxStructureError(
                             REASON_STRUCTURE_MALFORMED_XML, sheet_name=sheet_name
                         )
+                    root = tree.getroot() if tree is not None else None
+                    if root is None or root.tag not in _TAG_WORKSHEET:
+                        raise XlsxStructureError(
+                            REASON_STRUCTURE_INVALID_ROOT, sheet_name=sheet_name
+                        )
 
-                # Check for non-row child inside sheetData (R1)
+                # Check for non-row child inside sheetData (R1, R4-01)
                 parent = elem.getparent()
                 if (
                     parent is not None
@@ -1080,18 +1328,22 @@ def _read_sheet_snapshot_and_locations(
 
                 if elem.tag in _TAG_ROW:
                     if parent is None or parent.tag not in _TAG_SHEET_DATA:
-                        # Row outside sheetData is ignored from source
                         elem.clear()
                         while elem.getprevious() is not None:
                             del elem.getparent()[0]
                         continue
 
                     grandparent = parent.getparent()
-                    if grandparent is None or grandparent.tag not in _TAG_WORKSHEET:
-                        raise XlsxStructureError(
-                            REASON_STRUCTURE_INVALID_SHEET_HIERARCHY,
-                            sheet_name=sheet_name,
-                        )
+                    if (
+                        grandparent is None
+                        or grandparent.tag not in _TAG_WORKSHEET
+                        or grandparent != elem.getroottree().getroot()
+                    ):
+                        # Nested in extension (e.g. extLst/ext/worksheet) -> ignore
+                        elem.clear()
+                        while elem.getprevious() is not None:
+                            del elem.getparent()[0]
+                        continue
 
                     row_r = elem.get("r")
                     if not row_r or not _ROW_NUM_STRICT_REGEX.fullmatch(row_r):
@@ -1128,7 +1380,6 @@ def _read_sheet_snapshot_and_locations(
 
                     for c_elem in elem:
                         if c_elem.tag not in _TAG_C:
-                            # Non-c child inside row is invalid hierarchy (R1)
                             raise XlsxStructureError(
                                 REASON_STRUCTURE_INVALID_SHEET_HIERARCHY,
                                 sheet_name=sheet_name,
@@ -1161,7 +1412,7 @@ def _read_sheet_snapshot_and_locations(
                             )
                         row_c_elems[col_let] = c_elem
 
-                    # Process Row 1: Headers
+                    # Process Row 1: Headers (R4-02)
                     if physical_row_num == 1:
                         header_checked = True
                         for req_col, req_h in req_headers.items():
@@ -1174,7 +1425,11 @@ def _read_sheet_snapshot_and_locations(
                                     physical_row_number=1,
                                 )
 
-                            if c_el.find("{*}f") is not None:
+                            col_num = _parse_col_and_num(req_col)
+                            if (len(c_el) > 0 and c_el.find("{*}f") is not None) or (
+                                covered_by_col
+                                and _is_cell_covered(covered_by_col, col_num, 1)
+                            ):
                                 raise XlsxHeaderError(
                                     REASON_HEADER_FORMULA_BACKED,
                                     sheet_name=sheet_name,
@@ -1191,8 +1446,7 @@ def _read_sheet_snapshot_and_locations(
                                 False,
                                 shared_strings_map,
                             )
-                            h_str = str(h_val or "").strip()
-                            if h_str != req_h:
+                            if h_val != req_h:
                                 raise XlsxHeaderError(
                                     REASON_HEADER_TEXT_MISMATCH,
                                     sheet_name=sheet_name,
@@ -1209,7 +1463,7 @@ def _read_sheet_snapshot_and_locations(
                                 physical_row_number=1,
                             )
 
-                        # Check row activity from candidate literal cells (R3)
+                        # Check row activity from candidate literal cells (R3, R4-03)
                         has_activity = False
                         for act_col in activity_cols:
                             act_val = _decode_row_column_value(
@@ -1228,14 +1482,14 @@ def _read_sheet_snapshot_and_locations(
                                     if act_val.strip() != "":
                                         has_activity = True
                                         break
-                                elif isinstance(act_val, Decimal):
+                                elif isinstance(act_val, (int, Decimal)):
                                     has_activity = True
                                     break
                                 else:
                                     has_activity = True
                                     break
 
-                        # Active rows: validate UUIDv7 and extract raw fields (R3, R5)
+                        # Active rows: validate UUIDv7 and extract raw fields
                         if has_activity:
                             id_val = _decode_row_column_value(
                                 row_c_elems,
@@ -1248,9 +1502,10 @@ def _read_sheet_snapshot_and_locations(
                                 raw_col_by_letter=raw_col_by_letter,
                                 shared_strings_map=shared_strings_map,
                             )
-
-                            if id_val is None or (
-                                isinstance(id_val, str) and not id_val.strip()
+                            if (
+                                not id_val
+                                or not isinstance(id_val, str)
+                                or not id_val.strip()
                             ):
                                 raise XlsxIdentityError(
                                     REASON_IDENTITY_ACTIVE_ROW_MISSING_UUID,
@@ -1259,24 +1514,15 @@ def _read_sheet_snapshot_and_locations(
                                     physical_row_number=physical_row_num,
                                 )
 
-                            id_str = str(id_val).strip()
                             try:
-                                parsed_uuid = uuid.UUID(id_str)
-                            except (ValueError, AttributeError) as exc:
+                                parsed_uuid = _parse_and_validate_uuid7(id_val.strip())
+                            except InvalidIdentityError as exc:
                                 raise XlsxIdentityError(
                                     REASON_IDENTITY_MALFORMED_UUID,
                                     sheet_name=sheet_name,
                                     cell_ref=f"{stable_id_col}{physical_row_num}",
                                     physical_row_number=physical_row_num,
                                 ) from exc
-
-                            if parsed_uuid.version != 7:
-                                raise XlsxIdentityError(
-                                    REASON_IDENTITY_NON_V7_UUID,
-                                    sheet_name=sheet_name,
-                                    cell_ref=f"{stable_id_col}{physical_row_num}",
-                                    physical_row_number=physical_row_num,
-                                )
 
                             if parsed_uuid in locations:
                                 raise XlsxIdentityError(
@@ -1286,7 +1532,7 @@ def _read_sheet_snapshot_and_locations(
                                     physical_row_number=physical_row_num,
                                 )
 
-                            raw_dict: dict[str, Any] = {}
+                            row_raw_values: dict[str, Any] = {}
                             for col in sheet_contract.raw_columns:
                                 val = _decode_row_column_value(
                                     row_c_elems,
@@ -1299,17 +1545,13 @@ def _read_sheet_snapshot_and_locations(
                                     raw_col_by_letter=raw_col_by_letter,
                                     shared_strings_map=shared_strings_map,
                                 )
-                                raw_dict[col.field_name] = val
+                                row_raw_values[col.field_name] = val
 
                             rows_inputs.append(
-                                SourceRowInput(
-                                    stable_id=parsed_uuid,
-                                    source_values=raw_dict,
-                                )
+                                SourceRowInput(parsed_uuid, row_raw_values)
                             )
                             locations[parsed_uuid] = SourceRowLocation(
-                                sheet_name=sheet_name,
-                                physical_row_number=physical_row_num,
+                                sheet_name, physical_row_num
                             )
 
                     elem.clear()
@@ -1323,118 +1565,107 @@ def _read_sheet_snapshot_and_locations(
             ) from e
 
     if not header_checked:
-        raise XlsxHeaderError(
-            REASON_HEADER_MISSING_ROW,
-            sheet_name=sheet_name,
-            physical_row_number=1,
-        )
+        raise XlsxHeaderError(REASON_HEADER_MISSING_ROW, sheet_name=sheet_name)
 
     return rows_inputs, locations
 
 
-def _validate_package_content_types(
-    zf: zipfile.ZipFile,
-) -> dict[str, str]:
-    """Validate [Content_Types].xml and return dict of part -> content_type (R2)."""
+def _parse_content_types_file(zf: zipfile.ZipFile) -> dict[str, str]:
+    """Parse [Content_Types].xml checking required workbook and worksheet types (R2)."""
     if "[Content_Types].xml" not in zf.namelist():
         raise XlsxPackageError(REASON_PACKAGE_MISSING_CONTENT_TYPES)
 
+    content_types: dict[str, str] = {}
     parser = _get_secure_xml_parser()
+
     with zf.open("[Content_Types].xml", "r") as f:
         try:
-            ct_tree = etree.parse(f, parser=parser)
+            tree = etree.parse(f, parser=parser)
         except Exception as e:
             raise XlsxPackageError(REASON_PACKAGE_INVALID_CONTENT_TYPES) from e
 
-    if ct_tree.docinfo.doctype:
+    if tree.docinfo.doctype:
         raise XlsxPackageError(REASON_PACKAGE_INVALID_CONTENT_TYPES)
 
-    root = ct_tree.getroot()
+    root = tree.getroot()
     root_tag = root.tag
     if not (root_tag == "Types" or root_tag == f"{{{_NS_CONTENT_TYPES}}}Types"):
         raise XlsxPackageError(REASON_PACKAGE_INVALID_CONTENT_TYPES)
 
-    content_types_by_part: dict[str, str] = {}
-
     for elem in root:
-        localname = etree.QName(elem).localname
-        if localname == "Override":
-            part_name = elem.get("PartName") or ""
-            content_type = (elem.get("ContentType") or "").strip()
-
-            if content_type in _FORBIDDEN_WORKBOOK_CONTENT_TYPES:
+        tag = elem.tag
+        if tag == "Override" or tag == f"{{{_NS_CONTENT_TYPES}}}Override":
+            part_name = (elem.get("PartName") or "").lstrip("/")
+            ct = elem.get("ContentType") or ""
+            if ct in _FORBIDDEN_WORKBOOK_CONTENT_TYPES:
                 raise XlsxPackageError(REASON_PACKAGE_FORBIDDEN_CONTENT_TYPE)
+            content_types[part_name] = ct
 
-            clean_part = part_name.lstrip("/")
-            content_types_by_part[clean_part] = content_type
-
-    return content_types_by_part
+    return content_types
 
 
 def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
-    """Core extraction algorithm from an open ZipFile archive."""
-    # Step 0: Check duplicate ZIP member names (R2)
-    names = [info.filename for info in zf.infolist()]
-    if len(names) != len(set(names)):
-        raise XlsxPackageError(REASON_PACKAGE_DUPLICATE_ZIP_ENTRY)
+    """Stream literal data from opened zip package validating profile."""
+    # Check for duplicate ZIP entry names (R2)
+    seen_zip_names: set[str] = set()
+    for name in zf.namelist():
+        if name in seen_zip_names:
+            raise XlsxPackageError(REASON_PACKAGE_DUPLICATE_ZIP_ENTRY)
+        seen_zip_names.add(name)
 
-    # Step 1: Validate [Content_Types].xml
-    content_types_by_part = _validate_package_content_types(zf)
+    # Step 1: Parse and validate [Content_Types].xml (R2)
+    content_types_by_part = _parse_content_types_file(zf)
 
-    # Step 2: Parse root package relationships (_rels/.rels)
+    # Step 2: Parse root relationships _rels/.rels (R2, R4)
     if "_rels/.rels" not in zf.namelist():
         raise XlsxPackageError(REASON_PACKAGE_MISSING_ROOT_RELS)
 
     root_rels = _parse_relationships_file(zf, "_rels/.rels", "")
-    office_doc_targets: list[str] = []
-
-    for _, (r_type, r_target) in root_rels.items():
-        if r_type in _REL_TYPE_OFFICE_DOC:
-            office_doc_targets.append(r_target)
-
+    office_doc_targets = [
+        target
+        for r_type, target in root_rels.values()
+        if r_type in _REL_TYPE_OFFICE_DOC
+    ]
     if len(office_doc_targets) == 0:
         raise XlsxPackageError(REASON_PACKAGE_MISSING_WORKBOOK)
     if len(office_doc_targets) > 1:
         raise XlsxPackageError(REASON_PACKAGE_AMBIGUOUS_WORKBOOK)
 
-    workbook_path = office_doc_targets[0]
-    if workbook_path not in zf.namelist():
+    workbook_part_path = office_doc_targets[0]
+
+    # Verify workbook ContentType in [Content_Types].xml (R2)
+    wb_ct = content_types_by_part.get(workbook_part_path)
+    if not wb_ct or wb_ct not in _VALID_WORKBOOK_CONTENT_TYPES:
         raise XlsxPackageError(REASON_PACKAGE_MISSING_WORKBOOK)
 
-    # Strict ContentType verification for workbook part (R2)
-    wb_ct = content_types_by_part.get(workbook_path)
-    if not wb_ct or wb_ct not in _VALID_WORKBOOK_CONTENT_TYPES:
-        raise XlsxPackageError(REASON_PACKAGE_FORBIDDEN_CONTENT_TYPE)
+    # Step 3: Parse workbook relationships xl/_rels/workbook.xml.rels (R2, R4)
+    wb_dir = posixpath.dirname(workbook_part_path)
+    wb_rels_path = (
+        posixpath.join(
+            wb_dir, "_rels", f"{posixpath.basename(workbook_part_path)}.rels"
+        )
+        if wb_dir
+        else f"_rels/{posixpath.basename(workbook_part_path)}.rels"
+    )
 
-    # Step 3: Parse workbook relationships (e.g. xl/_rels/workbook.xml.rels)
-    wb_dir = posixpath.dirname(workbook_path)
-    wb_filename = posixpath.basename(workbook_path)
-    wb_rels_path = posixpath.join(wb_dir, "_rels", f"{wb_filename}.rels")
+    wb_rels = _parse_relationships_file(zf, wb_rels_path, workbook_part_path)
 
-    wb_rels = _parse_relationships_file(zf, wb_rels_path, workbook_path)
-
-    # Find shared strings part strictly via internal workbook relationships (R2, R4)
-    sst_targets: list[str] = []
-    for _, (r_type, r_target) in wb_rels.items():
-        if r_type in _REL_TYPE_SHARED_STRINGS:
-            sst_targets.append(r_target)
-
+    # Validate at most one sharedStrings relationship (R4)
+    sst_targets = [
+        target
+        for r_type, target in wb_rels.values()
+        if r_type in _REL_TYPE_SHARED_STRINGS
+    ]
     if len(sst_targets) > 1:
         raise XlsxPackageError(REASON_PACKAGE_AMBIGUOUS_SHARED_STRINGS)
-
     shared_strings_path = sst_targets[0] if sst_targets else None
 
-    # If shared strings part is referenced, verify its ContentType and existence
-    if shared_strings_path:
-        if shared_strings_path not in zf.namelist():
-            raise XlsxPackageError(REASON_PACKAGE_MISSING_SHARED_STRINGS_PART)
-        sst_ct = content_types_by_part.get(shared_strings_path)
-        if not sst_ct or not sst_ct.endswith("sharedStrings+xml"):
-            raise XlsxPackageError(REASON_PACKAGE_MISSING_SHARED_STRINGS_PART)
+    # Step 4: Parse xl/workbook.xml to resolve declared sheets (R2, R4)
+    if workbook_part_path not in zf.namelist():
+        raise XlsxPackageError(REASON_PACKAGE_MISSING_WORKBOOK)
 
-    # Step 4: Parse workbook.xml to locate sheet declarations
     parser = _get_secure_xml_parser()
-    with zf.open(workbook_path, "r") as f:
+    with zf.open(workbook_part_path, "r") as f:
         try:
             wb_tree = etree.parse(f, parser=parser)
         except Exception as e:
@@ -1449,67 +1680,55 @@ def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
     ):
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_ROOT)
 
-    # Sheets container must be direct child of workbook (R2, R4)
+    # Exactly one <sheets> element in workbook.xml (R4)
     sheets_containers = [
         ch
         for ch in wb_root
         if ch.tag in tuple(f"{{{ns}}}sheets" for ns in _VALID_SPREADSHEETML_NAMESPACES)
     ]
-    if len(sheets_containers) == 0:
-        raise XlsxStructureError(REASON_STRUCTURE_MISSING_APPROVED_SHEETS)
-    if len(sheets_containers) > 1:
+    if len(sheets_containers) != 1:
         raise XlsxStructureError(REASON_STRUCTURE_AMBIGUOUS_SHEETS)
 
-    sheets_container = sheets_containers[0]
-    declared_sheets: dict[str, str] = {}  # sheet_name -> rId
+    sheets_elem = sheets_containers[0]
 
-    for sheet_elem in sheets_container:
-        if sheet_elem.tag not in tuple(
+    sheet_r_ids: dict[str, str] = {}
+    seen_sheet_names: set[str] = set()
+
+    for child in sheets_elem:
+        if child.tag in tuple(
             f"{{{ns}}}sheet" for ns in _VALID_SPREADSHEETML_NAMESPACES
         ):
-            raise XlsxStructureError(REASON_STRUCTURE_INVALID_SHEET_HIERARCHY)
+            name = child.get("name")
+            if not name:
+                continue
 
-        s_name = sheet_elem.get("name")
-        if not s_name:
-            continue
+            if name in seen_sheet_names:
+                raise XlsxStructureError(
+                    REASON_STRUCTURE_DUPLICATE_SHEET_DECLARATION,
+                    sheet_name=name,
+                )
+            seen_sheet_names.add(name)
 
-        r_id = (
-            sheet_elem.get(f"{{{_NS_REL_OFFICE_TRANS}}}id")
-            or sheet_elem.get(f"{{{_NS_REL_OFFICE_STRICT}}}id")
-            or sheet_elem.get("id")
-        )
-        if not r_id:
-            for k, v in sheet_elem.attrib.items():
-                if k == "id" or k.endswith("}id"):
-                    r_id = v
+            r_id = None
+            for attr_k, attr_v in child.attrib.items():
+                if attr_k == "id" or attr_k.endswith("}id"):
+                    r_id = attr_v
                     break
 
-        if not r_id:
-            raise XlsxStructureError(
-                REASON_STRUCTURE_MISSING_SHEET_DECLARATION,
-                sheet_name=s_name,
-            )
+            if r_id:
+                sheet_r_ids[name] = r_id
 
-        if s_name in declared_sheets:
-            raise XlsxStructureError(
-                REASON_STRUCTURE_DUPLICATE_SHEET_DECLARATION,
-                sheet_name=s_name,
-            )
-
-        declared_sheets[s_name] = r_id
-
-    # Step 5: Verify exactly all 4 approved sheets are declared
+    # Step 5: Verify that exactly all 4 approved sheets are declared (R2)
     approved_sheets = tuple(RAW_CONTRACT_REGISTRY.sheets.keys())
-    missing_approved = [s for s in approved_sheets if s not in declared_sheets]
+    missing_approved = [s for s in approved_sheets if s not in sheet_r_ids]
     if missing_approved:
         raise XlsxStructureError(REASON_STRUCTURE_MISSING_APPROVED_SHEETS)
 
-    # Map each approved sheet to worksheet XML part path
     sheet_parts: dict[str, str] = {}
     seen_part_paths: set[str] = set()
 
     for s_name in approved_sheets:
-        r_id = declared_sheets[s_name]
+        r_id = sheet_r_ids[s_name]
         if r_id not in wb_rels:
             raise XlsxStructureError(
                 REASON_STRUCTURE_MISSING_SHEET_DECLARATION,
@@ -1544,24 +1763,29 @@ def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
         seen_part_paths.add(ws_path)
         sheet_parts[s_name] = ws_path
 
-    # Step 6: Pass 1 on sheets -> collect formula coverage and needed SST (R3, R6)
+    # Step 6: Pass 1 on sheets -> collect formula coverage and needed SST (R4-03, R6)
     all_needed_sst_indices: set[int] = set()
     formula_coverage_by_sheet: dict[str, dict[int, list[tuple[int, int]]]] = {}
+    has_sst = bool(shared_strings_path)
 
     for s_name in approved_sheets:
         ws_path = sheet_parts[s_name]
-        cov, needed_sst = _discover_sheet_metadata_and_needed_sst(zf, ws_path, s_name)
+        sheet_contract = RAW_CONTRACT_REGISTRY.sheets[s_name]
+        cov, needed_sst = _discover_sheet_metadata_and_needed_sst(
+            zf, ws_path, s_name, sheet_contract, has_sst
+        )
         formula_coverage_by_sheet[s_name] = cov
-        all_needed_sst_indices.update(needed_sst)
+        if has_sst:
+            all_needed_sst_indices.update(needed_sst)
 
-    # Step 7: Parse SST if present, decoding only needed indices (R3, R6)
+    # Step 7: Parse SST if present, decoding only needed indices (R4-03, R6)
     shared_strings_map: dict[int, str] = {}
     if shared_strings_path:
         shared_strings_map = _parse_shared_strings_table(
             zf, shared_strings_path, needed_indices=all_needed_sst_indices
         )
 
-    # Step 8: Pass 2 on all approved sheets -> read rows and locations
+    # Step 8: Pass 2 on all approved sheets -> read rows and locations (R4-01..R4-04)
     all_sheet_inputs: list[SourceSheetInput] = []
     all_locations: dict[uuid.UUID, SourceRowLocation] = {}
 
@@ -1587,11 +1811,15 @@ def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
                 )
             all_locations[u] = loc
 
-    # Step 9: Construct WP-04 snapshot with exception mapping to XlsxIdentityError (R5)
+    # Step 9: Construct WP-04 snapshot with exception mapping (R4-04)
     try:
         snapshot = build_source_workbook_snapshot(all_sheet_inputs)
     except DuplicateIdentityError as exc:
         raise XlsxIdentityError(REASON_IDENTITY_DUPLICATE_UUID) from exc
+    except InvalidIdentityError as exc:
+        raise XlsxIdentityError(REASON_IDENTITY_MALFORMED_UUID) from exc
+    except (CanonicalValueError, InvalidDateError) as exc:
+        raise XlsxCellError(REASON_CELL_INVALID_NUMERIC_LEXEME) from exc
     except SourceChangePlanError as exc:
         raise XlsxIdentityError(REASON_IDENTITY_MALFORMED_UUID) from exc
 
@@ -1620,5 +1848,3 @@ def read_xlsx_source_snapshot(path: Path | str) -> XlsxSourceReadResult:
         raise XlsxPackageError(REASON_PACKAGE_CORRUPT_ZIP) from e
     except XlsxSourceReadError:
         raise
-    except Exception as e:
-        raise XlsxPackageError(REASON_PACKAGE_CORRUPT_ZIP) from e
