@@ -6,7 +6,7 @@
 - Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker
 - Branch/worktree: antigravity/phase-01-streaming-xlsx-source-reader
 - Commit(s):
-  - `(pending local commit)` (feat(local_agent): implement streaming XLSX source reader and physical row tracker)
+  - `5dd5d17` (feat(local_agent): implement streaming XLSX source reader and physical row tracker (WP-05))
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
