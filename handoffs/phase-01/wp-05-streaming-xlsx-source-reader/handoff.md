@@ -9,6 +9,9 @@
   - `5dd5d17` (feat(local_agent): implement streaming XLSX source reader and physical row tracker (WP-05))
   - `1542dd9` (docs(handoff): record commit hash in WP-05 handoff)
   - `2e06bd5` (fix(local_agent): address Codex review findings R1-R9 in streaming XLSX source reader (WP-05))
+  - `528981a` (docs(handoff): record implementation commits and test evidence in WP-05 handoff)
+  - `f2f6dc5` (docs(handoff): remove trailing whitespace in test results log)
+  - `daedaff` (fix(local_agent): address Codex review round 2 findings R1-R9 in streaming XLSX reader (WP-05))
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -79,11 +82,11 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 | `uv run ruff format --check .` | 0 | Verify formatting compliance across 52 files |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
 | `uv run mypy .` | 0 | Verify strict static typing across 19 source files |
-| `uv run pytest -v` | 0 | Execute all 112 unit, benchmark, integration and property tests |
-| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (10.5375s under 15.0s) and peak memory (107.07 MiB under 128.0 MiB) |
+| `uv run pytest -v` | 0 | Execute all 115 unit, benchmark, integration and property tests |
+| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (12.2768s under 15.0s) and peak memory (79.68 MiB under 128.0 MiB) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
 | `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
-| `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], text=True); sys.exit(1 if out.strip() else 0)"` | 0 | Verify zero sensitive credentials, IPs or real phone numbers in code/tests |
+| `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); sys.exit(0 if res.returncode == 1 else 1)"` | 0 | Verify zero sensitive credentials, IPs or real phone numbers in code/tests |
 | `python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/` | 0 | Validate completeness and structure of handoff package |
 
 ## Tests and evidence

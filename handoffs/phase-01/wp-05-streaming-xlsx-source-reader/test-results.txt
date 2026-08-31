@@ -3,24 +3,25 @@ WP-05 TEST & VERIFICATION RESULTS LOG
 ================================================================================
 WORK PACKAGE: WP-05 (Read-only streaming XLSX source reader and physical row tracker)
 PHASE: 1 (source and data-model foundation)
-RECORDED AT UTC: 2026-08-31T07:55:09Z
+RECORDED AT UTC: 2026-08-31T09:28:30Z
 Environment: Linux x86_64, Python 3.13.15, uv 0.12.7
 Branch: antigravity/phase-01-streaming-xlsx-source-reader
-Review Iteration: Codex Review Round 1 Revisions (R1-R9)
+Review Iteration: Codex Review Round 2 Revisions (R1-R9)
 
 --------------------------------------------------------------------------------
 1. uv --version
 --------------------------------------------------------------------------------
 Exit code: 0
 Output:
-uv 0.12.7
+uv 0.12.7 (x86_64-unknown-linux-gnu)
 
 --------------------------------------------------------------------------------
 2. uv lock --check
 --------------------------------------------------------------------------------
 Exit code: 0
 Output:
-(clean lockfile match)
+Resolved 88 packages in 3ms
+Checked 81 packages in 10ms
 
 --------------------------------------------------------------------------------
 3. uv sync --frozen --all-packages --all-groups
@@ -63,28 +64,28 @@ configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 112 items
+collected 115 items
 
 tests/test_architecture_guard.py ..............     [ 12%]
-tests/test_canonical_date.py ..........             [ 21%]
-tests/test_canonical_hashing.py ..................  [ 37%]
-tests/test_imports.py .......                       [ 43%]
-tests/test_raw_input_contracts.py ...............   [ 57%]
-tests/test_source_change_plan.py .................. [ 73%]
-.......                                             [ 79%]
-tests/test_xlsx_source_reader.py .................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.5375s | peak_rss_mib: 107.07 MiB | rows: 15000 | platform: linux
-. [ 95%]
-.....                                               [100%]
+tests/test_canonical_date.py ..........             [ 20%]
+tests/test_canonical_hashing.py ..................  [ 36%]
+tests/test_imports.py .......                       [ 42%]
+tests/test_raw_input_contracts.py ...............   [ 55%]
+tests/test_source_change_plan.py .................. [ 72%]
+.......                                             [ 77%]
+tests/test_xlsx_source_reader.py ................... [ 93%]
+.
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 12.2768s | peak_rss_mib: 79.68 MiB | rows: 15000 | platform: linux
+......                                              [100%]
 
-================== 112 passed in 20.77s ===================
+================== 115 passed in 21.38s ===================
 
 --------------------------------------------------------------------------------
 8. uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s
 --------------------------------------------------------------------------------
 Exit code: 0
 Output:
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.5375s | peak_rss_mib: 107.07 MiB | rows: 15000 | platform: linux
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 12.4166s | peak_rss_mib: 75.15 MiB | rows: 15000 | platform: linux
 PASSED
 
 --------------------------------------------------------------------------------
@@ -104,7 +105,7 @@ Output:
 Matches: 0
 
 Command (sensitive strings/patterns):
-python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], text=True); sys.exit(1 if out.strip() else 0)"
+python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); sys.exit(0 if res.returncode == 1 else 1)"
 Exit code: 0
 Output:
 Sensitive matches: 0
@@ -114,11 +115,11 @@ Sensitive matches: 0
 --------------------------------------------------------------------------------
 Exit code: 0
 Output:
-OK: handoff package 'handoffs/phase-01/wp-05-streaming-xlsx-source-reader/' is valid.
+Handoff validation passed.
 
 --------------------------------------------------------------------------------
 FINAL SUMMARY
 --------------------------------------------------------------------------------
-All 112 automated test cases passed. Review findings R1 through R9 have been addressed.
+All 115 automated test cases passed. Review findings R1 through R9 have been addressed.
 Quality checks, linting, typing, formatting, and handoff validation succeeded with 0 errors.
 Handoff package is complete and ready for independent Codex review.
