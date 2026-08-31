@@ -347,7 +347,7 @@ def test_r5_01_numeric_xml_in_raw_text_fields_across_all_four_sheets(
                 "__row_num__": 2,
                 "A": "2",
                 "B": {"t": "n", "v": "4004"},  # party_name_raw
-                "C": {"t": "n", "v": "09123456789"},  # phone_number_raw
+                "C": {"t": "n", "v": "02188887777"},  # phone_number_raw
                 "D": str(u_lk),
             }
         ],
@@ -393,7 +393,7 @@ def test_r5_01_numeric_xml_in_raw_text_fields_across_all_four_sheets(
     r_lk = res.snapshot.sheets["لیست کسبه"].rows[0]
     assert r_lk.raw_values["party_name_raw"] == "4004"
     assert isinstance(r_lk.raw_values["party_name_raw"], str)
-    assert r_lk.raw_values["phone_number_raw"] == "09123456789"
+    assert r_lk.raw_values["phone_number_raw"] == "02188887777"
     assert isinstance(r_lk.raw_values["phone_number_raw"], str)
 
     # Negative test: Numeric XML in date_raw MUST be rejected
