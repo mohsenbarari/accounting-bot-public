@@ -120,13 +120,40 @@ class ValidatedSourceRow:
     source_hash: str
 
     def __post_init__(self) -> None:
-        if isinstance(self.raw_values, (Mapping, MappingProxyType)):
-            object.__setattr__(
-                self, "raw_values", MappingProxyType(dict(self.raw_values))
-            )
-        else:
+        if not isinstance(self.raw_values, (Mapping, MappingProxyType)):
             msg = f"raw_values must be a Mapping, got {type(self.raw_values).__name__}"
             raise InvalidIdentityError(msg)
+
+        if self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets:
+            msg = f"Unknown sheet '{self.sheet_name}' in ValidatedSourceRow"
+            raise UnknownSheetError(msg)
+
+        sheet_contract = RAW_CONTRACT_REGISTRY.sheets[self.sheet_name]
+        expected_fields = {col.field_name for col in sheet_contract.raw_columns}
+        input_keys = set(self.raw_values.keys())
+
+        missing = expected_fields - input_keys
+        if missing:
+            msg = (
+                f"Missing required raw field(s) for sheet '{self.sheet_name}': "
+                f"{sorted(missing)}"
+            )
+            raise InvalidIdentityError(msg)
+
+        extra = input_keys - expected_fields
+        if extra:
+            msg = (
+                f"Unexpected extra field(s) for sheet '{self.sheet_name}': "
+                f"{sorted(extra)}"
+            )
+            raise InvalidIdentityError(msg)
+
+        # Construct raw_values strictly in authoritative registry field order
+        ordered_raw_values = {
+            col.field_name: self.raw_values[col.field_name]
+            for col in sheet_contract.raw_columns
+        }
+        object.__setattr__(self, "raw_values", MappingProxyType(ordered_raw_values))
 
         if (
             isinstance(self.stable_id, bool)
@@ -141,9 +168,6 @@ class ValidatedSourceRow:
                 f"stable_id '{self.stable_id}'"
             )
             raise InvalidIdentityError(msg)
-        if self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets:
-            msg = f"Unknown sheet '{self.sheet_name}' in ValidatedSourceRow"
-            raise UnknownSheetError(msg)
         if (
             not isinstance(self.source_hash, str)
             or HEX_DIGEST_64_REGEX.fullmatch(self.source_hash) is None
@@ -424,11 +448,17 @@ def build_source_workbook_snapshot(
             # Compute source hash enforcing raw contracts and canonical format
             source_hash_res = compute_source_hash(sheet_name, defensive_raw_values)
 
+            sheet_contract = RAW_CONTRACT_REGISTRY.sheets[sheet_name]
+            ordered_raw_values = {
+                col.field_name: defensive_raw_values[col.field_name]
+                for col in sheet_contract.raw_columns
+            }
+
             v_row = ValidatedSourceRow(
                 stable_id=parsed_uuid,
                 canonical_uuid=canon_uuid_str,
                 sheet_name=sheet_name,
-                raw_values=MappingProxyType(defensive_raw_values),
+                raw_values=MappingProxyType(ordered_raw_values),
                 source_hash=source_hash_res.source_hash,
             )
             validated_rows_list.append(v_row)

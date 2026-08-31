@@ -1418,6 +1418,12 @@ def test_synthetic_15000_row_complexity_benchmark() -> None:
     plan = plan_source_changes(snapshot, prior_registry)
     plan_duration = time.perf_counter() - start_plan
 
+    # Print exact measured durations for reproducible observation
+    print(
+        f"\n[BENCHMARK] 15,000 rows -> build_duration: {build_duration:.4f}s | "
+        f"plan_duration: {plan_duration:.4f}s"
+    )
+
     assert snapshot.total_row_count == 15000
     assert len(plan.items) == 15000
     assert plan.total_counts.insert_count == 7500
@@ -1428,7 +1434,78 @@ def test_synthetic_15000_row_complexity_benchmark() -> None:
     assert plan_duration < 1.0, f"Planning too slow: {plan_duration:.2f}s"
 
 
-# --- 12. Expanded Hypothesis Property Tests ---
+# --- 12. Raw Field Order and Key Permutation Invariance Tests ---
+
+
+def test_raw_values_key_order_strictly_matches_registry_for_all_sheets() -> None:
+    """Verify raw_values keys follow registry contract order for all sheets."""
+    generators = [
+        ("خرید-فروش", _sample_buy_sell_row),
+        ("دریافت-پرداخت", _sample_receipts_payments_row),
+        ("ورود-خروج", _sample_inventory_movements_row),
+        ("لیست کسبه", _sample_business_parties_row),
+    ]
+
+    for sheet_name, gen_func in generators:
+        sheet_contract = RAW_CONTRACT_REGISTRY.sheets[sheet_name]
+        expected_order = [col.field_name for col in sheet_contract.raw_columns]
+
+        # 1. Reversed key dictionary input
+        base_dict = gen_func()
+        reversed_dict = {k: base_dict[k] for k in reversed(list(base_dict.keys()))}
+        u7 = _make_uuid7(b"0000000000000001")
+        valid_hash = compute_source_hash(sheet_name, reversed_dict).source_hash
+
+        # Direct construction must order raw_values
+        v_row = ValidatedSourceRow(
+            stable_id=u7,
+            canonical_uuid=str(u7).lower(),
+            sheet_name=sheet_name,
+            raw_values=reversed_dict,  # type: ignore[arg-type]
+            source_hash=valid_hash,
+        )
+        assert list(v_row.raw_values.keys()) == expected_order
+
+        # 2. Builder pathway must also order raw_values
+        sheets_input = [
+            SourceSheetInput(
+                sheet_name=s_name,
+                rows=[SourceRowInput(stable_id=u7, source_values=reversed_dict)]
+                if s_name == sheet_name
+                else [],
+            )
+            for s_name in RAW_CONTRACT_REGISTRY.sheets
+        ]
+        snap = build_source_workbook_snapshot(sheets_input)
+        snap_row = snap.sheets[sheet_name].rows[0]
+        assert list(snap_row.raw_values.keys()) == expected_order
+
+        # 3. Missing key must raise InvalidIdentityError
+        incomplete_dict = dict(base_dict)
+        first_key = expected_order[0]
+        del incomplete_dict[first_key]
+        with pytest.raises(InvalidIdentityError) as exc_missing:
+            ValidatedSourceRow(
+                stable_id=u7,
+                canonical_uuid=str(u7).lower(),
+                sheet_name=sheet_name,
+                raw_values=incomplete_dict,  # type: ignore[arg-type]
+                source_hash=valid_hash,
+            )
+        assert "Missing required raw field" in str(exc_missing.value)
+
+        # 4. Extra/unauthorized key must raise InvalidIdentityError
+        extra_dict = dict(base_dict)
+        extra_dict["unauthorized_extra_column"] = "EXTRA"
+        with pytest.raises(InvalidIdentityError) as exc_extra:
+            ValidatedSourceRow(
+                stable_id=u7,
+                canonical_uuid=str(u7).lower(),
+                sheet_name=sheet_name,
+                raw_values=extra_dict,  # type: ignore[arg-type]
+                source_hash=valid_hash,
+            )
+        assert "Unexpected extra field" in str(exc_extra.value)
 
 
 @given(
@@ -1437,7 +1514,7 @@ def test_synthetic_15000_row_complexity_benchmark() -> None:
 def test_property_change_plan_expanded_permutations_invariance(
     permutation_seed: int,
 ) -> None:
-    """Hypothesis test: arbitrary permutations of all inputs yield identical plan."""
+    """Hypothesis test: arbitrary permutations of inputs yield identical plan."""
     ids = [_make_uuid7(i.to_bytes(16, "big")) for i in range(1, 9)]
 
     rng = random.Random(permutation_seed)
@@ -1447,7 +1524,8 @@ def test_property_change_plan_expanded_permutations_invariance(
         rng.shuffle(items)
         return dict(items)
 
-    rows_bf = [
+    # For each row, construct TWO INDEPENDENT Mapping dicts with distinct orders
+    rows_1_bf = [
         SourceRowInput(
             stable_id=ids[0],
             source_values=_permute_dict_keys(_sample_buy_sell_row()),
@@ -1457,7 +1535,18 @@ def test_property_change_plan_expanded_permutations_invariance(
             source_values=_permute_dict_keys(_sample_buy_sell_row()),
         ),
     ]
-    rows_dp = [
+    rows_2_bf = [
+        SourceRowInput(
+            stable_id=ids[0],
+            source_values=_permute_dict_keys(_sample_buy_sell_row()),
+        ),
+        SourceRowInput(
+            stable_id=ids[1],
+            source_values=_permute_dict_keys(_sample_buy_sell_row()),
+        ),
+    ]
+
+    rows_1_dp = [
         SourceRowInput(
             stable_id=ids[2],
             source_values=_permute_dict_keys(_sample_receipts_payments_row()),
@@ -1467,7 +1556,18 @@ def test_property_change_plan_expanded_permutations_invariance(
             source_values=_permute_dict_keys(_sample_receipts_payments_row()),
         ),
     ]
-    rows_vk = [
+    rows_2_dp = [
+        SourceRowInput(
+            stable_id=ids[2],
+            source_values=_permute_dict_keys(_sample_receipts_payments_row()),
+        ),
+        SourceRowInput(
+            stable_id=ids[3],
+            source_values=_permute_dict_keys(_sample_receipts_payments_row()),
+        ),
+    ]
+
+    rows_1_vk = [
         SourceRowInput(
             stable_id=ids[4],
             source_values=_permute_dict_keys(_sample_inventory_movements_row()),
@@ -1477,7 +1577,28 @@ def test_property_change_plan_expanded_permutations_invariance(
             source_values=_permute_dict_keys(_sample_inventory_movements_row()),
         ),
     ]
-    rows_lk = [
+    rows_2_vk = [
+        SourceRowInput(
+            stable_id=ids[4],
+            source_values=_permute_dict_keys(_sample_inventory_movements_row()),
+        ),
+        SourceRowInput(
+            stable_id=ids[5],
+            source_values=_permute_dict_keys(_sample_inventory_movements_row()),
+        ),
+    ]
+
+    rows_1_lk = [
+        SourceRowInput(
+            stable_id=ids[6],
+            source_values=_permute_dict_keys(_sample_business_parties_row()),
+        ),
+        SourceRowInput(
+            stable_id=ids[7],
+            source_values=_permute_dict_keys(_sample_business_parties_row()),
+        ),
+    ]
+    rows_2_lk = [
         SourceRowInput(
             stable_id=ids[6],
             source_values=_permute_dict_keys(_sample_business_parties_row()),
@@ -1488,38 +1609,59 @@ def test_property_change_plan_expanded_permutations_invariance(
         ),
     ]
 
-    base_sheets = [
-        SourceSheetInput(sheet_name="خرید-فروش", rows=rows_bf),
-        SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rows_dp),
-        SourceSheetInput(sheet_name="ورود-خروج", rows=rows_vk),
-        SourceSheetInput(sheet_name="لیست کسبه", rows=rows_lk),
+    sheets_1 = [
+        SourceSheetInput(sheet_name="خرید-فروش", rows=rows_1_bf),
+        SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rows_1_dp),
+        SourceSheetInput(sheet_name="ورود-خروج", rows=rows_1_vk),
+        SourceSheetInput(sheet_name="لیست کسبه", rows=rows_1_lk),
     ]
 
-    # Permute sheets and rows
-    permuted_sheets: list[SourceSheetInput] = []
-    shuffled_sheets = list(base_sheets)
-    rng.shuffle(shuffled_sheets)
+    sheets_2_base = [
+        SourceSheetInput(sheet_name="خرید-فروش", rows=rows_2_bf),
+        SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rows_2_dp),
+        SourceSheetInput(sheet_name="ورود-خروج", rows=rows_2_vk),
+        SourceSheetInput(sheet_name="لیست کسبه", rows=rows_2_lk),
+    ]
 
-    for s in shuffled_sheets:
+    # Permute sheets and rows for sheets_2
+    permuted_sheets_2: list[SourceSheetInput] = []
+    shuffled_sheets_2 = list(sheets_2_base)
+    rng.shuffle(shuffled_sheets_2)
+
+    for s in shuffled_sheets_2:
         shuffled_rows = list(s.rows)
         rng.shuffle(shuffled_rows)
-        permuted_sheets.append(
+        permuted_sheets_2.append(
             SourceSheetInput(sheet_name=s.sheet_name, rows=shuffled_rows)
         )
 
-    snap1 = build_source_workbook_snapshot(base_sheets)
-    snap2 = build_source_workbook_snapshot(permuted_sheets)
+    snap1 = build_source_workbook_snapshot(sheets_1)
+    snap2 = build_source_workbook_snapshot(permuted_sheets_2)
 
-    # Observable snapshot outputs must be identical
+    # 1. Verify key order in raw_values matches registry strictly for every row
     for sheet_name in RAW_CONTRACT_REGISTRY.sheets:
-        assert snap1.sheets[sheet_name].rows == snap2.sheets[sheet_name].rows
-        assert (
-            snap1.sheets[sheet_name].sheet_snapshot_hash
-            == snap2.sheets[sheet_name].sheet_snapshot_hash
-        )
+        expected_keys = [
+            col.field_name
+            for col in RAW_CONTRACT_REGISTRY.sheets[sheet_name].raw_columns
+        ]
+        s1 = snap1.sheets[sheet_name]
+        s2 = snap2.sheets[sheet_name]
+        for r1, r2 in zip(s1.rows, s2.rows, strict=True):
+            assert list(r1.raw_values.keys()) == expected_keys
+            assert list(r2.raw_values.keys()) == expected_keys
+            assert list(r1.raw_values.keys()) == list(r2.raw_values.keys())
+            assert tuple(r1.raw_values.items()) == tuple(r2.raw_values.items())
+            assert r1.raw_values == r2.raw_values
+            assert r1.source_hash == r2.source_hash
+
+        assert s1.rows == s2.rows
+        assert s1.sheet_snapshot_hash == s2.sheet_snapshot_hash
+        assert s1.row_count == s2.row_count
+
+    assert snap1.total_row_count == snap2.total_row_count
     assert snap1.all_rows_by_id == snap2.all_rows_by_id
 
-    # Prior state list permutation
+    # 2. Prior state list permutation
     prior_list_base = [
         PriorIdentityState(
             stable_id=ids[0],
@@ -1547,10 +1689,21 @@ def test_property_change_plan_expanded_permutations_invariance(
     plan1 = plan_source_changes(snap1, prior_reg1)
     plan2 = plan_source_changes(snap2, prior_reg2)
 
+    assert plan1.version == plan2.version == SOURCE_CHANGE_PLAN_VERSION
     assert plan1.total_counts == plan2.total_counts
+    assert plan1.per_sheet_counts == plan2.per_sheet_counts
+    assert plan1.current_sheet_snapshot_hashes == plan2.current_sheet_snapshot_hashes
+    assert plan1.current_sheet_row_counts == plan2.current_sheet_row_counts
     assert len(plan1.items) == len(plan2.items)
     for it1, it2 in zip(plan1.items, plan2.items, strict=True):
         assert it1.stable_id == it2.stable_id
         assert it1.sheet_name == it2.sheet_name
         assert it1.action == it2.action
         assert it1.planned_revision == it2.planned_revision
+        assert it1.prior_lifecycle == it2.prior_lifecycle
+        assert it1.prior_revision == it2.prior_revision
+        assert it1.prior_source_hash == it2.prior_source_hash
+        assert it1.current_source_hash == it2.current_source_hash
+        assert it1.current_row == it2.current_row
+        assert it1.is_reactivation == it2.is_reactivation
+    assert plan1.items == plan2.items
