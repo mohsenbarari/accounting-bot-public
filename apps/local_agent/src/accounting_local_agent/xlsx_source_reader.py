@@ -685,23 +685,53 @@ def _discover_sheet_metadata_and_needed_sst(
     sheet_name: str,
     sheet_contract: RawSheetContract,
     has_sst: bool,
-) -> tuple[dict[int, list[tuple[int, int]]], set[int]]:
+) -> tuple[
+    dict[int, list[tuple[int, int]]],
+    set[int],
+    set[int],
+    list[tuple[int, list[tuple[int, int]], list[tuple[int, int]]]],
+]:
     """Pass 1: Discover formula coverage and candidate SST indices (R4-03, R6).
 
-    Returns (covered_by_col, needed_sst_indices).
+    Returns (covered, header_sst, initial_data_sst, candidate_rows).
     """
-    raw_covered_by_col: dict[int, list[tuple[int, int]]] = {}
-    candidate_header_sst: list[tuple[int, int]] = []
-    candidate_data_sst: list[tuple[int, bool, list[tuple[int, int, bool]]]] = []
-
     raw_col_by_letter = {c.column_letter: c for c in sheet_contract.raw_columns}
     stable_id_col = sheet_contract.stable_id_column.column_letter
-    activity_cols = set(sheet_contract.activity_columns)
+    activity_cols_set = set(sheet_contract.activity_columns)
     req_headers = dict(sheet_contract.required_headers_by_column)
     if sheet_contract.stable_id_column.required_header is not None:
         req_headers[stable_id_col] = sheet_contract.stable_id_column.required_header
     retained_cols = set(raw_col_by_letter.keys()) | {stable_id_col}
     sst_rx = _SST_INDEX_STRICT_REGEX
+    num_rx = _NUMERIC_XML_STRICT_REGEX
+
+    candidate_header_sst: list[tuple[int, int]] = []
+    candidate_data_rows: list[
+        tuple[int, list[int], list[tuple[int, int]], list[tuple[int, int]]]
+    ] = []
+    raw_covered_by_col: dict[int, list[tuple[int, int]]] = {}
+
+    def _safe_leaf(v_node: etree._Element, c_ref: str, r_num: int) -> str | None:
+        try:
+            return _extract_t_or_v_leaf_text(
+                v_node,
+                sheet_name=sheet_name,
+                cell_ref=c_ref,
+                physical_row_number=r_num,
+            )
+        except XlsxCellError:
+            return None
+
+    def _safe_inline(c_node: etree._Element, c_ref: str, r_num: int) -> str | None:
+        try:
+            return _extract_text_from_si_or_is(
+                c_node,
+                sheet_name=sheet_name,
+                cell_ref=c_ref,
+                physical_row_number=r_num,
+            )
+        except XlsxCellError:
+            return None
 
     with zf.open(worksheet_path, "r") as stream:
         try:
@@ -744,8 +774,9 @@ def _discover_sheet_metadata_and_needed_sst(
 
                     physical_row_num = int(row_r)
 
-                    has_literal_act = False
-                    row_sst_candidates: list[tuple[int, int, bool]] = []
+                    non_sst_act_cols: list[int] = []
+                    act_sst_cells: list[tuple[int, int]] = []
+                    sec_sst_cells: list[tuple[int, int]] = []
 
                     for c_elem in elem:
                         if c_elem.tag not in _TAG_C:
@@ -795,7 +826,7 @@ def _discover_sheet_metadata_and_needed_sst(
                                         raw_covered_by_col[c] = []
                                     raw_covered_by_col[c].append((min_r, max_r))
 
-                        if has_sst and f_elem is None:
+                        if f_elem is None:
                             cell_ref = c_elem.get("r")
                             if cell_ref:
                                 m = _CELL_REF_PARSER_REGEX.fullmatch(cell_ref)
@@ -807,7 +838,8 @@ def _discover_sheet_metadata_and_needed_sst(
                                         if c_row == physical_row_num:
                                             if physical_row_num == 1:
                                                 if (
-                                                    col_let in req_headers
+                                                    has_sst
+                                                    and col_let in req_headers
                                                     and c_elem.get("t") == "s"
                                                 ):
                                                     v_el = (
@@ -816,68 +848,136 @@ def _discover_sheet_metadata_and_needed_sst(
                                                         else None
                                                     )
                                                     if v_el is not None:
-                                                        v_text = (
-                                                            _extract_t_or_v_leaf_text(
-                                                                v_el
-                                                            )
+                                                        v_t = _safe_leaf(
+                                                            v_el, cell_ref, 1
                                                         )
-                                                        if sst_rx.fullmatch(v_text):
+                                                        if (
+                                                            v_t is not None
+                                                            and sst_rx.fullmatch(v_t)
+                                                        ):
                                                             candidate_header_sst.append(
-                                                                (col_num, int(v_text))
+                                                                (col_num, int(v_t))
                                                             )
                                             else:
-                                                is_act = col_let in activity_cols
+                                                is_act = col_let in activity_cols_set
                                                 is_retained = col_let in retained_cols
                                                 c_t = (c_elem.get("t") or "").strip()
                                                 if is_act:
-                                                    if c_t in ("", "n", "str"):
+                                                    if c_t == "inlineStr":
+                                                        is_t = _safe_inline(
+                                                            c_elem,
+                                                            cell_ref,
+                                                            physical_row_num,
+                                                        )
+                                                        if is_t is not None and (
+                                                            is_t.strip() != ""
+                                                            or is_t in ("0", "۰")
+                                                        ):
+                                                            non_sst_act_cols.append(
+                                                                col_num
+                                                            )
+                                                    elif c_t in ("", "n"):
                                                         v_el = (
                                                             c_elem.find("{*}v")
                                                             if has_children
                                                             else None
                                                         )
-                                                        if (
-                                                            v_el is not None
-                                                            and (v_el.text or "") != ""
-                                                        ):
-                                                            has_literal_act = True
-                                                    elif c_t == "inlineStr":
-                                                        is_el = (
-                                                            c_elem.find("{*}is")
+                                                        if v_el is not None:
+                                                            v_t = _safe_leaf(
+                                                                v_el,
+                                                                cell_ref,
+                                                                physical_row_num,
+                                                            )
+                                                            if (
+                                                                v_t is not None
+                                                                and v_t.strip() != ""
+                                                                and num_rx.fullmatch(
+                                                                    v_t.strip()
+                                                                )
+                                                            ):
+                                                                non_sst_act_cols.append(
+                                                                    col_num
+                                                                )
+                                                    elif c_t == "str":
+                                                        v_el = (
+                                                            c_elem.find("{*}v")
                                                             if has_children
                                                             else None
                                                         )
-                                                        if is_el is not None:
-                                                            has_literal_act = True
-
-                                                if is_retained and c_t == "s":
+                                                        if v_el is not None:
+                                                            v_t = _safe_leaf(
+                                                                v_el,
+                                                                cell_ref,
+                                                                physical_row_num,
+                                                            )
+                                                            if v_t is not None and (
+                                                                v_t.strip() != ""
+                                                                or v_t in ("0", "۰")
+                                                            ):
+                                                                non_sst_act_cols.append(
+                                                                    col_num
+                                                                )
+                                                    elif c_t == "s" and has_sst:
+                                                        v_el = (
+                                                            c_elem.find("{*}v")
+                                                            if has_children
+                                                            else None
+                                                        )
+                                                        if v_el is not None:
+                                                            v_t = _safe_leaf(
+                                                                v_el,
+                                                                cell_ref,
+                                                                physical_row_num,
+                                                            )
+                                                            if (
+                                                                v_t is not None
+                                                                and sst_rx.fullmatch(
+                                                                    v_t
+                                                                )
+                                                            ):
+                                                                act_sst_cells.append(
+                                                                    (
+                                                                        col_num,
+                                                                        int(v_t),
+                                                                    )
+                                                                )
+                                                elif (
+                                                    is_retained
+                                                    and c_t == "s"
+                                                    and has_sst
+                                                ):
                                                     v_el = (
                                                         c_elem.find("{*}v")
                                                         if has_children
                                                         else None
                                                     )
                                                     if v_el is not None:
-                                                        v_text = (
-                                                            _extract_t_or_v_leaf_text(
-                                                                v_el
-                                                            )
+                                                        v_t = _safe_leaf(
+                                                            v_el,
+                                                            cell_ref,
+                                                            physical_row_num,
                                                         )
-                                                        if sst_rx.fullmatch(v_text):
-                                                            row_sst_candidates.append(
+                                                        if (
+                                                            v_t is not None
+                                                            and sst_rx.fullmatch(v_t)
+                                                        ):
+                                                            sec_sst_cells.append(
                                                                 (
                                                                     col_num,
-                                                                    int(v_text),
-                                                                    is_act,
+                                                                    int(v_t),
                                                                 )
                                                             )
 
-                    if (
-                        has_sst
-                        and physical_row_num >= 2
-                        and (has_literal_act or row_sst_candidates)
+                    if physical_row_num >= 2 and (
+                        non_sst_act_cols or act_sst_cells or sec_sst_cells
                     ):
-                        candidate_data_sst.append(
-                            (physical_row_num, has_literal_act, row_sst_candidates)
+                        candidate_data_rows.append(
+                            (
+                                physical_row_num,
+                                non_sst_act_cols,
+                                act_sst_cells,
+                                sec_sst_cells,
+                            )
                         )
 
                     elem.clear()
@@ -901,27 +1001,58 @@ def _discover_sheet_metadata_and_needed_sst(
                 merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         merged_covered_by_col[col_n] = merged
 
-    needed_sst_indices: set[int] = set()
+    header_sst_needed: set[int] = set()
     if has_sst:
         for col_num, s_idx in candidate_header_sst:
             if not _is_cell_covered(merged_covered_by_col, col_num, 1):
-                needed_sst_indices.add(s_idx)
+                header_sst_needed.add(s_idx)
 
-        for row_num, has_lit_act, cand_list in candidate_data_sst:
-            has_valid_act = has_lit_act
-            if not has_valid_act:
-                for col_num, _s_idx, is_act in cand_list:
-                    if is_act and not _is_cell_covered(
-                        merged_covered_by_col, col_num, row_num
-                    ):
-                        has_valid_act = True
-                        break
-            if has_valid_act:
-                for col_num, s_idx, _is_act in cand_list:
-                    if not _is_cell_covered(merged_covered_by_col, col_num, row_num):
-                        needed_sst_indices.add(s_idx)
+    initial_data_sst_needed: set[int] = set()
+    candidate_sst_rows: list[
+        tuple[int, list[tuple[int, int]], list[tuple[int, int]]]
+    ] = []
 
-    return merged_covered_by_col, needed_sst_indices
+    if has_sst:
+        for (
+            row_num,
+            non_sst_act_cols,
+            act_sst_cells,
+            sec_sst_cells,
+        ) in candidate_data_rows:
+            valid_non_sst_act = [
+                c
+                for c in non_sst_act_cols
+                if not _is_cell_covered(merged_covered_by_col, c, row_num)
+            ]
+            valid_act_sst = [
+                (c, s_idx)
+                for c, s_idx in act_sst_cells
+                if not _is_cell_covered(merged_covered_by_col, c, row_num)
+            ]
+            valid_sec_sst = [
+                (c, s_idx)
+                for c, s_idx in sec_sst_cells
+                if not _is_cell_covered(merged_covered_by_col, c, row_num)
+            ]
+
+            if valid_non_sst_act:
+                # Row is active from non-SST cells; add all its SST references
+                for _, s_idx in valid_act_sst:
+                    initial_data_sst_needed.add(s_idx)
+                for _, s_idx in valid_sec_sst:
+                    initial_data_sst_needed.add(s_idx)
+            elif valid_act_sst:
+                # Activity depends on SST string; add act_sst to initial decode set
+                for _, s_idx in valid_act_sst:
+                    initial_data_sst_needed.add(s_idx)
+                candidate_sst_rows.append((row_num, valid_act_sst, valid_sec_sst))
+
+    return (
+        merged_covered_by_col,
+        header_sst_needed,
+        initial_data_sst_needed,
+        candidate_sst_rows,
+    )
 
 
 def _is_cell_covered(
@@ -1756,26 +1887,54 @@ def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
         sheet_parts[s_name] = ws_path
 
     # Step 6: Pass 1 on sheets -> collect formula coverage and needed SST (R4-03, R6)
-    all_needed_sst_indices: set[int] = set()
+    initial_sst_needed: set[int] = set()
     formula_coverage_by_sheet: dict[str, dict[int, list[tuple[int, int]]]] = {}
+    candidate_sst_rows_by_sheet: dict[
+        str, list[tuple[int, list[tuple[int, int]], list[tuple[int, int]]]]
+    ] = {}
     has_sst = bool(shared_strings_path)
 
     for s_name in approved_sheets:
         ws_path = sheet_parts[s_name]
         sheet_contract = RAW_CONTRACT_REGISTRY.sheets[s_name]
-        cov, needed_sst = _discover_sheet_metadata_and_needed_sst(
+        cov, h_sst, d_sst, c_rows = _discover_sheet_metadata_and_needed_sst(
             zf, ws_path, s_name, sheet_contract, has_sst
         )
         formula_coverage_by_sheet[s_name] = cov
+        candidate_sst_rows_by_sheet[s_name] = c_rows
         if has_sst:
-            all_needed_sst_indices.update(needed_sst)
+            initial_sst_needed.update(h_sst)
+            initial_sst_needed.update(d_sst)
 
     # Step 7: Parse SST if present, decoding only needed indices (R4-03, R6)
     shared_strings_map: dict[int, str] = {}
-    if shared_strings_path:
+    if shared_strings_path and initial_sst_needed:
         shared_strings_map = _parse_shared_strings_table(
-            zf, shared_strings_path, needed_indices=all_needed_sst_indices
+            zf, shared_strings_path, needed_indices=initial_sst_needed
         )
+
+    if has_sst and candidate_sst_rows_by_sheet and shared_strings_path:
+        sec_sst_needed: set[int] = set()
+        for s_name in approved_sheets:
+            for _row_num, act_sst, sec_sst in candidate_sst_rows_by_sheet.get(
+                s_name, []
+            ):
+                is_active = False
+                for _col_num, s_idx in act_sst:
+                    s_val = shared_strings_map.get(s_idx, "")
+                    if s_val.strip() != "" or s_val in ("0", "۰"):
+                        is_active = True
+                        break
+                if is_active:
+                    for _col_num, s_idx in sec_sst:
+                        if s_idx not in shared_strings_map:
+                            sec_sst_needed.add(s_idx)
+
+        if sec_sst_needed:
+            sec_strings = _parse_shared_strings_table(
+                zf, shared_strings_path, needed_indices=sec_sst_needed
+            )
+            shared_strings_map.update(sec_strings)
 
     # Step 8: Pass 2 on all approved sheets -> read rows and locations (R4-01..R4-04)
     all_sheet_inputs: list[SourceSheetInput] = []
