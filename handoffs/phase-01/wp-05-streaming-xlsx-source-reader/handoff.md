@@ -20,6 +20,7 @@
   - `e3e69d1` (fix(local_agent): address Codex review round 4 findings R4-01-R4-06 in streaming XLSX reader (WP-05))
   - `42d9825` (docs(handoff): record round 4 review implementation commits and test evidence in WP-05 handoff)
   - `15488ac` (docs(handoff): update commit list in WP-05 handoff)
+  - `75ee8bb` (fix(local_agent): preserve raw types and validate numerics per R5-01 (WP-05))
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
