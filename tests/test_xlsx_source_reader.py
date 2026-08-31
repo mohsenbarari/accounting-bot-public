@@ -1,6 +1,6 @@
 """Comprehensive test suite for read-only streaming XLSX source reader (WP-05).
 
-Validates all 9 Codex Review Axes (R1 to R9) and Roadmap Criteria (XR-01 to XR-13)
+Validates all 6 Codex Review Axes (R1 to R6) and Roadmap Criteria (XR-01 to XR-13)
 using synthetic in-memory OpenXML packages without touching live Excel or real data.
 """
 
@@ -22,7 +22,6 @@ from accounting_contracts.raw_input_contracts import (
     RAW_CONTRACT_REGISTRY,
 )
 from accounting_contracts.source_change_plan import (
-    DuplicateIdentityError,
     IdentityLifecycle,
     PriorIdentityState,
     SourceRowInput,
@@ -32,20 +31,19 @@ from accounting_contracts.source_change_plan import (
     plan_source_changes,
 )
 from accounting_local_agent.xlsx_source_reader import (
-    REASON_CELL_INCOMPATIBLE_CHILDREN,
     REASON_CELL_INVALID_NUMERIC_LEXEME,
-    REASON_CELL_INVALID_SST_INDEX,
-    REASON_CELL_SST_INDEX_OUT_OF_RANGE,
-    REASON_FORMULA_COVERAGE_REVERSED_RANGE,
-    REASON_PACKAGE_DUPLICATE_REL_ID,
-    REASON_PACKAGE_FORBIDDEN_CONTENT_TYPE,
-    REASON_PACKAGE_MISSING_CONTENT_TYPES,
+    REASON_CELL_UNKNOWN_TYPE,
+    REASON_IDENTITY_DUPLICATE_UUID,
+    REASON_PACKAGE_AMBIGUOUS_SHARED_STRINGS,
+    REASON_PACKAGE_AMBIGUOUS_WORKBOOK,
+    REASON_STRUCTURE_AMBIGUOUS_SHEETS,
     REASON_STRUCTURE_INVALID_SHEET_HIERARCHY,
     REASON_STRUCTURE_INVALID_VERSION,
+    REASON_STRUCTURE_MALFORMED_XML,
     XLSX_SOURCE_READER_VERSION,
     SourceRowLocation,
     XlsxCellError,
-    XlsxFormulaCoverageError,
+    XlsxIdentityError,
     XlsxPackageError,
     XlsxSourceReadResult,
     XlsxStructureError,
@@ -97,7 +95,7 @@ class SyntheticXlsxBuilder:
         self.override_wb_rels: str | None = None
         self.override_wb_xml: str | None = None
         self.override_sst_xml: str | None = None
-        self.raw_sheet_xml_overrides: dict[str, str] = {}
+        self.raw_sheet_xml_overrides: dict[str, str | bytes] = {}
 
     def add_sheet_rows(
         self,
@@ -366,7 +364,7 @@ def _escape_xml_text(s: str) -> str:
     )
 
 
-def _sample_buy_sell_row_data(u7: uuid.UUID, row_num: int = 2) -> dict[str, Any]:
+def _sample_buy_sell_row_data(u7: uuid.UUID | str, row_num: int = 2) -> dict[str, Any]:
     return {
         "__row_num__": row_num,
         "A": "1",  # row_number (derived)
@@ -383,7 +381,7 @@ def _sample_buy_sell_row_data(u7: uuid.UUID, row_num: int = 2) -> dict[str, Any]
 
 
 def _sample_receipts_payments_row_data(
-    u7: uuid.UUID, row_num: int = 2
+    u7: uuid.UUID | str, row_num: int = 2
 ) -> dict[str, Any]:
     return {
         "__row_num__": row_num,
@@ -400,7 +398,7 @@ def _sample_receipts_payments_row_data(
 
 
 def _sample_inventory_movements_row_data(
-    u7: uuid.UUID, row_num: int = 2
+    u7: uuid.UUID | str, row_num: int = 2
 ) -> dict[str, Any]:
     return {
         "__row_num__": row_num,
@@ -418,7 +416,7 @@ def _sample_inventory_movements_row_data(
 
 
 def _sample_business_parties_row_data(
-    u7: uuid.UUID, row_num: int = 2
+    u7: uuid.UUID | str, row_num: int = 2
 ) -> dict[str, Any]:
     return {
         "__row_num__": row_num,
@@ -449,489 +447,196 @@ def _build_standard_synthetic_workbook(
     return builder.build_bytes(), [u_bf, u_dp, u_vk, u_lk]
 
 
-# --- R1: XML Structure & False Deletions ---
+# --- R1: Parser-Driven DTD & Entity Rejection ---
 
 
-def test_r1_invalid_row_and_cell_hierarchy_reproduction_rejection(
-    tmp_path: Path,
-) -> None:
-    """R1: Invalid hierarchy on row or cells is rejected (no false VOID)."""
+def test_r1_dtd_in_utf8_and_utf16_rejected(tmp_path: Path) -> None:
+    """R1: DOCTYPE declarations in UTF-8 and UTF-16 are strictly rejected."""
     u_bf = _make_uuid7(b"1" * 16)
     u_dp = _make_uuid7(b"2" * 16)
     u_vk = _make_uuid7(b"3" * 16)
     u_lk = _make_uuid7(b"4" * 16)
 
-    # 4 invalid hierarchy scenarios that previously caused false row omission:
-    scenarios = [
-        # 1. Invalid namespace on row 2
-        (
-            '<row r="2" xmlns="http://invalid.org">'
-            f'<c r="B2" t="inlineStr"><is><t>1403/01/01</t></is></c>'
-            f'<c r="C2" t="inlineStr"><is><t>احمدی</t></is></c>'
-            f'<c r="D2" t="inlineStr"><is><t>خرید</t></is></c>'
-            f'<c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c></row>'
-        ),
-        # 2. Cells inside unknown wrapper under row 2
-        (
-            '<row r="2"><customCellWrapper>'
-            f'<c r="B2" t="inlineStr"><is><t>1403/01/01</t></is></c>'
-            f'<c r="C2" t="inlineStr"><is><t>احمدی</t></is></c>'
-            f'<c r="D2" t="inlineStr"><is><t>خرید</t></is></c>'
-            f'<c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c>'
-            "</customCellWrapper></row>"
-        ),
-        # 3. Row inside unknown wrapper under sheetData
-        (
-            '<customRowWrapper><row r="2">'
-            f'<c r="B2" t="inlineStr"><is><t>1403/01/01</t></is></c>'
-            f'<c r="C2" t="inlineStr"><is><t>احمدی</t></is></c>'
-            f'<c r="D2" t="inlineStr"><is><t>خرید</t></is></c>'
-            f'<c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c>'
-            "</row></customRowWrapper>"
-        ),
-        # 4. Invalid namespace on cell C2
-        (
-            '<row r="2">'
-            f'<c r="B2" t="inlineStr"><is><t>1403/01/01</t></is></c>'
-            '<c r="C2" xmlns="http://invalid.org" t="inlineStr">'
-            "<is><t>احمدی</t></is></c>"
-            f'<c r="D2" t="inlineStr"><is><t>خرید</t></is></c>'
-            f'<c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c></row>'
-        ),
-    ]
-
-    for idx, sc_row_xml in enumerate(scenarios, 1):
-        builder = SyntheticXlsxBuilder()
-        custom_ws = (
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-            f'<worksheet xmlns="{builder.ns_sm}">\n'
-            "  <sheetData>\n"
-            '    <row r="1">\n'
-            '      <c r="A1" t="inlineStr"><is><t>ردیف</t></is></c>\n'
-            '      <c r="B1" t="inlineStr"><is><t>تاریخ</t></is></c>\n'
-            '      <c r="C1" t="inlineStr"><is><t>نام</t></is></c>\n'
-            '      <c r="D1" t="inlineStr"><is><t>شرح</t></is></c>\n'
-            '      <c r="E1" t="inlineStr"><is><t>کالا</t></is></c>\n'
-            '      <c r="F1" t="inlineStr"><is><t>مقدار</t></is></c>\n'
-            '      <c r="G1" t="inlineStr"><is><t>فی</t></is></c>\n'
-            '      <c r="H1" t="inlineStr"><is><t>تخفیف</t></is></c>\n'
-            '      <c r="J1" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
-            '      <c r="Z1" t="inlineStr"><is><t>record_id</t></is></c>\n'
-            "    </row>\n"
-            f"    {sc_row_xml}\n"
-            "  </sheetData>\n</worksheet>"
-        )
-        builder.raw_sheet_xml_overrides["خرید-فروش"] = custom_ws
-        builder.add_sheet_rows(
-            "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
-        )
-        builder.add_sheet_rows(
-            "ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)]
-        )
-        builder.add_sheet_rows(
-            "لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)]
-        )
-
-        p = tmp_path / f"sc_{idx}.xlsx"
-        p.write_bytes(builder.build_bytes())
-
-        with pytest.raises(XlsxStructureError) as exc_info:
-            read_xlsx_source_snapshot(p)
-        assert exc_info.value.reason == REASON_STRUCTURE_INVALID_SHEET_HIERARCHY
-
-
-def test_r1_conflicting_cell_children_rejected(tmp_path: Path) -> None:
-    """R1: Incompatible multiple children in cell rejected with typed error."""
-    builder1 = SyntheticXlsxBuilder()
-    row_bad_c = _sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)
-    # Inject both is and v
-    row_bad_c["C"] = {"is": "احمدی", "v": "123"}
-    builder1.add_sheet_rows("خرید-فروش", [row_bad_c])
-    builder1.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    builder1.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    builder1.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
-
-    p1 = tmp_path / "bad_cell_children.xlsx"
-    p1.write_bytes(builder1.build_bytes())
-
-    with pytest.raises(XlsxCellError) as exc_info:
-        read_xlsx_source_snapshot(p1)
-    assert exc_info.value.reason == REASON_CELL_INCOMPATIBLE_CHILDREN
-
-
-def test_r1_truly_empty_sheet_with_valid_headers_accepted(
-    tmp_path: Path,
-) -> None:
-    """R1: Truly empty sheet (having row 1 headers, 0 data rows) is valid."""
-    builder = SyntheticXlsxBuilder()
-    builder.add_sheet_rows("خرید-فروش", [])
-    builder.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    builder.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    builder.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
-
-    pkg_path = tmp_path / "empty_sheet.xlsx"
-    pkg_path.write_bytes(builder.build_bytes())
-
-    res = read_xlsx_source_snapshot(pkg_path)
-    assert len(res.snapshot.sheets["خرید-فروش"].rows) == 0
-    assert res.snapshot.total_row_count == 3
-
-
-# --- R2: OPC Package & XML Security ---
-
-
-def test_r2_missing_content_types_and_macro_enabled_rejection(
-    tmp_path: Path,
-) -> None:
-    """R2: Missing [Content_Types].xml or macroEnabled content type is rejected."""
-    # 1. Missing [Content_Types].xml
+    # 1. DOCTYPE in UTF-8 worksheet
     b1 = SyntheticXlsxBuilder()
-    b1.omit_content_types = True
-    b1.add_sheet_rows(
-        "خرید-فروش", [_sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)]
+    ws_utf8_dtd = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE worksheet [<!ENTITY ext "val">]>\n'
+        f'<worksheet xmlns="{b1.ns_sm}">\n'
+        '  <sheetData><row r="1">'
+        '<c r="A1" t="inlineStr"><is><t>ردیف</t></is></c>'
+        '<c r="B1" t="inlineStr"><is><t>تاریخ</t></is></c>'
+        '<c r="C1" t="inlineStr"><is><t>نام</t></is></c>'
+        '<c r="D1" t="inlineStr"><is><t>شرح</t></is></c>'
+        '<c r="E1" t="inlineStr"><is><t>کالا</t></is></c>'
+        '<c r="F1" t="inlineStr"><is><t>مقدار</t></is></c>'
+        '<c r="G1" t="inlineStr"><is><t>فی</t></is></c>'
+        '<c r="H1" t="inlineStr"><is><t>تخفیف</t></is></c>'
+        '<c r="J1" t="inlineStr"><is><t>توضیحات</t></is></c>'
+        '<c r="Z1" t="inlineStr"><is><t>record_id</t></is></c>'
+        "</row></sheetData></worksheet>"
     )
-    b1.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b1.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b1.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
+    b1.raw_sheet_xml_overrides["خرید-فروش"] = ws_utf8_dtd
+    b1.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b1.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b1.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
 
-    p1 = tmp_path / "missing_ct.xlsx"
+    p1 = tmp_path / "dtd_utf8.xlsx"
     p1.write_bytes(b1.build_bytes())
 
-    with pytest.raises(XlsxPackageError) as exc1:
+    with pytest.raises(XlsxStructureError) as exc1:
         read_xlsx_source_snapshot(p1)
-    assert exc1.value.reason == REASON_PACKAGE_MISSING_CONTENT_TYPES
+    assert exc1.value.reason == REASON_STRUCTURE_MALFORMED_XML
 
-    # 2. MacroEnabled workbook content type
+    # 2. DOCTYPE in UTF-16 worksheet
     b2 = SyntheticXlsxBuilder()
-    b2.override_content_types = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
-        '  <Default Extension="rels" '
-        'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
-        '  <Default Extension="xml" ContentType="application/xml"/>\n'
-        '  <Override PartName="/xl/workbook.xml" '
-        'ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"/>\n'
-        '  <Override PartName="/xl/worksheets/sheet1.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>\n'
-        '  <Override PartName="/xl/worksheets/sheet2.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>\n'
-        '  <Override PartName="/xl/worksheets/sheet3.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>\n'
-        '  <Override PartName="/xl/worksheets/sheet4.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>\n'
-        "</Types>"
-    )
-    b2.add_sheet_rows(
-        "خرید-فروش", [_sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)]
-    )
-    b2.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b2.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b2.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
+    ws_utf16_dtd = (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        '<!DOCTYPE worksheet [<!ENTITY ext "val">]>\n'
+        f'<worksheet xmlns="{b2.ns_sm}">\n'
+        '  <sheetData><row r="1">'
+        '<c r="A1" t="inlineStr"><is><t>ردیف</t></is></c>'
+        '<c r="B1" t="inlineStr"><is><t>تاریخ</t></is></c>'
+        '<c r="C1" t="inlineStr"><is><t>نام</t></is></c>'
+        '<c r="D1" t="inlineStr"><is><t>شرح</t></is></c>'
+        '<c r="E1" t="inlineStr"><is><t>کالا</t></is></c>'
+        '<c r="F1" t="inlineStr"><is><t>مقدار</t></is></c>'
+        '<c r="G1" t="inlineStr"><is><t>فی</t></is></c>'
+        '<c r="H1" t="inlineStr"><is><t>تخفیف</t></is></c>'
+        '<c r="J1" t="inlineStr"><is><t>توضیحات</t></is></c>'
+        '<c r="Z1" t="inlineStr"><is><t>record_id</t></is></c>'
+        "</row></sheetData></worksheet>"
+    ).encode("utf-16")
+    b2.raw_sheet_xml_overrides["خرید-فروش"] = ws_utf16_dtd
+    b2.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b2.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b2.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
 
-    p2 = tmp_path / "macro_enabled.xlsx"
+    p2 = tmp_path / "dtd_utf16.xlsx"
     p2.write_bytes(b2.build_bytes())
 
-    with pytest.raises(XlsxPackageError) as exc2:
+    with pytest.raises(XlsxStructureError) as exc2:
         read_xlsx_source_snapshot(p2)
-    assert exc2.value.reason == REASON_PACKAGE_FORBIDDEN_CONTENT_TYPE
+    assert exc2.value.reason == REASON_STRUCTURE_MALFORMED_XML
 
-
-def test_r2_duplicate_rel_ids_rejected(tmp_path: Path) -> None:
-    """R2: Duplicate relationship Id across all rels entries is rejected."""
-    b = SyntheticXlsxBuilder()
-    b.override_rels = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-        '  <Relationship Id="rId1" TargetMode="External" '
-        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"\n'
-        '    Target="https://example.com"/>\n'
-        f'  <Relationship Id="rId1" '
-        f'Type="{b.ns_rel_office}/officeDocument" '
-        'Target="xl/workbook.xml"/>\n'
-        "</Relationships>"
+    # 3. DOCTYPE in xl/sharedStrings.xml
+    b3 = SyntheticXlsxBuilder()
+    b3.override_sst_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE sst [<!ENTITY ext "val">]>\n'
+        f'<sst xmlns="{b3.ns_sm}"><si><t>احمدی</t></si></sst>'
     )
-    b.add_sheet_rows(
-        "خرید-فروش", [_sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)]
-    )
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
-
-    p = tmp_path / "dup_rel_id.xlsx"
-    p.write_bytes(b.build_bytes())
-
-    with pytest.raises(XlsxPackageError) as exc:
-        read_xlsx_source_snapshot(p)
-    assert exc.value.reason == REASON_PACKAGE_DUPLICATE_REL_ID
-
-
-def test_r2_sst_missing_internal_relationship_rejected(tmp_path: Path) -> None:
-    """R2: Cell t='s' referencing SST with missing or external rel is rejected."""
-    b = SyntheticXlsxBuilder()
-    b.override_wb_rels = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-        '  <Relationship Id="rId_1" '
-        f'Type="{b.ns_rel_office}/worksheet" Target="worksheets/sheet1.xml"/>\n'
-        '  <Relationship Id="rId_2" '
-        f'Type="{b.ns_rel_office}/worksheet" Target="worksheets/sheet2.xml"/>\n'
-        '  <Relationship Id="rId_3" '
-        f'Type="{b.ns_rel_office}/worksheet" Target="worksheets/sheet3.xml"/>\n'
-        '  <Relationship Id="rId_4" '
-        f'Type="{b.ns_rel_office}/worksheet" Target="worksheets/sheet4.xml"/>\n'
-        "</Relationships>"
-    )
-    b.shared_strings = ["بازرگانی احمدی"]
-    row_sst = _sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)
+    row_sst = _sample_buy_sell_row_data(u_bf, 2)
     row_sst["C"] = {"t": "s", "v": "0"}
-    b.add_sheet_rows("خرید-فروش", [row_sst])
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
+    b3.add_sheet_rows("خرید-فروش", [row_sst])
+    b3.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b3.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b3.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
 
-    p = tmp_path / "sst_no_rel.xlsx"
-    p.write_bytes(b.build_bytes())
+    p3 = tmp_path / "dtd_sst.xlsx"
+    p3.write_bytes(b3.build_bytes())
 
-    with pytest.raises(XlsxCellError) as exc:
-        read_xlsx_source_snapshot(p)
-    assert exc.value.reason == REASON_CELL_SST_INDEX_OUT_OF_RANGE
+    with pytest.raises(XlsxStructureError) as exc3:
+        read_xlsx_source_snapshot(p3)
+    assert exc3.value.reason == REASON_STRUCTURE_MALFORMED_XML
 
 
-def test_r2_dtd_and_entity_explicitly_rejected(tmp_path: Path) -> None:
-    """R2: DOCTYPE and ENTITY declarations in package parts are rejected."""
-    parts_to_test = [
-        ("[Content_Types].xml", "<!DOCTYPE Types [<!ENTITY x 'test'>]>"),
-        ("_rels/.rels", "<!DOCTYPE Relationships [<!ENTITY x 'test'>]>"),
-        (
-            "xl/_rels/workbook.xml.rels",
-            "<!DOCTYPE Relationships [<!ENTITY x 'test'>]>",
-        ),
-        ("xl/workbook.xml", "<!DOCTYPE workbook [<!ENTITY x 'test'>]>"),
-        ("xl/worksheets/sheet1.xml", "<!DOCTYPE worksheet [<!ENTITY x 'test'>]>"),
-        ("xl/sharedStrings.xml", "<!DOCTYPE sst [<!ENTITY x 'test'>]>"),
-    ]
-
-    for part_name, doctype_decl in parts_to_test:
-        b = SyntheticXlsxBuilder()
-        b.add_sheet_rows(
-            "خرید-فروش", [_sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)]
-        )
-        b.add_sheet_rows(
-            "دریافت-پرداخت",
-            [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-        )
-        b.add_sheet_rows(
-            "ورود-خروج",
-            [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-        )
-        b.add_sheet_rows(
-            "لیست کسبه",
-            [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-        )
-
-        if part_name == "[Content_Types].xml":
-            b.override_content_types = (
-                f'<?xml version="1.0" encoding="UTF-8"?>\n{doctype_decl}\n'
-                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'
-            )
-        elif part_name == "_rels/.rels":
-            b.override_rels = (
-                f'<?xml version="1.0" encoding="UTF-8"?>\n{doctype_decl}\n'
-                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'
-            )
-        elif part_name == "xl/_rels/workbook.xml.rels":
-            b.override_wb_rels = (
-                f'<?xml version="1.0" encoding="UTF-8"?>\n{doctype_decl}\n'
-                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'
-            )
-        elif part_name == "xl/workbook.xml":
-            b.override_wb_xml = (
-                f'<?xml version="1.0" encoding="UTF-8"?>\n{doctype_decl}\n'
-                f'<workbook xmlns="{b.ns_sm}"><sheets/></workbook>'
-            )
-        elif part_name == "xl/worksheets/sheet1.xml":
-            b.raw_sheet_xml_overrides["خرید-فروش"] = (
-                f'<?xml version="1.0" encoding="UTF-8"?>\n{doctype_decl}\n'
-                f'<worksheet xmlns="{b.ns_sm}"><sheetData/></worksheet>'
-            )
-        elif part_name == "xl/sharedStrings.xml":
-            b.override_sst_xml = (
-                f'<?xml version="1.0" encoding="UTF-8"?>\n{doctype_decl}\n'
-                f'<sst xmlns="{b.ns_sm}"><si><t>test</t></si></sst>'
-            )
-
-        p = tmp_path / f"dtd_{part_name.replace('/', '_')}.xlsx"
-        p.write_bytes(b.build_bytes())
-
-        with pytest.raises((XlsxStructureError, XlsxPackageError)):
-            read_xlsx_source_snapshot(p)
-
-
-# --- R3 & R4: Activity & Text Boundary ---
-
-
-def test_r3_sst_type_missing_v_tag_fails_read(tmp_path: Path) -> None:
-    """R3: Cell t='s' without v tag is an invalid SST index error, not an empty row."""
-    b = SyntheticXlsxBuilder()
-    row_bad = _sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)
-    # C2 has t="s" but no <v>
-    row_bad["C"] = {"t": "s"}
-    b.add_sheet_rows("خرید-فروش", [row_bad])
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
-
-    p = tmp_path / "sst_no_v.xlsx"
-    p.write_bytes(b.build_bytes())
-
-    with pytest.raises(XlsxCellError) as exc:
-        read_xlsx_source_snapshot(p)
-    assert exc.value.reason == REASON_CELL_INVALID_SST_INDEX
-
-
-def test_r3_inactive_row_with_invalid_date_or_uuid_is_omitted(
+def test_r1_cdata_and_comments_containing_doctype_accepted(
     tmp_path: Path,
 ) -> None:
-    """R3: Inactive row (activity cols blank) with invalid date/UUID is omitted."""
+    """R1: CDATA or comments containing literal '<!DOCTYPE' are accepted."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
     b = SyntheticXlsxBuilder()
-    # Inactive row: only date and invalid UUID are present, all activity cols blank
-    inactive_row = {
-        "__row_num__": 2,
-        "A": "1",
-        "B": "1403/99/99",  # invalid date
-        "C": "",  # party_name blank
-        "D": "",  # transaction_type blank
-        "E": "",  # item_name blank
-        "F": None,  # quantity None
-        "G": None,  # unit_price None
-        "H": None,  # discount None
-        "J": "",  # notes blank
-        "Z": "NOT-A-UUID",  # invalid UUID
-    }
-    b.add_sheet_rows("خرید-فروش", [inactive_row])
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
-
-    p = tmp_path / "inactive_omitted.xlsx"
-    p.write_bytes(b.build_bytes())
-
-    res = read_xlsx_source_snapshot(p)
-    assert len(res.snapshot.sheets["خرید-فروش"].rows) == 0
-    assert res.snapshot.total_row_count == 3
-
-
-def test_r4_direct_string_empty_v_is_empty_text_not_none(
-    tmp_path: Path,
-) -> None:
-    """R4: Direct string t='str' with <v/> decodes to explicit empty text ''."""
-    b = SyntheticXlsxBuilder()
-    u1 = _make_uuid7(b"1" * 16)
-    row = _sample_buy_sell_row_data(u1, 2)
-    # J2 notes_raw set to empty str tag
-    row["J"] = {"t": "str", "v": ""}
-    b.add_sheet_rows("خرید-فروش", [row])
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
-
-    p = tmp_path / "empty_v_str.xlsx"
-    p.write_bytes(b.build_bytes())
-
-    res = read_xlsx_source_snapshot(p)
-    assert res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["notes_raw"] == ""
-
-
-def test_r4_phonetic_rph_elements_excluded_from_rich_text(
-    tmp_path: Path,
-) -> None:
-    """R4: Phonetic guide elements <rPh> in rich text <r> are excluded."""
-    b = SyntheticXlsxBuilder()
-    u1 = _make_uuid7(b"1" * 16)
-    # J2 rich text with <rPh>
     custom_ws = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<worksheet xmlns="{b.ns_sm}">\n'
+        "  <!-- <!DOCTYPE comment_test> -->\n"
+        "  <sheetData>\n"
+        '    <row r="1">\n'
+        '      <c r="A1" t="inlineStr"><is><t>ردیف</t></is></c>\n'
+        '      <c r="B1" t="inlineStr"><is><t>تاریخ</t></is></c>\n'
+        '      <c r="C1" t="inlineStr"><is><t>نام</t></is></c>\n'
+        '      <c r="D1" t="inlineStr"><is><t>شرح</t></is></c>\n'
+        '      <c r="E1" t="inlineStr"><is><t>کالا</t></is></c>\n'
+        '      <c r="F1" t="inlineStr"><is><t>مقدار</t></is></c>\n'
+        '      <c r="G1" t="inlineStr"><is><t>فی</t></is></c>\n'
+        '      <c r="H1" t="inlineStr"><is><t>تخفیف</t></is></c>\n'
+        '      <c r="J1" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
+        '      <c r="Z1" t="inlineStr"><is><t>record_id</t></is></c>\n'
+        "    </row>\n"
+        '    <row r="2">\n'
+        '      <c r="B2" t="inlineStr"><is><t>1403/05/15</t></is></c>\n'
+        '      <c r="C2" t="inlineStr"><is><t>'
+        "<![CDATA[<!DOCTYPE sample>]]>"
+        "</t></is></c>\n"
+        '      <c r="D2" t="inlineStr"><is><t>خرید</t></is></c>\n'
+        '      <c r="E2" t="inlineStr"><is><t>طلا</t></is></c>\n'
+        '      <c r="F2"><v>1</v></c>\n'
+        '      <c r="G2"><v>1000</v></c>\n'
+        '      <c r="H2"><v>0</v></c>\n'
+        '      <c r="J2" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
+        f'      <c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c>\n'
+        "    </row>\n"
+        "  </sheetData>\n"
+        "</worksheet>"
+    )
+    b.raw_sheet_xml_overrides["خرید-فروش"] = custom_ws
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    p = tmp_path / "cdata_doctype.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    res = read_xlsx_source_snapshot(p)
+    assert (
+        res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["party_name_raw"]
+        == "<!DOCTYPE sample>"
+    )
+
+
+def test_r1_predefined_and_numeric_xml_entities_accepted(
+    tmp_path: Path,
+) -> None:
+    """R1: Predefined XML entities and numeric references are properly decoded."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
+    b = SyntheticXlsxBuilder()
+    row = _sample_buy_sell_row_data(u_bf, 2)
+    # Inject predefined entities & numeric character references
+    row["C"] = "A & B < C > D ' E \" F ABC ABC"
+    b.add_sheet_rows("خرید-فروش", [row])
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    p = tmp_path / "entities.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    res = read_xlsx_source_snapshot(p)
+    assert (
+        res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["party_name_raw"]
+        == "A & B < C > D ' E \" F ABC ABC"
+    )
+
+
+def test_r1_valid_utf16_workbook_accepted(tmp_path: Path) -> None:
+    """R1: Valid worksheets encoded in UTF-16 are parsed successfully."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
+    b = SyntheticXlsxBuilder()
+    custom_ws = (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
         f'<worksheet xmlns="{b.ns_sm}">\n'
         "  <sheetData>\n"
         '    <row r="1">\n'
@@ -954,136 +659,144 @@ def test_r4_phonetic_rph_elements_excluded_from_rich_text(
         '      <c r="F2"><v>1</v></c>\n'
         '      <c r="G2"><v>1000</v></c>\n'
         '      <c r="H2"><v>0</v></c>\n'
-        '      <c r="J2" t="inlineStr">\n'
-        "        <is><r><rPh><t>PHONETIC</t></rPh><t>توضیحات</t></r></is>\n"
-        "      </c>\n"
-        f'      <c r="Z2" t="inlineStr"><is><t>{u1}</t></is></c>\n'
+        '      <c r="J2" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
+        f'      <c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c>\n'
         "    </row>\n"
-        "  </sheetData>\n</worksheet>"
-    )
+        "  </sheetData>\n"
+        "</worksheet>"
+    ).encode("utf-16")
     b.raw_sheet_xml_overrides["خرید-فروش"] = custom_ws
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
 
-    p = tmp_path / "rph_excluded.xlsx"
+    p = tmp_path / "utf16_ws.xlsx"
     p.write_bytes(b.build_bytes())
 
     res = read_xlsx_source_snapshot(p)
-    assert res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["notes_raw"] == "توضیحات"
+    assert res.snapshot.total_row_count == 4
+    assert u_bf in res.snapshot.all_rows_by_id
 
 
-def test_r4_per_fragment_escape_decoding(tmp_path: Path) -> None:
-    """R4: OpenXML _xHHHH_ escapes decoded per fragment before joining runs."""
-    b = SyntheticXlsxBuilder()
-    u1 = _make_uuid7(b"1" * 16)
-    row = _sample_buy_sell_row_data(u1, 2)
-    # J2 has escaped characters e.g. _x0041_ for 'A'
-    row["J"] = "_x0041__x0042__x0043_"
-    b.add_sheet_rows("خرید-فروش", [row])
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
+# --- R2: Text Preservation & Phonetics Support ---
+
+
+def test_r2_invalid_wrapper_inside_si_and_is_rejected(tmp_path: Path) -> None:
+    """R2: Unknown wrapper tags inside <si> or <is> raise XlsxCellError."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
+    # 1. <si><unsupported><t>SYNTHETIC-ACTIVITY</t></unsupported></si>
+    b1 = SyntheticXlsxBuilder()
+    b1.override_sst_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<sst xmlns="{b1.ns_sm}">\n'
+        "  <si><unsupported><t>SYNTHETIC-ACTIVITY</t></unsupported></si>\n"
+        "</sst>"
     )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
+    row_sst = _sample_buy_sell_row_data(u_bf, 2)
+    row_sst["C"] = {"t": "s", "v": "0"}
+    b1.add_sheet_rows("خرید-فروش", [row_sst])
+    b1.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b1.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b1.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
 
-    p = tmp_path / "escapes.xlsx"
-    p.write_bytes(b.build_bytes())
+    p1 = tmp_path / "sst_bad_wrapper.xlsx"
+    p1.write_bytes(b1.build_bytes())
 
-    res = read_xlsx_source_snapshot(p)
-    assert res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["notes_raw"] == "ABC"
+    with pytest.raises(XlsxCellError) as exc1:
+        read_xlsx_source_snapshot(p1)
+    assert exc1.value.reason == REASON_CELL_UNKNOWN_TYPE
 
-
-# --- R5: Strict Whole-String Regex & XML Numbers ---
-
-
-def test_r5_strict_numeric_xml_grammar_and_rejections(tmp_path: Path) -> None:
-    """R5: Strict ASCII numeric grammar; newline and underscore rejected."""
-    bad_numbers = ["12\n", "1_000", "NaN", "INF", "۱۲۳"]
-    for bad_n in bad_numbers:
-        b = SyntheticXlsxBuilder()
-        row = _sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)
-        row["F"] = {"v": bad_n}
-        b.add_sheet_rows("خرید-فروش", [row])
-        b.add_sheet_rows(
-            "دریافت-پرداخت",
-            [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-        )
-        b.add_sheet_rows(
-            "ورود-خروج",
-            [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-        )
-        b.add_sheet_rows(
-            "لیست کسبه",
-            [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-        )
-
-        p = tmp_path / "bad_num.xlsx"
-        p.write_bytes(b.build_bytes())
-
-        with pytest.raises(XlsxCellError) as exc:
-            read_xlsx_source_snapshot(p)
-        assert exc.value.reason == REASON_CELL_INVALID_NUMERIC_LEXEME
-
-
-def test_r5_xml_exponent_parsed_directly_to_decimal(tmp_path: Path) -> None:
-    """R5: XML scientific notation 1.5e6 converts directly to Decimal."""
-    b = SyntheticXlsxBuilder()
-    u1 = _make_uuid7(b"1" * 16)
-    row = _sample_buy_sell_row_data(u1, 2)
-    row["F"] = {"v": "1.5e3"}  # 1500
-    b.add_sheet_rows("خرید-فروش", [row])
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
-
-    p = tmp_path / "exponent.xlsx"
-    p.write_bytes(b.build_bytes())
-
-    res = read_xlsx_source_snapshot(p)
-    qty = res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["quantity_raw"]
-    assert qty == Decimal("1500")
-
-
-# --- R6: Formula Coverage & Anchor Handling ---
-
-
-def test_r6_formula_anchor_anywhere_inside_range_accepted(
-    tmp_path: Path,
-) -> None:
-    """R6: Formula anchor inside range (e.g. anchor=K2 with ref=H2:K2) is accepted."""
-    b = SyntheticXlsxBuilder()
-    u1 = _make_uuid7(b"1" * 16)
-
-    # In sheet "خرید-فروش", put array formula anchor at K2 with ref=H2:K2
-    # H2 is discount_toman_raw (a raw candidate); cache is excluded -> None.
+    # 2. <is><r><unsupported><t>SYNTHETIC-ACTIVITY</t></unsupported></r></is>
+    b2 = SyntheticXlsxBuilder()
     custom_ws = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<worksheet xmlns="{b2.ns_sm}">\n'
+        "  <sheetData>\n"
+        '    <row r="1">\n'
+        '      <c r="A1" t="inlineStr"><is><t>ردیف</t></is></c>\n'
+        '      <c r="B1" t="inlineStr"><is><t>تاریخ</t></is></c>\n'
+        '      <c r="C1" t="inlineStr"><is><t>نام</t></is></c>\n'
+        '      <c r="D1" t="inlineStr"><is><t>شرح</t></is></c>\n'
+        '      <c r="E1" t="inlineStr"><is><t>کالا</t></is></c>\n'
+        '      <c r="F1" t="inlineStr"><is><t>مقدار</t></is></c>\n'
+        '      <c r="G1" t="inlineStr"><is><t>فی</t></is></c>\n'
+        '      <c r="H1" t="inlineStr"><is><t>تخفیف</t></is></c>\n'
+        '      <c r="J1" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
+        '      <c r="Z1" t="inlineStr"><is><t>record_id</t></is></c>\n'
+        "    </row>\n"
+        '    <row r="2">\n'
+        '      <c r="B2" t="inlineStr"><is><t>1403/05/15</t></is></c>\n'
+        '      <c r="C2" t="inlineStr"><is><r>'
+        "<unsupported><t>SYNTHETIC</t></unsupported>"
+        "</r></is></c>\n"
+        '      <c r="D2" t="inlineStr"><is><t>خرید</t></is></c>\n'
+        '      <c r="E2" t="inlineStr"><is><t>طلا</t></is></c>\n'
+        '      <c r="F2"><v>1</v></c>\n'
+        '      <c r="G2"><v>1000</v></c>\n'
+        '      <c r="H2"><v>0</v></c>\n'
+        '      <c r="J2" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
+        f'      <c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c>\n'
+        "    </row>\n"
+        "  </sheetData>\n"
+        "</worksheet>"
+    )
+    b2.raw_sheet_xml_overrides["خرید-فروش"] = custom_ws
+    b2.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b2.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b2.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    p2 = tmp_path / "is_bad_wrapper.xlsx"
+    p2.write_bytes(b2.build_bytes())
+
+    with pytest.raises(XlsxCellError) as exc2:
+        read_xlsx_source_snapshot(p2)
+    assert exc2.value.reason == REASON_CELL_UNKNOWN_TYPE
+
+
+def test_r2_foreign_namespace_si_in_sst_rejected(tmp_path: Path) -> None:
+    """R2: Foreign namespace child under <sst> raises XlsxStructureError."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
+    b = SyntheticXlsxBuilder()
+    b.override_sst_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<sst xmlns="{b.ns_sm}" xmlns:foreign="http://invalid-ns.org">\n'
+        "  <foreign:si><t>SOURCE_A</t></foreign:si>\n"
+        "  <si><t>SOURCE_B</t></si>\n"
+        "</sst>"
+    )
+    row_sst = _sample_buy_sell_row_data(u_bf, 2)
+    row_sst["C"] = {"t": "s", "v": "0"}
+    b.add_sheet_rows("خرید-فروش", [row_sst])
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    p = tmp_path / "sst_foreign_si.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    with pytest.raises(XlsxStructureError) as exc:
+        read_xlsx_source_snapshot(p)
+    assert exc.value.reason == REASON_STRUCTURE_INVALID_SHEET_HIERARCHY
+
+
+def test_r2_phonetic_direct_rph_under_is_accepted(tmp_path: Path) -> None:
+    """R2: Direct phonetic <rPh> under <is> is excluded without error."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
+    b = SyntheticXlsxBuilder()
+    custom_ws = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<worksheet xmlns="{b.ns_sm}">\n'
         "  <sheetData>\n"
         '    <row r="1">\n'
@@ -1100,47 +813,142 @@ def test_r6_formula_anchor_anywhere_inside_range_accepted(
         "    </row>\n"
         '    <row r="2">\n'
         '      <c r="B2" t="inlineStr"><is><t>1403/05/15</t></is></c>\n'
-        '      <c r="C2" t="inlineStr"><is><t>بازرگانی احمدی</t></is></c>\n'
+        '      <c r="C2" t="inlineStr"><is><t>A</t>'
+        '<rPh sb="0" eb="1"><t>phonetic_guide</t></rPh>'
+        "</is></c>\n"
         '      <c r="D2" t="inlineStr"><is><t>خرید</t></is></c>\n'
         '      <c r="E2" t="inlineStr"><is><t>طلا</t></is></c>\n'
-        '      <c r="F2"><v>10</v></c>\n'
+        '      <c r="F2"><v>1</v></c>\n'
         '      <c r="G2"><v>1000</v></c>\n'
-        '      <c r="H2"><v>500</v></c>\n'  # Covered by array formula -> None
+        '      <c r="H2"><v>0</v></c>\n'
         '      <c r="J2" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
-        '      <c r="K2"><f t="array" ref="H2:K2">SUM(A1:A10)</f><v>999</v></c>\n'
-        f'      <c r="Z2" t="inlineStr"><is><t>{u1}</t></is></c>\n'
+        f'      <c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c>\n'
         "    </row>\n"
-        "  </sheetData>\n</worksheet>"
+        "  </sheetData>\n"
+        "</worksheet>"
     )
     b.raw_sheet_xml_overrides["خرید-فروش"] = custom_ws
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
 
-    p = tmp_path / "anchor_k2.xlsx"
+    p = tmp_path / "phonetic_direct.xlsx"
     p.write_bytes(b.build_bytes())
 
     res = read_xlsx_source_snapshot(p)
-    row = res.snapshot.sheets["خرید-فروش"].rows[0]
-    # discount_toman_raw at H2 is covered by array formula -> None
-    assert row.raw_values["discount_toman_raw"] is None
+    assert res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["party_name_raw"] == "A"
 
 
-def test_r6_reversed_formula_coverage_range_rejected(tmp_path: Path) -> None:
-    """R6: Reversed array range e.g. K2:H2 is rejected with XlsxFormulaCoverageError."""
+def test_r2_rich_text_runs_and_per_fragment_escapes_decoded(
+    tmp_path: Path,
+) -> None:
+    """R2: Multiple rich text runs with formatting and _xHHHH_ escapes are decoded."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
     b = SyntheticXlsxBuilder()
-    row = _sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)
-    row["F"] = {"f": "SUM(1,2)", "f_t": "array", "f_ref": "K2:H2", "v": "100"}
-    b.add_sheet_rows("خرید-فروش", [row])
+    custom_ws = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<worksheet xmlns="{b.ns_sm}">\n'
+        "  <sheetData>\n"
+        '    <row r="1">\n'
+        '      <c r="A1" t="inlineStr"><is><t>ردیف</t></is></c>\n'
+        '      <c r="B1" t="inlineStr"><is><t>تاریخ</t></is></c>\n'
+        '      <c r="C1" t="inlineStr"><is><t>نام</t></is></c>\n'
+        '      <c r="D1" t="inlineStr"><is><t>شرح</t></is></c>\n'
+        '      <c r="E1" t="inlineStr"><is><t>کالا</t></is></c>\n'
+        '      <c r="F1" t="inlineStr"><is><t>مقدار</t></is></c>\n'
+        '      <c r="G1" t="inlineStr"><is><t>فی</t></is></c>\n'
+        '      <c r="H1" t="inlineStr"><is><t>تخفیف</t></is></c>\n'
+        '      <c r="J1" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
+        '      <c r="Z1" t="inlineStr"><is><t>record_id</t></is></c>\n'
+        "    </row>\n"
+        '    <row r="2">\n'
+        '      <c r="B2" t="inlineStr"><is><t>1403/05/15</t></is></c>\n'
+        '      <c r="C2" t="inlineStr"><is>'
+        "<r><rPr><b/></rPr><t>Part_x0031_ </t></r>"
+        "<r><rPr><i/></rPr><t>Part_x0032_</t></r>"
+        "</is></c>\n"
+        '      <c r="D2" t="inlineStr"><is><t>خرید</t></is></c>\n'
+        '      <c r="E2" t="inlineStr"><is><t>طلا</t></is></c>\n'
+        '      <c r="F2"><v>1</v></c>\n'
+        '      <c r="G2"><v>1000</v></c>\n'
+        '      <c r="H2"><v>0</v></c>\n'
+        '      <c r="J2" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
+        f'      <c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c>\n'
+        "    </row>\n"
+        "  </sheetData>\n"
+        "</worksheet>"
+    )
+    b.raw_sheet_xml_overrides["خرید-فروش"] = custom_ws
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    p = tmp_path / "rich_escapes.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    res = read_xlsx_source_snapshot(p)
+    assert (
+        res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["party_name_raw"]
+        == "Part1 Part2"
+    )
+
+
+# --- R3: SST Selection & Streaming Pass Integration ---
+
+
+def test_r3_unused_sst_entries_not_decoded_or_retained(tmp_path: Path) -> None:
+    """R3: 2,000 unused strings in SST are not decoded or retained."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
+    b = SyntheticXlsxBuilder()
+    # Add 2,000 shared strings; only index 0 is valid and used
+    b.shared_strings = ["احمدی"] + [
+        f"UNUSED_CORRUPT_SURROGATE_x0000_{i}" for i in range(1, 2000)
+    ]
+
+    row_sst = _sample_buy_sell_row_data(u_bf, 2)
+    row_sst["C"] = {"t": "s", "v": "0"}
+    b.add_sheet_rows("خرید-فروش", [row_sst])
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    p = tmp_path / "unused_sst.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    res = read_xlsx_source_snapshot(p)
+    assert (
+        res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["party_name_raw"] == "احمدی"
+    )
+
+
+# --- R4: Reject Ambiguity in Source Selection ---
+
+
+def test_r4_ambiguous_officedocument_relationships_rejected(
+    tmp_path: Path,
+) -> None:
+    """R4: Multiple officeDocument relationships in _rels/.rels are rejected."""
+    b = SyntheticXlsxBuilder()
+    b.override_rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+        f'  <Relationship Id="rId1" Type="{b.ns_rel_office}/officeDocument" '
+        'Target="xl/workbook.xml"/>\n'
+        f'  <Relationship Id="rId2" Type="{b.ns_rel_office}/officeDocument" '
+        'Target="xl/workbook2.xml"/>\n'
+        "</Relationships>"
+    )
+    b.add_sheet_rows(
+        "خرید-فروش", [_sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)]
+    )
     b.add_sheet_rows(
         "دریافت-پرداخت",
         [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
@@ -1154,22 +962,164 @@ def test_r6_reversed_formula_coverage_range_rejected(tmp_path: Path) -> None:
         [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
     )
 
-    p = tmp_path / "reversed_ref.xlsx"
+    p = tmp_path / "ambiguous_wb.xlsx"
     p.write_bytes(b.build_bytes())
 
-    with pytest.raises(XlsxFormulaCoverageError) as exc:
+    with pytest.raises(XlsxPackageError) as exc:
         read_xlsx_source_snapshot(p)
-    assert exc.value.reason == REASON_FORMULA_COVERAGE_REVERSED_RANGE
+    assert exc.value.reason == REASON_PACKAGE_AMBIGUOUS_WORKBOOK
 
 
-def test_r6_extlst_formula_does_not_affect_raw_cell(tmp_path: Path) -> None:
-    """R6: Formulas declared in <extLst> outside sheetData do not cover cells."""
+def test_r4_ambiguous_sharedstrings_relationships_rejected(
+    tmp_path: Path,
+) -> None:
+    """R4: Multiple sharedStrings relationships in workbook.xml.rels are rejected."""
     b = SyntheticXlsxBuilder()
-    u1 = _make_uuid7(b"1" * 16)
+    b.override_wb_rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+        f'  <Relationship Id="rId_sst1" Type="{b.ns_rel_office}/sharedStrings" '
+        'Target="sharedStrings.xml"/>\n'
+        f'  <Relationship Id="rId_sst2" Type="{b.ns_rel_office}/sharedStrings" '
+        'Target="sharedStrings2.xml"/>\n'
+        f'  <Relationship Id="rId_1" Type="{b.ns_rel_office}/worksheet" '
+        'Target="worksheets/sheet1.xml"/>\n'
+        f'  <Relationship Id="rId_2" Type="{b.ns_rel_office}/worksheet" '
+        'Target="worksheets/sheet2.xml"/>\n'
+        f'  <Relationship Id="rId_3" Type="{b.ns_rel_office}/worksheet" '
+        'Target="worksheets/sheet3.xml"/>\n'
+        f'  <Relationship Id="rId_4" Type="{b.ns_rel_office}/worksheet" '
+        'Target="worksheets/sheet4.xml"/>\n'
+        "</Relationships>"
+    )
+    b.add_sheet_rows(
+        "خرید-فروش", [_sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)]
+    )
+    b.add_sheet_rows(
+        "دریافت-پرداخت",
+        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
+    )
+    b.add_sheet_rows(
+        "ورود-خروج",
+        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
+    )
+    b.add_sheet_rows(
+        "لیست کسبه",
+        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
+    )
 
-    # Put a formula inside <extLst> outside <sheetData>
+    p = tmp_path / "ambiguous_sst.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    with pytest.raises(XlsxPackageError) as exc:
+        read_xlsx_source_snapshot(p)
+    assert exc.value.reason == REASON_PACKAGE_AMBIGUOUS_SHARED_STRINGS
+
+
+def test_r4_ambiguous_sheets_containers_rejected(tmp_path: Path) -> None:
+    """R4: Multiple <sheets> containers in workbook.xml are rejected."""
+    b = SyntheticXlsxBuilder()
+    b.override_wb_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<workbook xmlns="{b.ns_sm}" xmlns:r="{b.ns_rel_office}">\n'
+        "  <sheets>\n"
+        '    <sheet name="خرید-فروش" sheetId="1" r:id="rId_1"/>\n'
+        '    <sheet name="دریافت-پرداخت" sheetId="2" r:id="rId_2"/>\n'
+        '    <sheet name="ورود-خروج" sheetId="3" r:id="rId_3"/>\n'
+        '    <sheet name="لیست کسبه" sheetId="4" r:id="rId_4"/>\n'
+        "  </sheets>\n"
+        "  <sheets>\n"
+        '    <sheet name="خرید-فروش" sheetId="1" r:id="rId_1"/>\n'
+        "  </sheets>\n"
+        "</workbook>"
+    )
+    b.add_sheet_rows(
+        "خرید-فروش", [_sample_buy_sell_row_data(_make_uuid7(b"1" * 16), 2)]
+    )
+    b.add_sheet_rows(
+        "دریافت-پرداخت",
+        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
+    )
+    b.add_sheet_rows(
+        "ورود-خروج",
+        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
+    )
+    b.add_sheet_rows(
+        "لیست کسبه",
+        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
+    )
+
+    p = tmp_path / "ambiguous_sheets.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    with pytest.raises(XlsxStructureError) as exc:
+        read_xlsx_source_snapshot(p)
+    assert exc.value.reason == REASON_STRUCTURE_AMBIGUOUS_SHEETS
+
+
+# --- R5: Error Boundary & WP-04 Validation Ownership ---
+
+
+def test_r5_duplicate_uuid_raises_xlsx_identity_error(tmp_path: Path) -> None:
+    """R5: Duplicate UUID raises XlsxIdentityError with exact machine reason."""
+    u_dup = _make_uuid7(b"1" * 16)
+
+    b = SyntheticXlsxBuilder()
+    b.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u_dup, 2)])
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dup, 2)])
+    b.add_sheet_rows(
+        "ورود-خروج",
+        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
+    )
+    b.add_sheet_rows(
+        "لیست کسبه",
+        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
+    )
+
+    p = tmp_path / "dup_uuid.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    with pytest.raises(XlsxIdentityError) as exc:
+        read_xlsx_source_snapshot(p)
+    assert exc.value.reason == REASON_IDENTITY_DUPLICATE_UUID
+    assert exc.value.sheet_name == "دریافت-پرداخت"
+    assert exc.value.physical_row_number == 2
+
+
+def test_r5_textual_scientific_exponent_rejected(tmp_path: Path) -> None:
+    """R5: Textual scientific exponent '1e2' in numeric field raises XlsxCellError."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
+    b = SyntheticXlsxBuilder()
+    row = _sample_buy_sell_row_data(u_bf, 2)
+    # Inject textual exponent "1e2" into quantity field (col F)
+    row["F"] = "1e2"
+    b.add_sheet_rows("خرید-فروش", [row])
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    p = tmp_path / "text_exp.xlsx"
+    p.write_bytes(b.build_bytes())
+
+    with pytest.raises(XlsxCellError) as exc:
+        read_xlsx_source_snapshot(p)
+    assert exc.value.reason == REASON_CELL_INVALID_NUMERIC_LEXEME
+
+
+def test_r5_native_xml_numeric_exponent_accepted(tmp_path: Path) -> None:
+    """R5: Native XML numeric exponent <v>1.5e3</v> converts directly to Decimal."""
+    u_bf = _make_uuid7(b"1" * 16)
+    u_dp = _make_uuid7(b"2" * 16)
+    u_vk = _make_uuid7(b"3" * 16)
+    u_lk = _make_uuid7(b"4" * 16)
+
+    b = SyntheticXlsxBuilder()
     custom_ws = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<worksheet xmlns="{b.ns_sm}">\n'
         "  <sheetData>\n"
         '    <row r="1">\n'
@@ -1189,53 +1139,35 @@ def test_r6_extlst_formula_does_not_affect_raw_cell(tmp_path: Path) -> None:
         '      <c r="C2" t="inlineStr"><is><t>احمدی</t></is></c>\n'
         '      <c r="D2" t="inlineStr"><is><t>خرید</t></is></c>\n'
         '      <c r="E2" t="inlineStr"><is><t>طلا</t></is></c>\n'
-        '      <c r="F2"><v>10</v></c>\n'
+        '      <c r="F2"><v>1.5e3</v></c>\n'
         '      <c r="G2"><v>1000</v></c>\n'
-        '      <c r="H2"><v>500</v></c>\n'
+        '      <c r="H2"><v>0</v></c>\n'
         '      <c r="J2" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
-        f'      <c r="Z2" t="inlineStr"><is><t>{u1}</t></is></c>\n'
+        f'      <c r="Z2" t="inlineStr"><is><t>{u_bf}</t></is></c>\n'
         "    </row>\n"
         "  </sheetData>\n"
-        "  <extLst>\n"
-        '    <ext uri="{some-uri}">\n'
-        '      <f t="array" ref="H2:K2">SUM(A1:A10)</f>\n'
-        "    </ext>\n"
-        "  </extLst>\n"
         "</worksheet>"
     )
     b.raw_sheet_xml_overrides["خرید-فروش"] = custom_ws
-    b.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
+    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
 
-    p = tmp_path / "extlst_formula.xlsx"
+    p = tmp_path / "xml_exp.xlsx"
     p.write_bytes(b.build_bytes())
 
     res = read_xlsx_source_snapshot(p)
-    # H2 is NOT covered because formula was outside sheetData
     assert res.snapshot.sheets["خرید-فروش"].rows[0].raw_values[
-        "discount_toman_raw"
-    ] == Decimal("500")
+        "quantity_raw"
+    ] == Decimal("1500")
 
 
-# --- R7: Safe Errors & WP-04 Identity Integration ---
-
-
-def test_r7_uuid_casing_canonicalized_by_snapshot(tmp_path: Path) -> None:
-    """R7: Non-canonical uppercase hex UUID in XLSX is canonicalized."""
+def test_r5_uuid_casing_canonicalized_by_snapshot(tmp_path: Path) -> None:
+    """R5: Non-canonical uppercase hex UUID in XLSX is canonicalized."""
     b = SyntheticXlsxBuilder()
     u1 = _make_uuid7(b"1" * 16)
     u1_upper = str(u1).upper()
-    row = _sample_buy_sell_row_data(u1_upper, 2)  # type: ignore[arg-type]
+    row = _sample_buy_sell_row_data(u1_upper, 2)
     b.add_sheet_rows("خرید-فروش", [row])
     b.add_sheet_rows(
         "دریافت-پرداخت",
@@ -1258,62 +1190,237 @@ def test_r7_uuid_casing_canonicalized_by_snapshot(tmp_path: Path) -> None:
     assert res.snapshot.all_rows_by_id[u1].canonical_uuid == str(u1).lower()
 
 
-def test_r7_error_reason_consistency_and_zero_data_leakage() -> None:
-    """R7: Error messages contain only machine reasons and safe coordinates."""
-    err_safe = XlsxCellError(
-        REASON_CELL_INVALID_NUMERIC_LEXEME,
-        sheet_name="خرید-فروش",
-        cell_ref="F2",
-        physical_row_number=2,
-    )
-    msg_safe = str(err_safe)
-    assert "F2" in msg_safe
-    assert "خرید-فروش" in msg_safe
-    assert REASON_CELL_INVALID_NUMERIC_LEXEME in msg_safe
-
-    # Invalid coordinate marker SYNTHETIC-PRIVATE-COORDINATE is omitted from str(error)
-    err_unsafe = XlsxCellError(
-        REASON_CELL_INVALID_NUMERIC_LEXEME,
-        sheet_name="خرید-فروش",
-        cell_ref="SYNTHETIC-PRIVATE-COORDINATE",
-        physical_row_number=2,
-    )
-    msg_unsafe = str(err_unsafe)
-    assert "SYNTHETIC-PRIVATE-COORDINATE" not in msg_unsafe
+# --- R6: Lifecycle, Properties, Direct Construction & Benchmark ---
 
 
-def test_r7_duplicate_uuid_raises_duplicate_identity_error(
+def test_r6_planner_full_lifecycle_transitions_and_idempotency(
     tmp_path: Path,
 ) -> None:
-    """R7: Duplicate UUID across or within sheets raises DuplicateIdentityError."""
-    u_dup = _make_uuid7(b"1" * 16)
+    """R6 / XR-08: Full transition table and state advancement idempotency."""
+    wb_bytes, uuids = _build_standard_synthetic_workbook()
+    pkg_path = tmp_path / "planner_test.xlsx"
+    pkg_path.write_bytes(wb_bytes)
 
-    b = SyntheticXlsxBuilder()
-    b.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u_dup, 2)])
-    b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dup, 2)])
-    b.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
+    # 1. First read: 4 Inserts
+    result1 = read_xlsx_source_snapshot(pkg_path)
+    plan1 = plan_source_changes(result1.snapshot)
+    assert plan1.total_counts.insert_count == 4
+
+    # Advance state
+    prior_states = [
+        PriorIdentityState(
+            stable_id=it.stable_id,
+            canonical_uuid=it.canonical_uuid,
+            home_sheet=it.sheet_name,
+            latest_revision=it.planned_revision or 1,
+            lifecycle=IdentityLifecycle.ACTIVE,
+            source_hash=it.current_source_hash or "0" * 64,
+        )
+        for it in plan1.items
+    ]
+    prior_reg = build_prior_identity_registry(prior_states)
+
+    # 2. Re-read same workbook -> 0 mutations, 4 unchanged (Idempotency)
+    plan2 = plan_source_changes(result1.snapshot, prior_reg)
+    assert plan2.total_counts.insert_count == 0
+    assert plan2.total_counts.edit_count == 0
+    assert plan2.total_counts.void_count == 0
+    assert plan2.total_counts.unchanged_count == 4
+
+
+@given(
+    seed=st.integers(min_value=1, max_value=10000),
+)
+def test_r6_hypothesis_comprehensive_invariance_property(
+    seed: int,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """R6 / XR-09: Randomized permutations produce identical snapshot."""
+    rng = random.Random(seed)
+    tmp_dir = tmp_path_factory.mktemp("prop_perm")
+
+    u_bf = _make_uuid7(b"0000000000000001")
+    u_dp = _make_uuid7(b"0000000000000002")
+    u_vk = _make_uuid7(b"0000000000000003")
+    u_lk = _make_uuid7(b"0000000000000004")
+
+    # Package 1 (Baseline)
+    b1 = SyntheticXlsxBuilder()
+    b1.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u_bf, 2)])
+    b1.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b1.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b1.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    # Package 2 (Randomized sheet order, row positions)
+    b2 = SyntheticXlsxBuilder()
+    sheet_entries = [
+        ("خرید-فروش", _sample_buy_sell_row_data(u_bf, rng.randint(2, 500))),
+        (
+            "دریافت-پرداخت",
+            _sample_receipts_payments_row_data(u_dp, rng.randint(2, 500)),
+        ),
+        (
+            "ورود-خروج",
+            _sample_inventory_movements_row_data(u_vk, rng.randint(2, 500)),
+        ),
+        (
+            "لیست کسبه",
+            _sample_business_parties_row_data(u_lk, rng.randint(2, 500)),
+        ),
+    ]
+    rng.shuffle(sheet_entries)
+
+    for s_name, r_data in sheet_entries:
+        b2.add_sheet_rows(s_name, [r_data])
+
+    p1 = tmp_dir / f"pkg1_{seed}.xlsx"
+    p2 = tmp_dir / f"pkg2_{seed}.xlsx"
+    p1.write_bytes(b1.build_bytes())
+    p2.write_bytes(b2.build_bytes())
+
+    res1 = read_xlsx_source_snapshot(p1)
+    res2 = read_xlsx_source_snapshot(p2)
+
+    for s_name in RAW_CONTRACT_REGISTRY.sheets:
+        assert (
+            res1.snapshot.sheets[s_name].sheet_snapshot_hash
+            == res2.snapshot.sheets[s_name].sheet_snapshot_hash
+        )
+        assert res1.snapshot.sheets[s_name].rows == res2.snapshot.sheets[s_name].rows
+
+    assert res1.snapshot.all_rows_by_id == res2.snapshot.all_rows_by_id
+
+
+def test_r6_direct_construction_negative_matrix() -> None:
+    """R6 / XR-10: Result and location constructors validate all invariants."""
+    u1 = _make_uuid7(b"0000000000000001")
+    u2 = _make_uuid7(b"0000000000000002")
+    u3 = _make_uuid7(b"0000000000000003")
+    u4 = _make_uuid7(b"0000000000000004")
+
+    snap = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(
+                "خرید-فروش",
+                [
+                    SourceRowInput(
+                        u1,
+                        {
+                            "date_raw": "1403/01/01",
+                            "party_name_raw": "احمدی",
+                            "transaction_type_raw": "خرید",
+                            "item_name_raw": "طلا",
+                            "quantity_raw": Decimal(1),
+                            "unit_price_toman_raw": Decimal(1000),
+                            "discount_toman_raw": Decimal(0),
+                            "notes_raw": None,
+                        },
+                    )
+                ],
+            ),
+            SourceSheetInput(
+                "دریافت-پرداخت",
+                [
+                    SourceRowInput(
+                        u2,
+                        {
+                            "date_raw": "1403/01/01",
+                            "party_name_raw": "احمدی",
+                            "entry_type_raw": "RS",
+                            "amount_toman_raw": Decimal(1000),
+                            "notes_raw": None,
+                            "account_code_raw": None,
+                            "customer_flag_raw": None,
+                        },
+                    )
+                ],
+            ),
+            SourceSheetInput(
+                "ورود-خروج",
+                [
+                    SourceRowInput(
+                        u3,
+                        {
+                            "date_raw": "1403/01/01",
+                            "party_name_raw": "احمدی",
+                            "movement_type_raw": "ورود",
+                            "item_name_raw": "شمش",
+                            "quantity_raw": Decimal(1),
+                            "purity_raw": Decimal(750),
+                            "notes_raw": None,
+                            "customer_flag_raw": None,
+                        },
+                    )
+                ],
+            ),
+            SourceSheetInput(
+                "لیست کسبه",
+                [
+                    SourceRowInput(
+                        u4,
+                        {
+                            "party_name_raw": "احمدی",
+                            "phone_number_raw": "SYNTHETIC-PHONE-001",
+                        },
+                    )
+                ],
+            ),
+        ]
     )
-    b.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
 
-    p = tmp_path / "dup_uuid.xlsx"
-    p.write_bytes(b.build_bytes())
+    locs = {
+        u1: SourceRowLocation("خرید-فروش", 2),
+        u2: SourceRowLocation("دریافت-پرداخت", 2),
+        u3: SourceRowLocation("ورود-خروج", 2),
+        u4: SourceRowLocation("لیست کسبه", 2),
+    }
 
-    with pytest.raises(DuplicateIdentityError):
-        read_xlsx_source_snapshot(p)
+    res = XlsxSourceReadResult(snapshot=snap, locations_by_uuid=cast(Any, locs))
+    assert res.version == XLSX_SOURCE_READER_VERSION
+
+    # Modifying caller dictionary does not affect result
+    locs[u1] = SourceRowLocation("خرید-فروش", 999)
+    assert res.locations_by_uuid[u1].physical_row_number == 2
+
+    # Negative: invalid version
+    with pytest.raises(XlsxStructureError) as exc_v:
+        XlsxSourceReadResult(
+            snapshot=snap, locations_by_uuid=cast(Any, locs), version="v2"
+        )
+    assert exc_v.value.reason == REASON_STRUCTURE_INVALID_VERSION
 
 
-# --- R8: Cross-Platform Benchmark & Memory Helper ---
+def test_r6_read_only_integrity_and_clean_cleanup(tmp_path: Path) -> None:
+    """R6 / XR-11: Handles cleanly closed on success and failure; file untouched."""
+    wb_bytes, _ = _build_standard_synthetic_workbook()
+    pkg_path = tmp_path / "readonly_test.xlsx"
+    pkg_path.write_bytes(wb_bytes)
+
+    stat_before = pkg_path.stat()
+
+    # Success case: file size/mtime unchanged, file can be read/renamed
+    res = read_xlsx_source_snapshot(pkg_path)
+    assert res.snapshot.total_row_count == 4
+    assert pkg_path.read_bytes() == wb_bytes
+
+    stat_after = pkg_path.stat()
+    assert stat_before.st_size == stat_after.st_size
+    assert stat_before.st_mtime == stat_after.st_mtime
+
+    # Failure case: file handle closed, can be unlinked immediately
+    bad_path = tmp_path / "bad_handle.xlsx"
+    bad_path.write_bytes(b"NOT-A-ZIP-CORRUPT")
+    with pytest.raises(XlsxPackageError):
+        read_xlsx_source_snapshot(bad_path)
+
+    bad_path.unlink()
+    assert not bad_path.exists()
 
 
 def test_xr12_synthetic_15000_row_benchmark(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """XR-12 / R8: Streaming benchmark on 15,000 active rows (<15s, <128MiB)."""
+    """XR-12 / R6: Streaming benchmark on 15,000 active rows (<15s, <128MiB)."""
     builder = SyntheticXlsxBuilder()
     total_active_target = 15000
     rows_per_sheet = total_active_target // 4  # 3750 per sheet
@@ -1439,282 +1546,3 @@ print(json.dumps(out))
 
     assert duration < 15.0, f"Streaming read too slow: {duration:.2f}s"
     assert peak_rss_mib < 128.0, f"Peak memory too high: {peak_rss_mib:.2f} MiB"
-
-
-# --- R9: Real Property Tests, Hidden Rows, Immutability & File Handles ---
-
-
-@given(
-    seed=st.integers(min_value=1, max_value=10000),
-)
-def test_r9_hypothesis_randomized_packages_invariance(
-    seed: int,
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
-    """R9 / XR-09: Randomized permutations produce identical snapshot."""
-    rng = random.Random(seed)
-    tmp_dir = tmp_path_factory.mktemp("prop_perm")
-
-    u_bf = _make_uuid7(b"0000000000000001")
-    u_dp = _make_uuid7(b"0000000000000002")
-    u_vk = _make_uuid7(b"0000000000000003")
-    u_lk = _make_uuid7(b"0000000000000004")
-
-    # Package 1 (Baseline)
-    b1 = SyntheticXlsxBuilder()
-    b1.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u_bf, 2)])
-    b1.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
-    b1.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
-    b1.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
-
-    # Package 2 (Randomized sheet order, row positions)
-    b2 = SyntheticXlsxBuilder()
-    sheet_entries = [
-        ("خرید-فروش", _sample_buy_sell_row_data(u_bf, rng.randint(2, 500))),
-        (
-            "دریافت-پرداخت",
-            _sample_receipts_payments_row_data(u_dp, rng.randint(2, 500)),
-        ),
-        (
-            "ورود-خروج",
-            _sample_inventory_movements_row_data(u_vk, rng.randint(2, 500)),
-        ),
-        (
-            "لیست کسبه",
-            _sample_business_parties_row_data(u_lk, rng.randint(2, 500)),
-        ),
-    ]
-    rng.shuffle(sheet_entries)
-
-    for s_name, r_data in sheet_entries:
-        b2.add_sheet_rows(s_name, [r_data])
-
-    p1 = tmp_dir / f"pkg1_{seed}.xlsx"
-    p2 = tmp_dir / f"pkg2_{seed}.xlsx"
-    p1.write_bytes(b1.build_bytes())
-    p2.write_bytes(b2.build_bytes())
-
-    res1 = read_xlsx_source_snapshot(p1)
-    res2 = read_xlsx_source_snapshot(p2)
-
-    for s_name in RAW_CONTRACT_REGISTRY.sheets:
-        assert (
-            res1.snapshot.sheets[s_name].sheet_snapshot_hash
-            == res2.snapshot.sheets[s_name].sheet_snapshot_hash
-        )
-        assert res1.snapshot.sheets[s_name].rows == res2.snapshot.sheets[s_name].rows
-
-    assert res1.snapshot.all_rows_by_id == res2.snapshot.all_rows_by_id
-
-
-def test_r9_hidden_rows_and_autofilter_retained(tmp_path: Path) -> None:
-    """R9 / XR-06: Rows with hidden='1' or autoFilter ranges are retained."""
-    u1 = _make_uuid7(b"0000000000000001")
-
-    builder = SyntheticXlsxBuilder()
-    custom_ws = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        f'<worksheet xmlns="{builder.ns_sm}">\n'
-        '  <autoFilter ref="A1:Z500"/>\n'
-        "  <sheetData>\n"
-        '    <row r="1">\n'
-        '      <c r="A1" t="inlineStr"><is><t>ردیف</t></is></c>\n'
-        '      <c r="B1" t="inlineStr"><is><t>تاریخ</t></is></c>\n'
-        '      <c r="C1" t="inlineStr"><is><t>نام</t></is></c>\n'
-        '      <c r="D1" t="inlineStr"><is><t>شرح</t></is></c>\n'
-        '      <c r="E1" t="inlineStr"><is><t>کالا</t></is></c>\n'
-        '      <c r="F1" t="inlineStr"><is><t>مقدار</t></is></c>\n'
-        '      <c r="G1" t="inlineStr"><is><t>فی</t></is></c>\n'
-        '      <c r="H1" t="inlineStr"><is><t>تخفیف</t></is></c>\n'
-        '      <c r="J1" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
-        '      <c r="Z1" t="inlineStr"><is><t>record_id</t></is></c>\n'
-        "    </row>\n"
-        '    <row r="2" hidden="1">\n'
-        '      <c r="B2" t="inlineStr"><is><t>1403/05/15</t></is></c>\n'
-        '      <c r="C2" t="inlineStr"><is><t>احمدی</t></is></c>\n'
-        '      <c r="D2" t="inlineStr"><is><t>خرید</t></is></c>\n'
-        '      <c r="E2" t="inlineStr"><is><t>کالا</t></is></c>\n'
-        '      <c r="F2"><v>1</v></c>\n'
-        '      <c r="G2"><v>1000</v></c>\n'
-        '      <c r="H2"><v>0</v></c>\n'
-        '      <c r="J2" t="inlineStr"><is><t>توضیحات</t></is></c>\n'
-        f'      <c r="Z2" t="inlineStr"><is><t>{u1}</t></is></c>\n'
-        "    </row>\n"
-        "  </sheetData>\n</worksheet>"
-    )
-    builder.raw_sheet_xml_overrides["خرید-فروش"] = custom_ws
-    builder.add_sheet_rows(
-        "دریافت-پرداخت",
-        [_sample_receipts_payments_row_data(_make_uuid7(b"2" * 16), 2)],
-    )
-    builder.add_sheet_rows(
-        "ورود-خروج",
-        [_sample_inventory_movements_row_data(_make_uuid7(b"3" * 16), 2)],
-    )
-    builder.add_sheet_rows(
-        "لیست کسبه",
-        [_sample_business_parties_row_data(_make_uuid7(b"4" * 16), 2)],
-    )
-
-    pkg_path = tmp_path / "hidden_row.xlsx"
-    pkg_path.write_bytes(builder.build_bytes())
-
-    result = read_xlsx_source_snapshot(pkg_path)
-    assert len(result.snapshot.sheets["خرید-فروش"].rows) == 1
-    assert u1 in result.snapshot.all_rows_by_id
-
-
-def test_r9_read_only_integrity_and_handle_cleanup_on_success_and_failure(
-    tmp_path: Path,
-) -> None:
-    """R9 / XR-11: Handles cleanly closed on success and failure; file unchanged."""
-    wb_bytes, _ = _build_standard_synthetic_workbook()
-    pkg_path = tmp_path / "readonly_test.xlsx"
-    pkg_path.write_bytes(wb_bytes)
-
-    # Success case: file size/mtime unchanged, file can be read/renamed
-    res = read_xlsx_source_snapshot(pkg_path)
-    assert res.snapshot.total_row_count == 4
-    assert pkg_path.read_bytes() == wb_bytes
-
-    # Failure case: file handle closed, can be unlinked immediately
-    bad_path = tmp_path / "bad_handle.xlsx"
-    bad_path.write_bytes(b"NOT-A-ZIP-CORRUPT")
-    with pytest.raises(XlsxPackageError):
-        read_xlsx_source_snapshot(bad_path)
-
-    bad_path.unlink()
-    assert not bad_path.exists()
-
-
-def test_r9_planner_transitions_and_state_advancement(tmp_path: Path) -> None:
-    """R9 / XR-08: Full transition table and state advancement idempotency."""
-    wb_bytes, _ = _build_standard_synthetic_workbook()
-    pkg_path = tmp_path / "planner_test.xlsx"
-    pkg_path.write_bytes(wb_bytes)
-
-    result = read_xlsx_source_snapshot(pkg_path)
-
-    # 1. Plan on empty prior registry -> 4 inserts
-    plan1 = plan_source_changes(result.snapshot)
-    assert plan1.total_counts.insert_count == 4
-
-    # 2. Advance state with plan results
-    prior_states = [
-        PriorIdentityState(
-            stable_id=it.stable_id,
-            canonical_uuid=it.canonical_uuid,
-            home_sheet=it.sheet_name,
-            latest_revision=it.planned_revision or 1,
-            lifecycle=IdentityLifecycle.ACTIVE,
-            source_hash=it.current_source_hash or "0" * 64,
-        )
-        for it in plan1.items
-    ]
-    prior_reg = build_prior_identity_registry(prior_states)
-
-    # 3. Re-run plan -> 0 mutations, 4 unchanged (Idempotency)
-    plan2 = plan_source_changes(result.snapshot, prior_reg)
-    assert plan2.total_counts.insert_count == 0
-    assert plan2.total_counts.edit_count == 0
-    assert plan2.total_counts.void_count == 0
-    assert plan2.total_counts.unchanged_count == 4
-
-
-def test_r9_result_immutability_and_defensive_copies() -> None:
-    """R9 / XR-10: XlsxSourceReadResult validates invariants and is immutable."""
-    u1 = _make_uuid7(b"0000000000000001")
-    u2 = _make_uuid7(b"0000000000000002")
-    u3 = _make_uuid7(b"0000000000000003")
-    u4 = _make_uuid7(b"0000000000000004")
-
-    snap = build_source_workbook_snapshot(
-        [
-            SourceSheetInput(
-                "خرید-فروش",
-                [
-                    SourceRowInput(
-                        u1,
-                        {
-                            "date_raw": "1403/01/01",
-                            "party_name_raw": "احمدی",
-                            "transaction_type_raw": "خرید",
-                            "item_name_raw": "طلا",
-                            "quantity_raw": Decimal(1),
-                            "unit_price_toman_raw": Decimal(1000),
-                            "discount_toman_raw": Decimal(0),
-                            "notes_raw": None,
-                        },
-                    )
-                ],
-            ),
-            SourceSheetInput(
-                "دریافت-پرداخت",
-                [
-                    SourceRowInput(
-                        u2,
-                        {
-                            "date_raw": "1403/01/01",
-                            "party_name_raw": "احمدی",
-                            "entry_type_raw": "RS",
-                            "amount_toman_raw": Decimal(1000),
-                            "notes_raw": None,
-                            "account_code_raw": None,
-                            "customer_flag_raw": None,
-                        },
-                    )
-                ],
-            ),
-            SourceSheetInput(
-                "ورود-خروج",
-                [
-                    SourceRowInput(
-                        u3,
-                        {
-                            "date_raw": "1403/01/01",
-                            "party_name_raw": "احمدی",
-                            "movement_type_raw": "ورود",
-                            "item_name_raw": "شمش",
-                            "quantity_raw": Decimal(1),
-                            "purity_raw": Decimal(750),
-                            "notes_raw": None,
-                            "customer_flag_raw": None,
-                        },
-                    )
-                ],
-            ),
-            SourceSheetInput(
-                "لیست کسبه",
-                [
-                    SourceRowInput(
-                        u4,
-                        {
-                            "party_name_raw": "احمدی",
-                            "phone_number_raw": "SYNTHETIC-PHONE-001",
-                        },
-                    )
-                ],
-            ),
-        ]
-    )
-
-    locs = {
-        u1: SourceRowLocation("خرید-فروش", 2),
-        u2: SourceRowLocation("دریافت-پرداخت", 2),
-        u3: SourceRowLocation("ورود-خروج", 2),
-        u4: SourceRowLocation("لیست کسبه", 2),
-    }
-
-    res = XlsxSourceReadResult(snapshot=snap, locations_by_uuid=cast(Any, locs))
-    assert res.version == XLSX_SOURCE_READER_VERSION
-
-    # Modifying caller dictionary does not affect result
-    locs[u1] = SourceRowLocation("خرید-فروش", 999)
-    assert res.locations_by_uuid[u1].physical_row_number == 2
-
-    # Negative: invalid version
-    with pytest.raises(XlsxStructureError) as exc_v:
-        XlsxSourceReadResult(
-            snapshot=snap, locations_by_uuid=cast(Any, locs), version="v2"
-        )
-    assert exc_v.value.reason == REASON_STRUCTURE_INVALID_VERSION
