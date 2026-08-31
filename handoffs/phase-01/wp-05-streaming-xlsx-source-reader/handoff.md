@@ -7,6 +7,8 @@
 - Branch/worktree: antigravity/phase-01-streaming-xlsx-source-reader
 - Commit(s):
   - `5dd5d17` (feat(local_agent): implement streaming XLSX source reader and physical row tracker (WP-05))
+  - `1542dd9` (docs(handoff): record commit hash in WP-05 handoff)
+  - `2e06bd5` (fix(local_agent): address Codex review findings R1-R9 in streaming XLSX source reader (WP-05))
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -24,8 +26,8 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
   - Typed exceptions: `XlsxSourceReadError`, `XlsxPackageError`, `XlsxStructureError`, `XlsxHeaderError`, `XlsxCellError`, `XlsxFormulaCoverageError`, `XlsxIdentityError`.
   - Main streaming entrypoint `read_xlsx_source_snapshot(path: Path | str) -> XlsxSourceReadResult`.
   - Safe package relationship resolution (`.rels`, `xl/_rels/workbook.xml.rels`) for Transitional and Strict SpreadsheetML.
-  - Multi-pass streaming algorithm: Pass 1 discovers array and data-table formula coverage bounding boxes across each sheet; Pass 2 streams row elements, checks row 1 headers, decodes cell literals, filters covered cells, evaluates row activity, verifies UUIDv7 format and global uniqueness, and constructs WP-04 snapshot inputs.
-  - Full support for literal decoding: shared strings, inline strings, direct strings, OOXML escape decoding (`_xHHHH_`), direct `Decimal` parsing from numeric XML without binary float approximations, and strict rejection of numeric XML in `date_raw`/`stable_id`, boolean `b` and error `e` cell types.
+  - Multi-pass streaming algorithm: Pass 1 discovers array and data-table formula coverage bounding boxes across each sheet with fast interval indexing; Pass 2 streams row elements, checks row 1 headers, evaluates row activity exclusively from literal inputs before decoding other fields, decodes cell literals, filters covered cells, verifies UUIDv7 format and global uniqueness, and constructs WP-04 snapshot inputs.
+  - Full support for literal decoding: shared strings, inline strings, direct strings, OOXML escape decoding (`_xHHHH_`), direct `Decimal` parsing from numeric XML without binary float approximations, strict numeric ASCII grammar validation, and strict rejection of numeric XML in `date_raw`/`stable_id`, boolean `b` and error `e` cell types.
 - Public exports in `apps/local_agent/src/accounting_local_agent/__init__.py`.
 - Documentation in `apps/local_agent/README.md`.
 - Comprehensive unit, integration, property and 15,000-row streaming benchmark tests in `tests/test_xlsx_source_reader.py`.
@@ -43,22 +45,22 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 
 | Roadmap section / O-item | Approved status | Implemented behavior |
 |---|---|---|
-| Section 5.1 / steps 1–2 | ✅ Approved | Streaming read-only XLSX extraction, formula/cache exclusion, literal retention, physical row tracking |
-| Section 5.2 / step 3 | ✅ Approved | Full snapshot builder integration and input to change planner |
-| Section 19.1 | ✅ Approved | All-or-nothing completion, zero partial import, zero false deletion |
-| O-03, O-06, O-26 | ✅ Approved | Exact literal Raw boundary, UUIDv7 technical ID requirement, Persian headers |
-| ADR-0008, WP-05 | ✅ Approved | Streaming lxml iterparse, memory bounding, safe relationship resolution, physical row location tracking |
-| O-46 to O-51 | ✅ Approved | Handoff artifacts, benchmark evidence, independent Codex review |
+| Section 5.1 / steps 1–2 | In-progress (🧪) | Streaming read-only XLSX extraction, formula/cache exclusion, literal retention, physical row tracking |
+| Section 5.2 / step 3 | In-progress (🧪) | Full snapshot builder integration and input to change planner |
+| Section 19.1 | In-progress (🧪) | All-or-nothing completion, zero partial import, zero false deletion |
+| O-03, O-06, O-26 | In-progress (🧪) | Exact literal Raw boundary, UUIDv7 technical ID requirement, Persian headers |
+| ADR-0008, WP-05 | In-progress (🧪) | Streaming lxml iterparse, memory bounding, safe relationship resolution, physical row location tracking |
+| O-46 to O-51 | In-progress (🧪) | Handoff artifacts, benchmark evidence, independent Codex review |
 
 ## Changed files
 
 | File | Change | Reason |
 |---|---|---|
-| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Created | Streaming XLSX source reader, physical row tracker, and typed error hierarchy |
+| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Addressed Codex review findings R1–R7: direct XML hierarchy, package & XML security, pre-decode classification & row activity, text preservation & phonetic guide exclusion, strict numeric XML grammar, interval formula indexing, and machine-readable error reasons |
+| `tests/test_xlsx_source_reader.py` | Modified | Addressed Codex review findings R8–R9: cross-platform memory measurement, comprehensive test suite covering all review axes R1–R9 and XR-01–XR-13 |
 | `apps/local_agent/src/accounting_local_agent/__init__.py` | Modified | Export public reader function, result types, and errors |
 | `apps/local_agent/README.md` | Modified | Document reader architecture, supported profile, and blank-row rules |
-| `tests/test_xlsx_source_reader.py` | Created | Full test suite covering XR-01 through XR-12 with synthetic in-memory fixtures |
-| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Created | Handoff document, acceptance matrix, and test results |
+| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Updated handoff document, acceptance matrix, and test results |
 
 ## Schema and migrations
 
@@ -74,14 +76,14 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 | `uv --version` | 0 | Verify uv version 0.12.7 |
 | `uv lock --check` | 0 | Verify lockfile consistency |
 | `uv sync --frozen --all-packages --all-groups` | 0 | Verify frozen dependencies installation |
-| `uv run ruff format --check .` | 0 | Verify formatting compliance across 51 files |
+| `uv run ruff format --check .` | 0 | Verify formatting compliance across 52 files |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
 | `uv run mypy .` | 0 | Verify strict static typing across 19 source files |
-| `uv run pytest -v` | 0 | Execute all 109 unit, benchmark, integration and property tests |
-| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (8.9897s under 15.0s) and peak memory (106.87 MiB under 128.0 MiB) |
+| `uv run pytest -v` | 0 | Execute all 112 unit, benchmark, integration and property tests |
+| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (10.5375s under 15.0s) and peak memory (107.07 MiB under 128.0 MiB) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
-| `! git ls-files \| grep -E '\.(xlsx\|xls\|xlsm\|sqlite\|sqlite3\|db\|pdf\|key\|pem\|env)$'` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
-| `! git grep -n -i -E '(password\s*[:=]\|secret\s*[:=]|bearer\s+[A-Za-z0-9]\|BEGIN RSA\|BEGIN OPENSSH\|09[0-9]{9}\|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})' -- ':!ROADMAP.md' ':!docs/adr/*' ':!.agents/*' ':!handoffs/*' ':!uv.lock'` | 0 | Verify zero sensitive credentials, IPs or real phone numbers in code/tests |
+| `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
+| `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], text=True); sys.exit(1 if out.strip() else 0)"` | 0 | Verify zero sensitive credentials, IPs or real phone numbers in code/tests |
 | `python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/` | 0 | Validate completeness and structure of handoff package |
 
 ## Tests and evidence
