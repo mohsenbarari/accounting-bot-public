@@ -1,8 +1,8 @@
 # نقشه راه سامانه گزارش حسابداری تلگرام
 
-> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-04 پذیرفته و ادغام شده‌اند و G1 باز است
+> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-04 پذیرفته و ادغام شده‌اند، WP-05 صادر شده و G1 باز است
 >
-> نسخه: 0.37
+> نسخه: 0.38
 >
 > آخرین به‌روزرسانی: 2026-08-31
 >
@@ -569,7 +569,7 @@
 
 > وضعیت این زیربخش: ✅ معماری و خانواده فناوری‌های O-52 تا O-56 تأیید شده‌اند. نسخه دقیق بسته‌ها هنگام ساخت Baseline فنی در `uv.lock` قفل می‌شود؛ Spikeها و آزمون‌های ذکرشده همچنان شرط عبور Gate مربوط هستند.
 
-- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد Canonical/Hash منبع O-68 در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md) و قرارداد Snapshot کامل/Change Plan منبع O-69 در [ADR-0007](docs/adr/ADR-0007-full-snapshot-change-plan.md) ثبت شده‌اند؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
+- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد Canonical/Hash منبع O-68 در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md)، قرارداد Snapshot کامل/Change Plan منبع O-69 در [ADR-0007](docs/adr/ADR-0007-full-snapshot-change-plan.md) و قرارداد Reader فقط‌خواندنی XLSX در O-70/[ADR-0008](docs/adr/ADR-0008-streaming-xlsx-source-reader.md) ثبت شده‌اند؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
 
 - ✅ ساختار کلان: Monorepo با Modular Monolith برای بخش سرور و یک Agent مستقل ویندوز. هسته Domain و قواعد حسابداری Python خالص و مستقل از FastAPI، Telegram و دیتابیس می‌ماند؛ API/Webhook و Workerها Processهای جدا ولی مصرف‌کننده همان کد دامنه‌اند.
 - ✅ زبان پایه: Python 3.13 برای Agent و سرور، با `pyproject.toml` و Lockfile قطعی. یک Spike روی کپی مجاز اکسل باید پیش از G1 سازگاری COM، بسته‌بندی و نسخه Python را اثبات کند.
@@ -642,6 +642,7 @@
 - 🧪 Item Master یکتایی `item_id`، Alias، واحد، اعشار و قواعد عیار/وزن 750 را کنترل کند و کالای ناشناخته فقط دامنه متأثر را از انتشار گزارش کالایی بازدارد.
 - 🧪 هیچ محاسبه پولی از Float استفاده نکند؛ وزن و عیار خام با Decimal کامل حفظ شوند و ROUND_HALF_UP سه‌رقمی وزن 750 روی نمونه‌های `.xxx4`، `.xxx5` و `.xxx6` مثبت/منفی با نقطه گردکردن واقعی اکسل تطبیق یابد. جمع مانده نباید براثر Round چندمرحله‌ای تغییر کند.
 - 🧪 فقط ورودی‌های Whitelistشده چهار شیت وارد Raw شوند؛ تغییر Formula/Function/Cached Value به‌تنهایی هیچ Event، Revision یا اصلاحیه نسازد و Formula خطادار با Raw معتبر Import را متوقف نکند. Ledger و Queryهای مستقل باید از Raw کاملاً قابل بازتولید و با نمونه معتبر اکسل برابر باشند.
+- 🧪 Reader طبق O-70 روی فایل XLSX تولیدشده از داده کاملاً ساختگی، Header/Relationship/UUID، تفکیک متن/عدد/Null، فعالیت ردیف، Formula و محدوده خروجی Array/Data Table را بدون Float یا ورود Cache به Raw اثبات کند؛ فایل ناقص هیچ Snapshot جزئی نسازد، ردیف پنهان/فیلترشده حذف نشود و شواهد Streaming زمان/RAM جایگزین آزمون فایل واقعی یا G1 سرتاسری نشوند.
 - 🧪 هر نگاشت Raw → Financial Event → Ledger Entry با `calculation_version` معین قطعی و تکرارپذیر باشد؛ Import یا Rebuild دوباره برای همان نسخه، Event یا پایه تکراری نسازد و Edit/Void فقط Revision/نسخه فعال صحیح را تغییر دهد.
 - 🧪 مانده پول و کالا فقط از `ledger_entries` فعال قابل بازسازی باشد و حذف Projection و Rebuild کامل از Raw همان مانده، relation_id و گزارش را تولید کند.
 - 🧪 Debounce دوثانیه‌ای، دو بررسی پایداری، نادیده‌گرفتن فایل موقت/Conflict، ادغام Saveهای متوالی، یک Follow-up هنگام Save وسط Import و صفر Event برای Hash یکسان در محیط واقعی OneDrive اثبات شوند.
@@ -776,6 +777,7 @@
 - ✅ WP-02 قرارداد نسخه‌دار و عمیقاً تغییرناپذیر ورودی خام چهار شیت، نگاشت دقیق `Z/P/P/D`، تفکیک Literal/Formula/Cached/Derived/Unlisted، نوع‌های بدون Float و ناوردایی‌های ساختاری را با Fixture صرفاً ساختگی تثبیت کرد؛ Codex آن را پس از بازبینی مستقل، یک دور اصلاح، 36 آزمون و CI دو سکویی PR #10 پذیرفت. این شاهد مرز منبع G1 است و خود G1 را نمی‌بندد.
 - ✅ WP-03 قرارداد Canonical نسخه‌دار تاریخ/عدد، `source_hash` و `sheet_snapshot_hash` را طبق O-68/ADR-0006 پیاده کرد؛ Codex پس از بازبینی مستقل، یک دور اصلاح Grammar/TypeTag/Property Test/اسکن، 64 آزمون و CI دو سکویی PR #13 آن را پذیرفت. این شاهد تغییر قطعی منبع و شیت است و خود G1 را نمی‌بندد.
 - ✅ WP-04 قرارداد `source-change-plan.v1` طبق O-69/ADR-0007 را با Snapshot کامل چهار شیت، رجیستری Active/Voided، برنامه قطعی Insert/Edit/`void`/بدون‌تغییر، Revision بعدی و منع انتقال UUID میان شیت‌ها پیاده کرد؛ Codex پس از بازبینی مستقل و سه دور اصلاح سازنده‌ها/کپی دفاعی/ترتیب Raw/آزمون جایگشت و شواهد کارایی، 89 آزمون و CI دو سکویی PR #16 آن را پذیرفت. این شاهد فقط مدل و Planner خالص است؛ Excel/SQLite/Import Commit واقعی را پوشش نمی‌دهد و G1 باز می‌ماند.
+- 🧪 WP-05 برای پیاده‌سازی Reader فقط‌خواندنی `xlsx-source-reader.v1` طبق O-70/ADR-0008 صادر شد: استخراج Streaming چهار شیت، Header و شناسه از رجیستری، حذف Formula/Cache، Decode دقیق متن/عدد و فعالیت ردیف، خروجی Snapshot معتبر WP-04 به‌همراه Location جدا از Hash و آزمون‌های ZIP/XML ساختگی و کارایی. دسترسی به فایل واقعی، نوشتن UUID، Save/COM، SQLite و Import Commit در این بسته مجاز نیستند؛ پذیرش منوط به Handoff و بازبینی مستقل است.
 - تهیه نسخه پشتیبان کنترل‌شده از اکسل.
 - اجرای کنترل‌شده UUIDv7، Source/Ledger/Sheet SHA-256 و سال مالی پس از دریافت اجازه جداگانه تغییر کپی اکسل.
 - تعریف Whitelist ورودی خام چهار شیت و جداسازی Raw Immutable از Formula/Function/Query/Cached Value اکسل.
@@ -1500,6 +1502,17 @@
 - **شاهد اجرا:** WP-04 در 2026-08-31 پس از بازبینی مستقل سه دور اصلاح، 89 آزمون موفق و CI Windows/Linux در Run `33360537972` پذیرفته و در PR #16 با Merge Commit `ebdbe837bf5064ad1809f7f66da8fac9ba1d6a55` ادغام شد. آزمون‌های مستقل، اعتبارسنجی سازنده‌ها، کپی دفاعی، تطابق دقیق Index/ردیف، شمارنده و Hash سخت‌گیرانه، ترتیب Raw مطابق رجیستری و برابری کامل Plan برای Mappingهای مستقل را تأیید کردند. بنچ‌مارک مستقل 15,000 ردیف ساختگی Build را `2.5017s` و Plan را `0.2897s` اندازه گرفت؛ این شاهد جایگزین معیار کارایی فایل واقعی یا Import سرتاسری G1 نیست.
 - **تاریخ تصمیم:** 2026-08-30.
 
+### O-70 — قرارداد Reader فقط‌خواندنی XLSX
+
+- **وضعیت:** ✅ بسته؛ قرارداد فنی نسخه 1 توسط Codex مدیر پروژه تصویب و در ADR-0008 ثبت شد؛ شواهد پیاده‌سازی WP-05 همچنان 🧪 هستند.
+- **موضوع:** تبدیل سلول فیزیکی فایل ثابت به Snapshot معتبر چهار شیت، بدون ورود نتیجه فرمول، از دست‌رفتن دقت عدد یا حذف کاذب براثر خواندن ناقص.
+- **تصمیم:** `xlsx-source-reader.v1` در `accounting-local-agent` با `zipfile` و `lxml 6.1.2` قفل‌شده، قسمت‌های XLSX را از Relationshipها پیدا و فقط چهار شیت رجیستری را Streaming می‌خواند؛ Headerهای ردیف 1 و شناسه فنی دقیق‌اند، شیت کمکی منبع نیست و Snapshot تنها پس از پایان موفق کل خواندن و Builder موجود WP-04 برگردانده می‌شود. Location سطرها جدا از Hash و به‌صورت تغییرناپذیر نگهداری می‌شود.
+- **سلول و فرمول:** متن و Unicode بدون Normalize و Null جدا از متن خالی حفظ می‌شوند؛ عدد XML مستقیماً به Decimal و عدد ستون کمکی متنی به Lexeme متنی تبدیل می‌شود. تاریخ مالی/UUID فقط متن‌اند؛ تاریخ سریالی، Float، گردکردن و تبدیل تومان مجاز نیستند. نمای علمی عدد XML با حفظ دقت قابل Decode است ولی نمای علمیِ ورودی متنی همچنان طبق WP-03 رد می‌شود. Formula و Cache پیش از تبدیل کنار گذاشته می‌شوند؛ خروجی Array/Data Table بدون `f` مستقل نیز مستثنی است، اما Literal مستقل داخل محدوده Shared Formula حذف نمی‌شود.
+- **فعالیت ردیف:** فقط Literal غیرخالی در `activity_columns` رجیستری ردیف را فعال می‌کند؛ صفر داده است، ولی تاریخ/UUID/Formula/Style تنها فعالیت نیست. Raw متن فعال Trim نمی‌شود. ردیف بدون فعالیت حتی با تاریخ/شناسه باقی‌مانده از مجموعه منبع حذف می‌شود؛ پاک‌کردن ورودی‌ها تأیید یا سقف تعدادی نمی‌خواهد و تبدیل آن به `void` فقط پس از اعتبارسنجی کامل مراحل بعد انجام می‌شود. هر ردیف فعال UUIDv7 معتبر می‌خواهد؛ Reader شناسه نمی‌سازد یا تعمیر نمی‌کند.
+- **مرز:** تنها Fixtureهای XLSX کاملاً ساختگیِ تولیدشده هنگام آزمون مجازند؛ فایل مرجع و کپی واقعی حتی خوانده نمی‌شوند. ثبات/کپی فایل، COM/Save، نوشتن UUID، سال مالی/آرشیو، Requiredness و قواعد مالی، SQLite/Outbox و ارسال گزارش مؤجل‌اند. خروجی Reader به‌تنهایی مجوز Commit نیست.
+- **شاهد لازم:** آزمون XML/ZIP واقعی ساختگی برای Header/Relationship/نوع سلول/فرمول و محدوده آن/ردیف فعال/UUID، شکست کامل فایل ناقص و نگهداری ردیف‌های پنهان، Property Test با فایل‌های مستقل و اتصال به Planner؛ سنجش 15,000 ردیف فعال ساختگی با Tail فرمولی و RSS واقعی روی Linux/Windows، حفظ 89 آزمون قبلی، کنترل‌های کیفیت و Handoff کامل. معیار کارایی فایل واقعی و G1 باز می‌مانند.
+- **تاریخ تصمیم:** 2026-08-31.
+
 ## 22. ریسک‌های اصلی
 
 | ریسک | اثر | اقدام کنترلی پیشنهادی |
@@ -1512,6 +1525,7 @@
 | تبدیل ضمنی ریال/تومان | اختلاف ده‌برابری مانده | ذخیره عدد صحیح منبع با Metadata صریح `TOMAN` و بدون تبدیل |
 | فرمول یا Cached Value قدیمی | مانده نادرست | محاسبه مستقل و اعتبارسنجی |
 | ورود Formula/Query به‌عنوان منبع | وابستگی به Recalculation اکسل و Revision کاذب | Raw Whitelist، Ledger مستقل و Projection نسخه‌دار قابل بازتولید |
+| تشخیص Cache خروجی Array/Data Table به‌عنوان Literal یا حذف Literal داخل Shared Range | اثر مالی نادرست یا حذف کاذب منبع | طبقه‌بندی پیش از Decode، پوشش محدوده فرمول و آزمون ZIP/XML مستقل طبق O-70 |
 | Float یا Round در نقطه نادرست | اختلاف تجمعی مانده پول/کالا | Integer تومان، Decimal کامل، ROUND_HALF_UP و تطبیق مرزی با اکسل |
 | انتقال سالانه | دوباره‌شماری مانده | Opening Balance فقط برای 1405 و Reconciliation بعدی |
 | زوج ناقص RS | گزارش اشتباه برای دو شخص | relation_id و توقف رویداد ناسازگار |
@@ -1570,6 +1584,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.38 | 2026-08-31 | بستن O-70 و ثبت ADR-0008 برای Reader فقط‌خواندنی Streaming XLSX با Relationship/Header از رجیستری، متن/Decimal دقیق، تفکیک Formula/Cache و محدوده خروجی فرمول، فعالیت ردیف و Location مستقل از Hash؛ صدور WP-05 با Fixtureهای ZIP/XML کاملاً ساختگی، اتصال به WP-04 و سنجش زمان/RSS، بدون وابستگی تازه، دسترسی Excel واقعی، نوشتن UUID، SQLite یا بستن G1 |
 | 0.37 | 2026-08-31 | ثبت پذیرش شاهددار WP-04 توسط Codex مدیر پروژه پس از سه دور اصلاح: اعتبارسنجی سازنده‌ها و جلوگیری از حذف کاذب، کپی دفاعی عمیق، تطابق دقیق Index/ردیف، شمارنده و Hash سخت‌گیرانه، ترتیب Raw از رجیستری و Property Test با Mappingهای مستقل و مقایسه کامل Plan؛ موفقیت 89 آزمون، بنچ‌مارک مستقل 15,000 ردیف با Build `2.5017s` و Plan `0.2897s` و CI Windows/Linux Run `33360537972`؛ ادغام PR #16 با Commit `ebdbe83`، بدون تغییر قرارداد Hash معتبر، Excel، داده واقعی یا بستن G1 |
 | 0.36 | 2026-08-30 | بستن O-69 و ثبت ADR-0007 برای Snapshot تایپ‌شده کامل چهار شیت، یکتایی سراسری UUID/Home Sheet دائمی، رجیستری Active/Voided و Plan قطعی Insert/Edit/`void`/بدون‌تغییر با Revision بعدی، بازفعال‌سازی Voided به‌عنوان Edit و منع انتقال میان شیت‌ها؛ صدور WP-04 با Property/Idempotency/Immutability و شاهد کارایی 15,000 ردیف ساختگی، بدون Excel، SQLite یا بستن G1 |
 | 0.35 | 2026-08-30 | ثبت پذیرش شاهددار WP-03 توسط Codex مدیر پروژه پس از بازبینی مستقل و یک دور اصلاح: سخت‌گیری Grammar رقم/جداکننده، خطای تایپ‌شده TypeTag، حذف فهرست تکراری شیت و تغییر خارج Scope mypy، Fixture کاملاً ساختگی و اسکن شکست‌پذیر، حساسیت همه فیلدهای Raw و Property Test permutation؛ تثبیت `persiantools 6.2.0`، Golden Vectorهای چهار شیت/Snapshot و `source-hash.v1`/`sheet-snapshot-hash.v1`؛ موفقیت 64 آزمون و CI Windows/Linux Run `33329429229`، ادغام PR #13 با Commit `6be9fef` و حفظ G1 در وضعیت باز |
