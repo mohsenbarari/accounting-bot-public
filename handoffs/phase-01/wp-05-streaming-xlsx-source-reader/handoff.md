@@ -3,7 +3,7 @@
 ## Identity
 
 - Phase: 1 — source and data-model foundation (Phase 1 authorized, Gate G1 is open / in-progress)
-- Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker
+- Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker (Status: REQUEST_CHANGES / Limited R5-A Remediation)
 - Branch/worktree: antigravity/phase-01-streaming-xlsx-source-reader
 - Commit(s):
   - `5dd5d17` (feat(local_agent): implement streaming XLSX source reader and physical row tracker (WP-05))
@@ -23,6 +23,8 @@
   - `75ee8bb` (fix(local_agent): preserve raw types and validate numerics per R5-01 (WP-05))
   - `ba10705` (docs(handoff): record R5-A review implementation and test evidence in WP-05 handoff)
   - `556de69` (docs(handoff): update commit list in WP-05 handoff)
+  - `3fecdcb` (docs(handoff): update commit list in WP-05 handoff)
+  - `739b0b6` (fix(local_agent): remediate R5-A regressions A-01, A-02, A-03 (WP-05))
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -31,6 +33,18 @@
 ### Requested outcome
 
 Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_agent` using standard library `zipfile` and existing pinned `lxml 6.1.2`, extracting literal raw source inputs from the four approved sheets according to `RAW_CONTRACT_REGISTRY`, strictly excluding formula elements and formula coverage ranges, evaluating row activity from literal inputs, validating Persian and technical headers and UUIDv7 identifiers, and returning an immutable `XlsxSourceReadResult` containing a validated `ValidatedSourceWorkbookSnapshot` (WP-04) alongside an immutable mapping of physical row locations (`SourceRowLocation`).
+
+This turn performs limited remediation for the R5-A review delivery:
+- **A-01:** Returns raw string lexemes for numeric XML values in auxiliary `ValueKind.RAW_TEXT` columns across all four approved sheets; preserves direct `Decimal` representation for financial amounts (`ValueKind.INTEGER_TOMAN` and `ValueKind.DECIMAL`); rejects numeric XML in `date_raw` and `record_id`.
+- **A-02:** Restores strict qualified namespace matching for text (t) and run (r) elements, rejecting unqualified (xmlns="") and foreign namespaces with `XlsxCellError(REASON_CELL_UNKNOWN_TYPE)`.
+- **A-03:** Enforces strict uppercase ASCII coordinate fullmatch regex (`^[A-Z]{1,3}[1-9][0-9]*$`) and bounds checking (columns A..XFD, rows 1..1048576) in Pass 1 and Pass 2, rejecting non-ASCII coordinates (e.g. Ü2, Α2, K2) and trailing newlines with `XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF)` without producing partial snapshots.
+- **A-04:** Enhances regression tests covering isolated numeric zero row activity, explicit blank numeric strings in active rows vs true missing optional cells, and independent 4-sheet oracle snapshot verification.
+
+### Review items status
+
+- Finding R5-01 (Raw preservation & numeric validation): Implemented and verified.
+- Finding R5-03 (Cell coordinate validation & bounds): Remediated and ready for review.
+- Findings R5-02, R5-04, R5-05, R5-06: PENDING subsequent review rounds.
 
 ### In scope
 
@@ -75,9 +89,9 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 
 | File | Change | Reason |
 |---|---|---|
-| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Addressed Codex review round 5 finding R5-01 (Raw preservation and canonical numeric validation): preserved exact raw str for text in numeric columns, returned Decimal directly for financial numeric XML, canonical validation in active rows with typed XlsxCellError, fast coordinate parsing, and row decode memoization |
-| `tests/test_xlsx_source_reader_raw_contract_regressions.py` | Added | Standalone regression test suite for R5-A: Raw text preservation, financial Decimal scale preservation, blank cell activity matrix, and 4-sheet independent oracle |
-| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Updated handoff document, acceptance matrix, and test results |
+| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Remediated R5-A regressions: fixed numeric XML in RAW_TEXT columns to return raw str (A-01); restored strict namespace matching on source text elements (A-02); enforced strict uppercase ASCII coordinate fullmatch regex and bounds checking (A-03). |
+| `tests/test_xlsx_source_reader_raw_contract_regressions.py` | Modified | Added regression suites for A-01 (numeric XML in RAW_TEXT across all 4 sheets), A-02 (strict namespace validation), A-03 (non-ASCII coordinates and newlines), and A-04 (isolated numeric zero and blank activity matrix). |
+| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Updated handoff document, acceptance matrix, and captured command test results. |
 
 ## Schema and migrations
 
@@ -96,8 +110,9 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 | `uv run ruff format --check .` | 0 | Verify formatting compliance across 53 files |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
 | `uv run mypy .` | 0 | Verify strict static typing across 20 source files |
-| `uv run pytest -v` | 0 | Execute all 131 unit, benchmark, integration, property and standalone regression tests |
-| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (14.4418s under 15.0s) and peak memory (79.22 MiB under 128.0 MiB) |
+| `uv run pytest tests/test_xlsx_source_reader_raw_contract_regressions.py -v` | 0 | Execute standalone R5-A remediation regression tests (7 passed in 0.71s) |
+| `uv run pytest -v` | 0 | Execute full suite of 134 tests (134 passed in 21.04s) |
+| `uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s` | 0 | Execute 15,000-row synthetic benchmark displaying duration (14.1305s under 15.0s) and peak memory (69.55 MiB under 128.0 MiB) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
 | `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
 | `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); sys.exit(0 if res.returncode == 1 else 1)"` | 0 | Verify zero sensitive credentials, IPs or real phone numbers in code/tests |
@@ -136,4 +151,4 @@ Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_ag
 
 ## Stop state
 
-Implementation is stopped pending independent Codex review. Gate G1 remains OPEN. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation is stopped pending independent Codex review of R5-A remediations. Gate G1 remains OPEN / IN PROGRESS and WP-05 remains REQUEST_CHANGES. No Gate approval, merge, push, deploy, or next Work Package has been performed.
