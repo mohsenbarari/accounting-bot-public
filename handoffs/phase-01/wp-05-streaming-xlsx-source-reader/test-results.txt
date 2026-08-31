@@ -3,10 +3,10 @@ WP-05 TEST & VERIFICATION RESULTS LOG
 ================================================================================
 WORK PACKAGE: WP-05 (Read-only streaming XLSX source reader and physical row tracker)
 PHASE: 1 (source and data-model foundation)
-RECORDED AT UTC: 2026-08-31T11:27:00Z
+RECORDED AT UTC: 2026-08-31T13:30:00Z
 Environment: Linux x86_64, Python 3.13.15, uv 0.12.7
 Branch: antigravity/phase-01-streaming-xlsx-source-reader
-Review Iteration: Codex Review Round 3 Revisions (R1-R6)
+Review Iteration: Codex Review Round 4 Revisions (R4-01-R4-06)
 
 --------------------------------------------------------------------------------
 1. uv --version
@@ -20,7 +20,7 @@ uv 0.12.7 (x86_64-unknown-linux-gnu)
 --------------------------------------------------------------------------------
 Exit code: 0
 Output:
-Resolved 88 packages in 3ms
+Resolved 88 packages in 5ms
 Checked 81 packages in 10ms
 
 --------------------------------------------------------------------------------
@@ -64,30 +64,28 @@ configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 110 items
+collected 127 items
 
-tests/test_architecture_guard.py ..............   [ 12%]
-tests/test_canonical_date.py ..........           [ 21%]
-tests/test_canonical_hashing.py ................. [ 37%]
-.                                                 [ 38%]
-tests/test_imports.py .......                     [ 44%]
-tests/test_raw_input_contracts.py ............... [ 58%]
-                                                  [ 58%]
-tests/test_source_change_plan.py ................ [ 72%]
-.........                                         [ 80%]
-tests/test_xlsx_source_reader.py ................ [ 95%]
-....
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 12.9501s | peak_rss_mib: 80.61 MiB | rows: 15000 | platform: linux
-.                                             [100%]
+tests/test_architecture_guard.py ..............     [ 11%]
+tests/test_canonical_date.py ..........             [ 18%]
+tests/test_canonical_hashing.py ..................  [ 33%]
+tests/test_imports.py .......                       [ 38%]
+tests/test_raw_input_contracts.py ...............   [ 50%]
+tests/test_source_change_plan.py .................. [ 64%]
+.......                                             [ 70%]
+tests/test_xlsx_source_reader.py .................. [ 84%]
+...................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 14.3065s | peak_rss_mib: 80.75 MiB | rows: 15000 | platform: linux
+.                                [100%]
 
-================== 110 passed in 22.11s ==================
+================== 127 passed in 20.96s ===================
 
 --------------------------------------------------------------------------------
 8. uv run pytest tests/test_xlsx_source_reader.py -k test_xr12_synthetic_15000_row_benchmark -s
 --------------------------------------------------------------------------------
 Exit code: 0
 Output:
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 12.9501s | peak_rss_mib: 80.61 MiB | rows: 15000 | platform: linux
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 14.3065s | peak_rss_mib: 80.75 MiB | rows: 15000 | platform: linux
 PASSED
 
 --------------------------------------------------------------------------------
@@ -122,6 +120,7 @@ Handoff validation passed.
 --------------------------------------------------------------------------------
 FINAL SUMMARY
 --------------------------------------------------------------------------------
-All 110 automated test cases passed. Review findings R1 through R6 have been addressed.
+All 127 automated test cases passed. Review findings R4-01 through R4-06 have been addressed.
 Quality checks, linting, typing, formatting, and handoff validation succeeded with 0 errors.
 Handoff package is complete and ready for independent Codex review.
+
