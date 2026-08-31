@@ -1,14 +1,14 @@
-"""Independent regression tests for R5-A: Raw value preservation and validation.
+"""Independent regression tests for WP-05 R5-A remediations.
 
 Verifies:
-1. Text in numeric fields (inlineStr, direct str, SST) retains exact raw str.
-2. Financial numeric XML (<v>) directly becomes Decimal, preserving scale.
-3. XML exponent '1e2' in numeric XML is accepted as Decimal, text rejected.
-4. Active rows with explicit blank text "" or "   " in numeric fields raise error.
-5. Truly missing cells remain None.
-6. Inactive rows are omitted without validating leftover date/UUID.
-7. Numeric zero (<v>0</v>, "0", "۰") is active.
-8. Independent oracle across all 4 sheets verifies Raw types, snapshot, and hashes.
+1. A-01: Text in numeric columns preserves raw str; numeric XML in auxiliary
+   RAW_TEXT columns returns raw lexeme str; financial XML directly returns Decimal.
+2. A-02: Strict namespace validation on source text elements (<t>, <r>);
+   unqualified (xmlns="") and foreign namespaces raise XlsxCellError.
+3. A-03: Strict ASCII [A-Z] coordinate fullmatch and bounds validation;
+   non-ASCII coordinates (Ü2, Α2, K2) and newlines fail without partial snapshot.
+4. A-04: Isolated numeric zero activates row; explicit blank text in active row
+   numeric columns raises typed error; independent oracle across all 4 sheets.
 """
 
 from __future__ import annotations
@@ -17,16 +17,20 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from accounting_contracts.raw_input_contracts import (
-    RAW_CONTRACT_REGISTRY,
-)
+from accounting_contracts.canonical_hashing import compute_source_hash
+from accounting_contracts.raw_input_contracts import RAW_CONTRACT_REGISTRY
 from accounting_contracts.source_change_plan import (
     SourceRowInput,
     build_source_workbook_snapshot,
 )
 from accounting_local_agent.xlsx_source_reader import (
     REASON_CELL_INVALID_NUMERIC_LEXEME,
+    REASON_CELL_NUMERIC_XML_IN_TEXT_FIELD,
+    REASON_CELL_UNKNOWN_TYPE,
+    REASON_STRUCTURE_INVALID_CELL_REF,
+    REASON_STRUCTURE_ROW_OUT_OF_BOUNDS,
     XlsxCellError,
+    XlsxStructureError,
     read_xlsx_source_snapshot,
 )
 from test_xlsx_source_reader import (
@@ -265,8 +269,335 @@ def test_r5_01_numeric_xml_financial_preservation(tmp_path: Path) -> None:
     assert f5_val == Decimal("1e2")
 
 
+def test_r5_01_numeric_xml_in_raw_text_fields_across_all_four_sheets(
+    tmp_path: Path,
+) -> None:
+    """Verify numeric XML in RAW_TEXT returns str lexeme across 4 sheets (A-01)."""
+    u_bf = _make_uuid7(b"0000000000000001")
+    u_dp = _make_uuid7(b"0000000000000002")
+    u_vk = _make_uuid7(b"0000000000000003")
+    u_lk = _make_uuid7(b"0000000000000004")
+
+    builder = SyntheticXlsxBuilder()
+
+    # Sheet 1: خرید-فروش (RAW_TEXT columns C, D, E, J with numeric XML)
+    builder.add_sheet_rows(
+        "خرید-فروش",
+        [
+            {
+                "__row_num__": 2,
+                "A": "2",
+                "B": "1403/05/15",
+                "C": {"t": "n", "v": "1001"},  # party_name_raw with numeric XML
+                "D": {"t": "n", "v": "1"},  # transaction_type_raw
+                "E": {"t": "n", "v": "750"},  # item_name_raw
+                "F": "10.0",
+                "G": "500000",
+                "H": "0",
+                "J": {"t": "n", "v": "999.50"},  # notes_raw
+                "Z": str(u_bf),
+            }
+        ],
+    )
+
+    # Sheet 2: دریافت-پرداخت (RAW_TEXT columns C, D, F, G, H with numeric XML)
+    builder.add_sheet_rows(
+        "دریافت-پرداخت",
+        [
+            {
+                "__row_num__": 2,
+                "A": "2",
+                "B": "1403/05/15",
+                "C": {"t": "n", "v": "2002"},  # party_name_raw
+                "D": {"t": "n", "v": "2"},  # entry_type_raw
+                "E": "5000000",
+                "F": {"t": "n", "v": "888"},  # notes_raw
+                "G": {"t": "n", "v": "123.4000"},  # account_code_raw
+                "H": {"t": "n", "v": "1"},  # customer_flag_raw
+                "P": str(u_dp),
+            }
+        ],
+    )
+
+    # Sheet 3: ورود-خروج (RAW_TEXT columns C, D, E, I, K with numeric XML)
+    builder.add_sheet_rows(
+        "ورود-خروج",
+        [
+            {
+                "__row_num__": 2,
+                "A": "2",
+                "B": "1403/05/15",
+                "C": {"t": "n", "v": "3003"},  # party_name_raw
+                "D": {"t": "n", "v": "1"},  # movement_type_raw
+                "E": {"t": "n", "v": "18"},  # item_name_raw
+                "F": "5.0",
+                "G": "750",
+                "I": {"t": "n", "v": "777"},  # notes_raw
+                "K": {"t": "n", "v": "0"},  # customer_flag_raw in column K
+                "P": str(u_vk),
+            }
+        ],
+    )
+
+    # Sheet 4: لیست کسبه (RAW_TEXT columns B, C with numeric XML)
+    builder.add_sheet_rows(
+        "لیست کسبه",
+        [
+            {
+                "__row_num__": 2,
+                "A": "2",
+                "B": {"t": "n", "v": "4004"},  # party_name_raw
+                "C": {"t": "n", "v": "09123456789"},  # phone_number_raw
+                "D": str(u_lk),
+            }
+        ],
+    )
+
+    pkg_path = tmp_path / "numeric_xml_in_raw_text.xlsx"
+    pkg_path.write_bytes(builder.build_bytes())
+
+    res = read_xlsx_source_snapshot(pkg_path)
+
+    # Asserts for Sheet 1
+    r_bf = res.snapshot.sheets["خرید-فروش"].rows[0]
+    assert r_bf.raw_values["party_name_raw"] == "1001"
+    assert isinstance(r_bf.raw_values["party_name_raw"], str)
+    assert r_bf.raw_values["transaction_type_raw"] == "1"
+    assert isinstance(r_bf.raw_values["transaction_type_raw"], str)
+    assert r_bf.raw_values["item_name_raw"] == "750"
+    assert isinstance(r_bf.raw_values["item_name_raw"], str)
+    assert r_bf.raw_values["notes_raw"] == "999.50"
+    assert isinstance(r_bf.raw_values["notes_raw"], str)
+
+    # Asserts for Sheet 2
+    r_dp = res.snapshot.sheets["دریافت-پرداخت"].rows[0]
+    assert r_dp.raw_values["party_name_raw"] == "2002"
+    assert isinstance(r_dp.raw_values["party_name_raw"], str)
+    assert r_dp.raw_values["entry_type_raw"] == "2"
+    assert isinstance(r_dp.raw_values["entry_type_raw"], str)
+    assert r_dp.raw_values["account_code_raw"] == "123.4000"
+    assert isinstance(r_dp.raw_values["account_code_raw"], str)
+    assert r_dp.raw_values["customer_flag_raw"] == "1"
+    assert isinstance(r_dp.raw_values["customer_flag_raw"], str)
+
+    # Asserts for Sheet 3
+    r_vk = res.snapshot.sheets["ورود-خروج"].rows[0]
+    assert r_vk.raw_values["party_name_raw"] == "3003"
+    assert isinstance(r_vk.raw_values["party_name_raw"], str)
+    assert r_vk.raw_values["movement_type_raw"] == "1"
+    assert isinstance(r_vk.raw_values["movement_type_raw"], str)
+    assert r_vk.raw_values["customer_flag_raw"] == "0"
+    assert isinstance(r_vk.raw_values["customer_flag_raw"], str)
+
+    # Asserts for Sheet 4
+    r_lk = res.snapshot.sheets["لیست کسبه"].rows[0]
+    assert r_lk.raw_values["party_name_raw"] == "4004"
+    assert isinstance(r_lk.raw_values["party_name_raw"], str)
+    assert r_lk.raw_values["phone_number_raw"] == "09123456789"
+    assert isinstance(r_lk.raw_values["phone_number_raw"], str)
+
+    # Negative test: Numeric XML in date_raw MUST be rejected
+    b_bad_date = SyntheticXlsxBuilder()
+    row_bad_date = _sample_buy_sell_row_data(u_bf, 2)
+    row_bad_date["B"] = {"t": "n", "v": "14030101"}
+    b_bad_date.add_sheet_rows("خرید-فروش", [row_bad_date])
+    b_bad_date.add_sheet_rows(
+        "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
+    )
+    b_bad_date.add_sheet_rows(
+        "ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)]
+    )
+    b_bad_date.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p_bad_date = tmp_path / "bad_date_num_xml.xlsx"
+    p_bad_date.write_bytes(b_bad_date.build_bytes())
+    with pytest.raises(XlsxCellError) as exc_date:
+        read_xlsx_source_snapshot(p_bad_date)
+    assert exc_date.value.reason == REASON_CELL_NUMERIC_XML_IN_TEXT_FIELD
+    assert exc_date.value.cell_ref == "B2"
+
+
+def test_r5_01_namespace_strict_validation(tmp_path: Path) -> None:
+    """Verify strict namespace validation on source text elements (A-02)."""
+    u_bf = _make_uuid7(b"0000000000000001")
+    u_dp = _make_uuid7(b"0000000000000002")
+    u_vk = _make_uuid7(b"0000000000000003")
+    u_lk = _make_uuid7(b"0000000000000004")
+
+    # 1. Negative: InlineStr with <t xmlns="">
+    b1 = SyntheticXlsxBuilder()
+    r1 = _sample_buy_sell_row_data(u_bf, 2)
+    r1["C"] = {
+        "t": "inlineStr",
+        "raw_inner": '<is><t xmlns="">SYNTHETIC-RAW-BOUNDARY</t></is>',
+    }
+    b1.add_sheet_rows("خرید-فروش", [r1])
+    b1.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b1.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b1.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p1 = tmp_path / "ns_inlinestr_t_empty.xlsx"
+    p1.write_bytes(b1.build_bytes())
+    with pytest.raises(XlsxCellError) as exc1:
+        read_xlsx_source_snapshot(p1)
+    assert exc1.value.reason == REASON_CELL_UNKNOWN_TYPE
+    assert exc1.value.cell_ref == "C2"
+
+    # 2. Negative: InlineStr with <r xmlns=""><t>...</t></r>
+    b2 = SyntheticXlsxBuilder()
+    r2 = _sample_buy_sell_row_data(u_bf, 2)
+    r2["C"] = {
+        "t": "inlineStr",
+        "raw_inner": '<is><r xmlns=""><t>SYNTHETIC-RAW-BOUNDARY</t></r></is>',
+    }
+    b2.add_sheet_rows("خرید-فروش", [r2])
+    b2.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b2.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b2.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p2 = tmp_path / "ns_inlinestr_r_empty.xlsx"
+    p2.write_bytes(b2.build_bytes())
+    with pytest.raises(XlsxCellError) as exc2:
+        read_xlsx_source_snapshot(p2)
+    assert exc2.value.reason == REASON_CELL_UNKNOWN_TYPE
+    assert exc2.value.cell_ref == "C2"
+
+    # 3. Negative: SST with <t xmlns="">
+    b3 = SyntheticXlsxBuilder()
+    r3 = _sample_buy_sell_row_data(u_bf, 2)
+    r3["C"] = {"t": "s", "v": "0"}
+    b3.override_sst_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'count="1" uniqueCount="1">\n'
+        '  <si><t xmlns="">SYNTHETIC-RAW-BOUNDARY</t></si>\n'
+        "</sst>"
+    )
+    b3.add_sheet_rows("خرید-فروش", [r3])
+    b3.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b3.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b3.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p3 = tmp_path / "ns_sst_t_empty.xlsx"
+    p3.write_bytes(b3.build_bytes())
+    with pytest.raises(XlsxCellError) as exc3:
+        read_xlsx_source_snapshot(p3)
+    assert exc3.value.reason == REASON_CELL_UNKNOWN_TYPE
+
+    # 4. Negative: SST with <r xmlns=""><t>...</t></r>
+    b4 = SyntheticXlsxBuilder()
+    r4 = _sample_buy_sell_row_data(u_bf, 2)
+    r4["C"] = {"t": "s", "v": "0"}
+    b4.override_sst_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'count="1" uniqueCount="1">\n'
+        '  <si><r xmlns=""><t>SYNTHETIC-RAW-BOUNDARY</t></r></si>\n'
+        "</sst>"
+    )
+    b4.add_sheet_rows("خرید-فروش", [r4])
+    b4.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b4.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b4.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p4 = tmp_path / "ns_sst_r_empty.xlsx"
+    p4.write_bytes(b4.build_bytes())
+    with pytest.raises(XlsxCellError) as exc4:
+        read_xlsx_source_snapshot(p4)
+    assert exc4.value.reason == REASON_CELL_UNKNOWN_TYPE
+
+    # 5. Negative: Foreign namespace
+    b5 = SyntheticXlsxBuilder()
+    r5 = _sample_buy_sell_row_data(u_bf, 2)
+    r5["C"] = {
+        "t": "inlineStr",
+        "raw_inner": '<is><t xmlns="http://foreign.com">FOREIGN</t></is>',
+    }
+    b5.add_sheet_rows("خرید-فروش", [r5])
+    b5.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b5.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b5.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p5 = tmp_path / "ns_foreign.xlsx"
+    p5.write_bytes(b5.build_bytes())
+    with pytest.raises(XlsxCellError) as exc5:
+        read_xlsx_source_snapshot(p5)
+    assert exc5.value.reason == REASON_CELL_UNKNOWN_TYPE
+    assert exc5.value.cell_ref == "C2"
+
+    # 6. Positive: Strict OpenXML namespace
+    b6 = SyntheticXlsxBuilder(is_strict=True)
+    b6.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u_bf, 2)])
+    b6.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b6.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b6.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p6 = tmp_path / "ns_strict_valid.xlsx"
+    p6.write_bytes(b6.build_bytes())
+    res6 = read_xlsx_source_snapshot(p6)
+    assert res6.snapshot.total_row_count == 4
+
+
+def test_r5_01_coordinate_ascii_and_fullmatch_validation(
+    tmp_path: Path,
+) -> None:
+    """Verify non-ASCII coordinates (Ü2, Α2, K2) and newlines fail (A-03)."""
+    u_bf = _make_uuid7(b"0000000000000001")
+    u_dp = _make_uuid7(b"0000000000000002")
+    u_vk = _make_uuid7(b"0000000000000003")
+    u_lk = _make_uuid7(b"0000000000000004")
+
+    # Non-ASCII coordinates: Ü2 (German U-umlaut), Α2 (Greek Alpha), K2 (Kelvin)
+    for bad_coord in ("Ü2", "Α2", "K2", "C2\n", "B1\n"):
+        builder = SyntheticXlsxBuilder()
+        # Row with B2 date and Z2 UUID, all activity deleted except bad_coord
+        row_bad = {
+            "__row_num__": 2,
+            "A": "2",
+            "B": "1403/05/15",
+            bad_coord: "بازرگانی غیر اسکی",
+            "Z": str(u_bf),
+        }
+        builder.add_sheet_rows("خرید-فروش", [row_bad])
+        builder.add_sheet_rows(
+            "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
+        )
+        builder.add_sheet_rows(
+            "ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)]
+        )
+        builder.add_sheet_rows(
+            "لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)]
+        )
+        pkg = tmp_path / f"bad_coord_{ord(bad_coord[0])}.xlsx"
+        pkg.write_bytes(builder.build_bytes())
+
+        with pytest.raises(XlsxStructureError) as exc:
+            read_xlsx_source_snapshot(pkg)
+        assert exc.value.reason == REASON_STRUCTURE_INVALID_CELL_REF
+
+    # Out of bounds row (1,048,577)
+    b_oob = SyntheticXlsxBuilder()
+    row_oob = _sample_buy_sell_row_data(u_bf, 1048577)
+    row_oob["__row_num__"] = 1048577
+    b_oob.add_sheet_rows("خرید-فروش", [row_oob])
+    b_oob.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b_oob.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b_oob.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p_oob = tmp_path / "oob_row.xlsx"
+    p_oob.write_bytes(b_oob.build_bytes())
+    with pytest.raises(XlsxStructureError) as exc_oob:
+        read_xlsx_source_snapshot(p_oob)
+    assert exc_oob.value.reason == REASON_STRUCTURE_ROW_OUT_OF_BOUNDS
+
+    # Valid ASCII coordinate C2 succeeds
+    b_valid = SyntheticXlsxBuilder()
+    b_valid.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u_bf, 2)])
+    b_valid.add_sheet_rows(
+        "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
+    )
+    b_valid.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b_valid.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p_valid = tmp_path / "valid_coord.xlsx"
+    p_valid.write_bytes(b_valid.build_bytes())
+    res_valid = read_xlsx_source_snapshot(p_valid)
+    assert res_valid.snapshot.sheets["خرید-فروش"].row_count == 1
+
+
 def test_r5_01_negative_and_blank_activity_cases(tmp_path: Path) -> None:
-    """Verify negative and blank cases for active and inactive rows."""
+    """Verify negative and blank cases for active and inactive rows (A-04)."""
     u_valid = _make_uuid7(b"0000000000000001")
     u_dp = _make_uuid7(b"0000000000000002")
     u_vk = _make_uuid7(b"0000000000000003")
@@ -303,53 +634,68 @@ def test_r5_01_negative_and_blank_activity_cases(tmp_path: Path) -> None:
     assert exc2.value.reason == REASON_CELL_INVALID_NUMERIC_LEXEME
     assert exc2.value.cell_ref == "G2"
 
-    # Case 3: Text "1e2" in numeric field -> rejected by WP-03 canonical validator
-    b3 = SyntheticXlsxBuilder()
+    # Case 3: Active row with blank quantity F2 -> raises XlsxCellError
+    b3_q = SyntheticXlsxBuilder()
+    row_empty_q = _sample_buy_sell_row_data(u_valid, 2)
+    row_empty_q["F"] = {"t": "inlineStr", "is": ""}
+    b3_q.add_sheet_rows("خرید-فروش", [row_empty_q])
+    b3_q.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b3_q.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b3_q.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p3_q = tmp_path / "empty_q.xlsx"
+    p3_q.write_bytes(b3_q.build_bytes())
+    with pytest.raises(XlsxCellError) as exc_q:
+        read_xlsx_source_snapshot(p3_q)
+    assert exc_q.value.reason == REASON_CELL_INVALID_NUMERIC_LEXEME
+    assert exc_q.value.cell_ref == "F2"
+
+    # Case 4: Text "1e2" in numeric field -> rejected by WP-03 canonical validator
+    b4 = SyntheticXlsxBuilder()
     row_text_exp = _sample_buy_sell_row_data(u_valid, 2)
     row_text_exp["G"] = {"t": "inlineStr", "is": "1e2"}
-    b3.add_sheet_rows("خرید-فروش", [row_text_exp])
-    b3.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
-    b3.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
-    b3.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
-    p3 = tmp_path / "text_exp.xlsx"
-    p3.write_bytes(b3.build_bytes())
-    with pytest.raises(XlsxCellError) as exc3:
-        read_xlsx_source_snapshot(p3)
-    assert exc3.value.reason == REASON_CELL_INVALID_NUMERIC_LEXEME
-    assert exc3.value.cell_ref == "G2"
-
-    # Case 4: Fractional toman in numeric XML -> raises XlsxCellError
-    b4 = SyntheticXlsxBuilder()
-    row_frac_toman = _sample_buy_sell_row_data(u_valid, 2)
-    row_frac_toman["G"] = {"t": "n", "v": "1500000.50"}
-    b4.add_sheet_rows("خرید-فروش", [row_frac_toman])
+    b4.add_sheet_rows("خرید-فروش", [row_text_exp])
     b4.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
     b4.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
     b4.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
-    p4 = tmp_path / "frac_toman.xlsx"
+    p4 = tmp_path / "text_exp.xlsx"
     p4.write_bytes(b4.build_bytes())
     with pytest.raises(XlsxCellError) as exc4:
         read_xlsx_source_snapshot(p4)
     assert exc4.value.reason == REASON_CELL_INVALID_NUMERIC_LEXEME
     assert exc4.value.cell_ref == "G2"
 
-    # Case 5: Truly missing optional field (e.g. discount H missing) -> None allowed
+    # Case 5: Fractional toman in numeric XML -> raises XlsxCellError
     b5 = SyntheticXlsxBuilder()
-    row_no_discount = _sample_buy_sell_row_data(u_valid, 2)
-    del row_no_discount["H"]  # cell H2 missing from XML
-    b5.add_sheet_rows("خرید-فروش", [row_no_discount])
+    row_frac_toman = _sample_buy_sell_row_data(u_valid, 2)
+    row_frac_toman["G"] = {"t": "n", "v": "1500000.50"}
+    b5.add_sheet_rows("خرید-فروش", [row_frac_toman])
     b5.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
     b5.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
     b5.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
-    p5 = tmp_path / "missing_discount.xlsx"
+    p5 = tmp_path / "frac_toman.xlsx"
     p5.write_bytes(b5.build_bytes())
-    res5 = read_xlsx_source_snapshot(p5)
-    row5 = res5.snapshot.sheets["خرید-فروش"].rows[0]
-    assert row5.raw_values["discount_toman_raw"] is None
+    with pytest.raises(XlsxCellError) as exc5:
+        read_xlsx_source_snapshot(p5)
+    assert exc5.value.reason == REASON_CELL_INVALID_NUMERIC_LEXEME
+    assert exc5.value.cell_ref == "G2"
 
-    # Case 6: Inactive row where all activity columns are missing/whitespace
+    # Case 6: Truly missing optional field (e.g. discount H missing) -> None allowed
     b6 = SyntheticXlsxBuilder()
-    b6.add_sheet_rows(
+    row_no_discount = _sample_buy_sell_row_data(u_valid, 2)
+    del row_no_discount["H"]  # cell H2 missing from XML
+    b6.add_sheet_rows("خرید-فروش", [row_no_discount])
+    b6.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b6.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b6.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p6 = tmp_path / "missing_discount.xlsx"
+    p6.write_bytes(b6.build_bytes())
+    res6 = read_xlsx_source_snapshot(p6)
+    row6 = res6.snapshot.sheets["خرید-فروش"].rows[0]
+    assert row6.raw_values["discount_toman_raw"] is None
+
+    # Case 7: Inactive row where all activity columns are missing/whitespace
+    b7 = SyntheticXlsxBuilder()
+    b7.add_sheet_rows(
         "خرید-فروش",
         [
             _sample_buy_sell_row_data(u_valid, 2),
@@ -368,50 +714,101 @@ def test_r5_01_negative_and_blank_activity_cases(tmp_path: Path) -> None:
             },
         ],
     )
-    b6.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
-    b6.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
-    b6.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
-    p6 = tmp_path / "inactive_row.xlsx"
-    p6.write_bytes(b6.build_bytes())
-    res6 = read_xlsx_source_snapshot(p6)
-    assert res6.snapshot.sheets["خرید-فروش"].row_count == 1
-
-    # Case 7: Numeric zero (<v>0</v> or "0" or "۰") in activity column counts as ACTIVE
-    b7 = SyntheticXlsxBuilder()
-    row_zero_act = _sample_buy_sell_row_data(u_valid, 2)
-    row_zero_act["F"] = {"t": "n", "v": "0"}  # 0 quantity
-    row_zero_act["G"] = {"t": "inlineStr", "is": "۰"}  # 0 toman fee in Persian
-    b7.add_sheet_rows("خرید-فروش", [row_zero_act])
     b7.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
     b7.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
     b7.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
-    p7 = tmp_path / "zero_act.xlsx"
+    p7 = tmp_path / "inactive_row.xlsx"
     p7.write_bytes(b7.build_bytes())
     res7 = read_xlsx_source_snapshot(p7)
     assert res7.snapshot.sheets["خرید-فروش"].row_count == 1
-    r7 = res7.snapshot.sheets["خرید-فروش"].rows[0]
-    assert r7.raw_values["quantity_raw"] == Decimal("0")
-    assert r7.raw_values["unit_price_toman_raw"] == "۰"
 
-    # Case 8: Formula in numeric field with invalid value -> formula excluded
-    b8 = SyntheticXlsxBuilder()
-    row_f_num = _sample_buy_sell_row_data(u_valid, 2)
-    row_f_num["H"] = {"raw_inner": "<f>F2*G2</f><v>NOT_A_NUMBER</v>"}
-    b8.add_sheet_rows("خرید-فروش", [row_f_num])
-    b8.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
-    b8.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
-    b8.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
-    p8 = tmp_path / "formula_numeric.xlsx"
-    p8.write_bytes(b8.build_bytes())
-    res8 = read_xlsx_source_snapshot(p8)
+    # Case 8: Isolated Numeric Zero as SOLE activity (other activity empty)
+    # 8a: <v>0</v> numeric XML
+    b8a = SyntheticXlsxBuilder()
+    row_zero_xml = {
+        "__row_num__": 2,
+        "A": "2",
+        "B": "1403/05/15",
+        "C": "",  # party empty
+        "D": None,  # type missing
+        "E": {"t": "inlineStr", "is": "   "},  # item whitespace
+        "F": {"t": "n", "v": "0"},  # SOLE activity: numeric XML 0
+        "G": None,
+        "H": None,
+        "J": None,
+        "Z": str(u_valid),
+    }
+    b8a.add_sheet_rows("خرید-فروش", [row_zero_xml])
+    b8a.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b8a.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b8a.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p8a = tmp_path / "isolated_zero_xml.xlsx"
+    p8a.write_bytes(b8a.build_bytes())
+    res8a = read_xlsx_source_snapshot(p8a)
+    assert res8a.snapshot.sheets["خرید-فروش"].row_count == 1
+    assert res8a.snapshot.sheets["خرید-فروش"].rows[0].raw_values[
+        "quantity_raw"
+    ] == Decimal("0")
+
+    # 8b: "0" ASCII text as SOLE activity
+    b8b = SyntheticXlsxBuilder()
+    row_zero_str = {
+        "__row_num__": 2,
+        "A": "2",
+        "B": "1403/05/15",
+        "C": None,
+        "D": None,
+        "E": None,
+        "F": None,
+        "G": {"t": "inlineStr", "is": "0"},  # SOLE activity: ASCII text "0"
+        "H": None,
+        "J": None,
+        "Z": str(u_valid),
+    }
+    b8b.add_sheet_rows("خرید-فروش", [row_zero_str])
+    b8b.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b8b.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b8b.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p8b = tmp_path / "isolated_zero_str.xlsx"
+    p8b.write_bytes(b8b.build_bytes())
+    res8b = read_xlsx_source_snapshot(p8b)
+    assert res8b.snapshot.sheets["خرید-فروش"].row_count == 1
     assert (
-        res8.snapshot.sheets["خرید-فروش"].rows[0].raw_values["discount_toman_raw"]
-        is None
+        res8b.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
+        == "0"
+    )
+
+    # 8c: "۰" Persian text as SOLE activity
+    b8c = SyntheticXlsxBuilder()
+    row_zero_fa = {
+        "__row_num__": 2,
+        "A": "2",
+        "B": "1403/05/15",
+        "C": None,
+        "D": None,
+        "E": None,
+        "F": None,
+        "G": {"t": "inlineStr", "is": "۰"},  # SOLE activity: Persian text "۰"
+        "H": None,
+        "J": None,
+        "Z": str(u_valid),
+    }
+    b8c.add_sheet_rows("خرید-فروش", [row_zero_fa])
+    b8c.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)])
+    b8c.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    b8c.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p8c = tmp_path / "isolated_zero_fa.xlsx"
+    p8c.write_bytes(b8c.build_bytes())
+    res8c = read_xlsx_source_snapshot(p8c)
+    assert res8c.snapshot.sheets["خرید-فروش"].row_count == 1
+    assert (
+        res8c.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
+        == "۰"
     )
 
 
 def test_r5_01_independent_oracle_all_four_sheets(tmp_path: Path) -> None:
-    """Independent oracle building raw fixture and verifying snapshots & hashes."""
+    """Independent oracle building raw fixture and verifying snapshots (A-04)."""
     u_bf = _make_uuid7(b"0000000000000001")
     u_dp = _make_uuid7(b"0000000000000002")
     u_vk = _make_uuid7(b"0000000000000003")
@@ -435,7 +832,7 @@ def test_r5_01_independent_oracle_all_four_sheets(tmp_path: Path) -> None:
         "entry_type_raw": "دریافت چک",
         "amount_toman_raw": " +005000000 ",  # Raw string preserved
         "notes_raw": "توضیحات دریافت",
-        "account_code_raw": None,
+        "account_code_raw": "123.4000",  # Numeric XML in RAW_TEXT returned as str
         "customer_flag_raw": None,
     }
 
@@ -486,6 +883,7 @@ def test_r5_01_independent_oracle_all_four_sheets(tmp_path: Path) -> None:
                 "D": "دریافت چک",
                 "E": {"t": "inlineStr", "is": " +005000000 "},
                 "F": "توضیحات دریافت",
+                "G": {"t": "n", "v": "123.4000"},  # Numeric XML in RAW_TEXT
                 "P": str(u_dp),
             }
         ],
@@ -546,3 +944,14 @@ def test_r5_01_independent_oracle_all_four_sheets(tmp_path: Path) -> None:
         assert actual_sheet.sheet_snapshot_hash == expected_sheet.sheet_snapshot_hash
         assert actual_sheet.rows[0].source_hash == expected_sheet.rows[0].source_hash
         assert actual_sheet.rows[0].raw_values == expected_sheet.rows[0].raw_values
+
+        # Check raw keys order matches registry column order
+        contract = RAW_CONTRACT_REGISTRY.sheets[s_name]
+        expected_keys = [c.field_name for c in contract.raw_columns]
+        assert list(actual_sheet.rows[0].raw_values.keys()) == expected_keys
+
+        # Direct verification with WP-03 hashing
+        expected_row_hash = compute_source_hash(
+            s_name, actual_sheet.rows[0].raw_values
+        ).source_hash
+        assert actual_sheet.rows[0].source_hash == expected_row_hash

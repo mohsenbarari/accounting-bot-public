@@ -33,6 +33,7 @@ from accounting_contracts.canonical_hashing import (
     canonicalize_value,
 )
 from accounting_contracts.raw_input_contracts import (
+    MAX_EXCEL_COLUMN_INDEX,
     RAW_CONTRACT_REGISTRY,
     RawColumnContract,
     RawSheetContract,
@@ -106,21 +107,21 @@ _TAG_SI = tuple(f"{{{ns}}}si" for ns in _VALID_SPREADSHEETML_NAMESPACES)
 _TAG_T = tuple(f"{{{ns}}}t" for ns in _VALID_SPREADSHEETML_NAMESPACES)
 _TAG_R = tuple(f"{{{ns}}}r" for ns in _VALID_SPREADSHEETML_NAMESPACES)
 
-_TAG_T_SET = set(_TAG_T) | {"t"}
-_TAG_R_SET = set(_TAG_R) | {"r"}
+_TAG_T_SET = set(_TAG_T)
+_TAG_R_SET = set(_TAG_R)
 _TAG_IGNORE_IS = {
     f"{{{ns}}}{name}"
     for ns in _VALID_SPREADSHEETML_NAMESPACES
     for name in ("rPh", "phoneticPr")
-} | {"rPh", "phoneticPr"}
+}
 _TAG_IGNORE_R = {
     f"{{{ns}}}{name}"
     for ns in _VALID_SPREADSHEETML_NAMESPACES
     for name in ("rPr", "rPh", "phoneticPr")
-} | {"rPr", "rPh", "phoneticPr"}
+}
 
-# Strict fullmatch regexes (R5)
-_CELL_REF_STRICT_REGEX = re.compile(r"^[A-Za-z]{1,3}[1-9][0-9]*$")
+# Strict fullmatch regexes (R5, A-03)
+_CELL_REF_STRICT_REGEX = re.compile(r"^[A-Z]{1,3}[1-9][0-9]*$")
 _ROW_NUM_STRICT_REGEX = re.compile(r"^[1-9][0-9]*$")
 _OOXML_ESCAPE_REGEX = re.compile(r"_x([0-9a-fA-F]{4})_")
 _NUMERIC_XML_STRICT_REGEX = re.compile(
@@ -498,28 +499,17 @@ _CELL_REF_PARSER_REGEX = re.compile(r"^([A-Z]{1,3})([1-9][0-9]*)$")
 
 
 def _parse_cell_ref(ref: str) -> tuple[str, int, int]:
-    """Parse cell coordinate reference strictly using fast string slicing (R5)."""
-    col_letter = ref.rstrip("0123456789")
-    row_part = ref[len(col_letter) :]
-
-    if (
-        not col_letter
-        or not row_part
-        or not col_letter.isalpha()
-        or not col_letter.isupper()
-        or not row_part.isdigit()
-        or row_part.startswith("0")
-    ):
+    """Parse cell coordinate reference strictly using fullmatch regex (R5, A-03)."""
+    m = _CELL_REF_PARSER_REGEX.fullmatch(ref)
+    if m is None:
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
 
-    if not (1 <= len(col_letter) <= 3):
-        raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
-
+    col_letter = m.group(1)
     col_num = _parse_col_and_num(col_letter)
-    if col_num < 1 or col_num > 16384:
+    if not (1 <= col_num <= MAX_EXCEL_COLUMN_INDEX):
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
 
-    row_num = int(row_part)
+    row_num = int(m.group(2))
     if row_num > MAX_PHYSICAL_ROW:
         raise XlsxStructureError(
             REASON_STRUCTURE_ROW_OUT_OF_BOUNDS,
@@ -808,78 +798,78 @@ def _discover_sheet_metadata_and_needed_sst(
                         if has_sst and f_elem is None:
                             cell_ref = c_elem.get("r")
                             if cell_ref:
-                                col_let = cell_ref.rstrip("0123456789")
-                                row_part = cell_ref[len(col_let) :]
-                                if (
-                                    col_let
-                                    and row_part
-                                    and row_part.isdigit()
-                                    and not row_part.startswith("0")
-                                ):
+                                m = _CELL_REF_PARSER_REGEX.fullmatch(cell_ref)
+                                if m is not None:
+                                    col_let = m.group(1)
                                     col_num = _parse_col_and_num(col_let)
-                                    c_row = int(row_part)
-                                    if c_row == physical_row_num:
-                                        if physical_row_num == 1:
-                                            if (
-                                                col_let in req_headers
-                                                and c_elem.get("t") == "s"
-                                            ):
-                                                v_el = (
-                                                    c_elem.find("{*}v")
-                                                    if has_children
-                                                    else None
-                                                )
-                                                if v_el is not None:
-                                                    v_text = _extract_t_or_v_leaf_text(
-                                                        v_el
-                                                    )
-                                                    if sst_rx.fullmatch(v_text):
-                                                        candidate_header_sst.append(
-                                                            (col_num, int(v_text))
-                                                        )
-                                        else:
-                                            is_act = col_let in activity_cols
-                                            is_retained = col_let in retained_cols
-                                            c_t = (c_elem.get("t") or "").strip()
-                                            if is_act:
-                                                if c_t in ("", "n", "str"):
+                                    if 1 <= col_num <= MAX_EXCEL_COLUMN_INDEX:
+                                        c_row = int(m.group(2))
+                                        if c_row == physical_row_num:
+                                            if physical_row_num == 1:
+                                                if (
+                                                    col_let in req_headers
+                                                    and c_elem.get("t") == "s"
+                                                ):
                                                     v_el = (
                                                         c_elem.find("{*}v")
                                                         if has_children
                                                         else None
                                                     )
-                                                    if (
-                                                        v_el is not None
-                                                        and (v_el.text or "") != ""
-                                                    ):
-                                                        has_literal_act = True
-                                                elif c_t == "inlineStr":
-                                                    is_el = (
-                                                        c_elem.find("{*}is")
+                                                    if v_el is not None:
+                                                        v_text = (
+                                                            _extract_t_or_v_leaf_text(
+                                                                v_el
+                                                            )
+                                                        )
+                                                        if sst_rx.fullmatch(v_text):
+                                                            candidate_header_sst.append(
+                                                                (col_num, int(v_text))
+                                                            )
+                                            else:
+                                                is_act = col_let in activity_cols
+                                                is_retained = col_let in retained_cols
+                                                c_t = (c_elem.get("t") or "").strip()
+                                                if is_act:
+                                                    if c_t in ("", "n", "str"):
+                                                        v_el = (
+                                                            c_elem.find("{*}v")
+                                                            if has_children
+                                                            else None
+                                                        )
+                                                        if (
+                                                            v_el is not None
+                                                            and (v_el.text or "") != ""
+                                                        ):
+                                                            has_literal_act = True
+                                                    elif c_t == "inlineStr":
+                                                        is_el = (
+                                                            c_elem.find("{*}is")
+                                                            if has_children
+                                                            else None
+                                                        )
+                                                        if is_el is not None:
+                                                            has_literal_act = True
+
+                                                if is_retained and c_t == "s":
+                                                    v_el = (
+                                                        c_elem.find("{*}v")
                                                         if has_children
                                                         else None
                                                     )
-                                                    if is_el is not None:
-                                                        has_literal_act = True
-
-                                            if is_retained and c_t == "s":
-                                                v_el = (
-                                                    c_elem.find("{*}v")
-                                                    if has_children
-                                                    else None
-                                                )
-                                                if v_el is not None:
-                                                    v_text = _extract_t_or_v_leaf_text(
-                                                        v_el
-                                                    )
-                                                    if sst_rx.fullmatch(v_text):
-                                                        row_sst_candidates.append(
-                                                            (
-                                                                col_num,
-                                                                int(v_text),
-                                                                is_act,
+                                                    if v_el is not None:
+                                                        v_text = (
+                                                            _extract_t_or_v_leaf_text(
+                                                                v_el
                                                             )
                                                         )
+                                                        if sst_rx.fullmatch(v_text):
+                                                            row_sst_candidates.append(
+                                                                (
+                                                                    col_num,
+                                                                    int(v_text),
+                                                                    is_act,
+                                                                )
+                                                            )
 
                     if (
                         has_sst
@@ -1135,15 +1125,6 @@ def _decode_cell_literal_value(
             physical_row_number=physical_row_num,
         )
 
-    # If this column is stable_id -> numeric XML is forbidden
-    if is_stable_id:
-        raise XlsxCellError(
-            REASON_CELL_NUMERIC_XML_IN_TEXT_FIELD,
-            sheet_name=sheet_name,
-            cell_ref=cell_ref,
-            physical_row_number=physical_row_num,
-        )
-
     # If this is date_raw -> numeric XML is forbidden
     if field_contract is not None and field_contract.field_name == "date_raw":
         raise XlsxCellError(
@@ -1152,6 +1133,10 @@ def _decode_cell_literal_value(
             cell_ref=cell_ref,
             physical_row_number=physical_row_num,
         )
+
+    # For auxiliary RAW_TEXT fields: return original lexeme string (A-01)
+    if field_contract is not None and field_contract.value_kind == ValueKind.RAW_TEXT:
+        return raw_num_str
 
     try:
         return Decimal(raw_num_str)
