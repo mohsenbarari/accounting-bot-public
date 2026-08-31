@@ -8,6 +8,7 @@
 - Commit(s):
   - `41c979f` (feat(contracts): implement validated full-source snapshots and deterministic change planning)
   - `fec8c02` (fix(contracts): address Codex review feedback for WP-04)
+  - `bf715ab` (fix(contracts): address Round 2 review feedback for WP-04)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -83,7 +84,7 @@ Implement the smallest pure, deeply immutable and deterministic source-boundary 
 | `uv run ruff format --check .` | 0 | Verify formatting compliance |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
 | `uv run mypy .` | 0 | Verify strict static typing across 17 files |
-| `uv run pytest -v` | 0 | Execute all 85 unit, benchmark and property tests |
+| `uv run pytest -v` | 0 | Execute all 88 unit, benchmark and property tests |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace or line-ending defects against origin/main |
 | `! git ls-files \| grep -E '\.(xlsx\|xls\|xlsm\|sqlite\|sqlite3\|db\|pdf\|key\|pem\|env)$'` | 0 | Verify zero forbidden extensions or database/secret files tracked in git |
 | `! git grep -n -i -E '(password\s*[:=]\|secret\s*[:=]\|bearer\s+[A-Za-z0-9]\|BEGIN RSA\|BEGIN OPENSSH\|09[0-9]{9}\|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})' -- ':!ROADMAP.md' ':!docs/adr/*' ':!.agents/*' ':!handoffs/*' ':!uv.lock'` | 0 | Verify zero sensitive patterns, private keys, IP addresses or real phone numbers in source/tests |
