@@ -26,6 +26,7 @@
   - `3fecdcb` (docs(handoff): update commit list in WP-05 handoff)
   - `739b0b6` (fix(local_agent): remediate R5-A regressions A-01, A-02, A-03 (WP-05))
   - `9c28e4e` (docs(handoff): record R5-A remediation evidence and status in WP-05 handoff)
+  - `bca6c5f` (test(local_agent): use synthetic landline in phone_number_raw regression test)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
