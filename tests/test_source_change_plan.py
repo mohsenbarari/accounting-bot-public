@@ -6,7 +6,8 @@ Verifies ADR-0007 compliance:
 - global UUIDv7 uniqueness and identity home-sheet relocation prevention;
 - full transition table (Insert, Edit, Void, Unchanged, Reactivation);
 - row-order, sheet-order, mapping-order and prior-state order invariance;
-- deep immutability, retry idempotency, and 15,000-row synthetic benchmark.
+- deep immutability, constructor defensive copying, and retry idempotency;
+- 15,000-row synthetic benchmark and strict hash fullmatch validation.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import Any
 
 import pytest
 from accounting_contracts.canonical_hashing import (
+    InvalidHashError,
     compute_sheet_snapshot_hash,
     compute_source_hash,
 )
@@ -36,8 +38,11 @@ from accounting_contracts.source_change_plan import (
     InvalidIdentityError,
     InvalidPriorStateError,
     PlanAction,
+    PlanCounts,
+    PlanItem,
     PriorIdentityRegistry,
     PriorIdentityState,
+    SourceChangePlanError,
     SourceRowInput,
     SourceSheetInput,
     ValidatedSourceRow,
@@ -311,6 +316,146 @@ def test_forged_prior_registry_invariants_rejected() -> None:
             latest_revision=1,
             lifecycle=IdentityLifecycle.ACTIVE,
             source_hash=valid_hash,
+        )
+
+
+def test_all_rows_by_id_exact_object_matching_and_count_types() -> None:
+    """Verify all_rows_by_id requires exact object match and validates count types."""
+    id1 = _make_uuid7(b"0000000000000001")
+    row_vals = _sample_buy_sell_row()
+    valid_hash = compute_source_hash("خرید-فروش", row_vals).source_hash
+
+    row1 = ValidatedSourceRow(
+        stable_id=id1,
+        canonical_uuid=str(id1).lower(),
+        sheet_name="خرید-فروش",
+        raw_values=MappingProxyType(row_vals),
+        source_hash=valid_hash,
+    )
+    # Clone with identical content but different object identity
+    row1_clone = ValidatedSourceRow(
+        stable_id=id1,
+        canonical_uuid=str(id1).lower(),
+        sheet_name="خرید-فروش",
+        raw_values=MappingProxyType(dict(row_vals)),
+        source_hash=valid_hash,
+    )
+
+    sheet_bf = ValidatedSourceSheetSnapshot(
+        sheet_name="خرید-فروش",
+        rows=(row1,),
+        row_count=1,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash(
+            "خرید-فروش", [(str(id1).lower(), valid_hash)]
+        ).snapshot_hash,
+    )
+    empty_dp = ValidatedSourceSheetSnapshot(
+        sheet_name="دریافت-پرداخت",
+        rows=(),
+        row_count=0,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash(
+            "دریافت-پرداخت", []
+        ).snapshot_hash,
+    )
+    empty_vk = ValidatedSourceSheetSnapshot(
+        sheet_name="ورود-خروج",
+        rows=(),
+        row_count=0,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash("ورود-خروج", []).snapshot_hash,
+    )
+    empty_lk = ValidatedSourceSheetSnapshot(
+        sheet_name="لیست کسبه",
+        rows=(),
+        row_count=0,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash("لیست کسبه", []).snapshot_hash,
+    )
+
+    valid_sheets = {
+        "خرید-فروش": sheet_bf,
+        "دریافت-پرداخت": empty_dp,
+        "ورود-خروج": empty_vk,
+        "لیست کسبه": empty_lk,
+    }
+
+    # 1. Object mismatch in all_rows_by_id raises IncompleteSnapshotError
+    with pytest.raises(IncompleteSnapshotError) as exc:
+        ValidatedSourceWorkbookSnapshot(
+            sheets=MappingProxyType(valid_sheets),
+            total_row_count=1,
+            all_rows_by_id=MappingProxyType({id1: row1_clone}),
+        )
+    assert "does not match the corresponding row object" in str(exc.value)
+
+    # 2. Boolean total_row_count raises IncompleteSnapshotError
+    with pytest.raises(IncompleteSnapshotError):
+        ValidatedSourceWorkbookSnapshot(
+            sheets=MappingProxyType(valid_sheets),
+            total_row_count=True,
+            all_rows_by_id=MappingProxyType({id1: row1}),
+        )
+
+    # 3. Boolean row_count in ValidatedSourceSheetSnapshot raises InvalidIdentityError
+    with pytest.raises(InvalidIdentityError):
+        ValidatedSourceSheetSnapshot(
+            sheet_name="خرید-فروش",
+            rows=(row1,),
+            row_count=True,
+            sheet_snapshot_hash=sheet_bf.sheet_snapshot_hash,
+        )
+
+    # 4. Boolean or negative count in PlanCounts raises SourceChangePlanError
+    with pytest.raises(SourceChangePlanError):
+        PlanCounts(insert_count=True, edit_count=0, void_count=0, unchanged_count=0)
+    with pytest.raises(SourceChangePlanError):
+        PlanCounts(insert_count=-1, edit_count=0, void_count=0, unchanged_count=0)
+
+
+def test_hash_validation_rejects_trailing_or_leading_newlines() -> None:
+    """Verify hash validation strictly rejects trailing or leading newlines."""
+    id1 = _make_uuid7(b"0000000000000001")
+    hash_with_newline = "a" * 64 + "\n"
+    hash_with_lead_nl = "\n" + "a" * 64
+
+    # 1. compute_sheet_snapshot_hash rejects newline in source_hash
+    with pytest.raises(InvalidHashError):
+        compute_sheet_snapshot_hash(
+            "خرید-فروش", [(str(id1).lower(), hash_with_newline)]
+        )
+
+    # 2. ValidatedSourceRow rejects newline in source_hash
+    with pytest.raises(InvalidIdentityError):
+        ValidatedSourceRow(
+            stable_id=id1,
+            canonical_uuid=str(id1).lower(),
+            sheet_name="خرید-فروش",
+            raw_values=MappingProxyType(_sample_buy_sell_row()),
+            source_hash=hash_with_newline,
+        )
+
+    # 3. PriorIdentityState rejects newline in source_hash
+    with pytest.raises(InvalidPriorStateError):
+        PriorIdentityState(
+            stable_id=id1,
+            canonical_uuid=str(id1).lower(),
+            home_sheet="خرید-فروش",
+            latest_revision=1,
+            lifecycle=IdentityLifecycle.ACTIVE,
+            source_hash=hash_with_lead_nl,
+        )
+
+    # 4. PlanItem rejects newline in hashes
+    with pytest.raises(SourceChangePlanError):
+        PlanItem(
+            action=PlanAction.INSERT,
+            sheet_name="خرید-فروش",
+            stable_id=id1,
+            canonical_uuid=str(id1).lower(),
+            planned_revision=1,
+            prior_lifecycle=None,
+            prior_revision=None,
+            prior_source_hash=None,
+            current_source_hash=hash_with_newline,
+            current_row=None,
         )
 
 
@@ -1012,7 +1157,153 @@ def test_per_sheet_counts_breakdown() -> None:
     assert plan.per_sheet_counts["لیست کسبه"].insert_count == 0
 
 
-# --- 10. Immutability and Tamper Resistance Across All Collections ---
+# --- 10. Immutability and Defensive Copying Across All Models ---
+
+
+def test_constructor_defensive_copies_prevent_external_mutation() -> None:
+    """Verify mutating collections passed into constructors does not affect objects."""
+    id1 = _make_uuid7(b"0000000000000001")
+
+    # 1. ValidatedSourceRow defensive copy of raw_values
+    raw_dict = _sample_buy_sell_row()
+    valid_hash = compute_source_hash("خرید-فروش", raw_dict).source_hash
+    v_row = ValidatedSourceRow(
+        stable_id=id1,
+        canonical_uuid=str(id1).lower(),
+        sheet_name="خرید-فروش",
+        raw_values=raw_dict,  # type: ignore[arg-type]
+        source_hash=valid_hash,
+    )
+    raw_dict["notes_raw"] = "EXTERNAL_MUTATION"
+    assert v_row.raw_values["notes_raw"] == "توضیحات فاکتور"
+
+    # 2. ValidatedSourceSheetSnapshot defensive copy of rows
+    row_list = [v_row]
+    s_snap = ValidatedSourceSheetSnapshot(
+        sheet_name="خرید-فروش",
+        rows=row_list,  # type: ignore[arg-type]
+        row_count=1,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash(
+            "خرید-فروش", [(str(id1).lower(), valid_hash)]
+        ).snapshot_hash,
+    )
+    row_list.clear()
+    assert len(s_snap.rows) == 1
+
+    # 3. ValidatedSourceWorkbookSnapshot defensive copy of sheets & all_rows_by_id
+    empty_dp = ValidatedSourceSheetSnapshot(
+        sheet_name="دریافت-پرداخت",
+        rows=(),
+        row_count=0,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash(
+            "دریافت-پرداخت", []
+        ).snapshot_hash,
+    )
+    empty_vk = ValidatedSourceSheetSnapshot(
+        sheet_name="ورود-خروج",
+        rows=(),
+        row_count=0,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash("ورود-خروج", []).snapshot_hash,
+    )
+    empty_lk = ValidatedSourceSheetSnapshot(
+        sheet_name="لیست کسبه",
+        rows=(),
+        row_count=0,
+        sheet_snapshot_hash=compute_sheet_snapshot_hash("لیست کسبه", []).snapshot_hash,
+    )
+
+    sheets_dict = {
+        "خرید-فروش": s_snap,
+        "دریافت-پرداخت": empty_dp,
+        "ورود-خروج": empty_vk,
+        "لیست کسبه": empty_lk,
+    }
+    all_rows_dict = {id1: v_row}
+
+    wb_snap = ValidatedSourceWorkbookSnapshot(
+        sheets=sheets_dict,  # type: ignore[arg-type]
+        total_row_count=1,
+        all_rows_by_id=all_rows_dict,  # type: ignore[arg-type]
+    )
+    sheets_dict.clear()
+    all_rows_dict.clear()
+    assert len(wb_snap.sheets) == 4
+    assert len(wb_snap.all_rows_by_id) == 1
+
+    # 4. PriorIdentityRegistry defensive copy of identities
+    prior_state = PriorIdentityState(
+        stable_id=id1,
+        canonical_uuid=str(id1).lower(),
+        home_sheet="خرید-فروش",
+        latest_revision=1,
+        lifecycle=IdentityLifecycle.ACTIVE,
+        source_hash=valid_hash,
+    )
+    prior_dict = {id1: prior_state}
+    prior_reg = PriorIdentityRegistry(identities=prior_dict)  # type: ignore[arg-type]
+    prior_dict.clear()
+    assert len(prior_reg.identities) == 1
+
+    # 5. DeterministicSourceChangePlan defensive copy of collections
+    item = PlanItem(
+        action=PlanAction.INSERT,
+        sheet_name="خرید-فروش",
+        stable_id=id1,
+        canonical_uuid=str(id1).lower(),
+        planned_revision=1,
+        prior_lifecycle=None,
+        prior_revision=None,
+        prior_source_hash=None,
+        current_source_hash=valid_hash,
+        current_row=v_row,
+    )
+    items_list = [item]
+    per_sheet = {
+        "خرید-فروش": PlanCounts(
+            insert_count=1, edit_count=0, void_count=0, unchanged_count=0
+        ),
+        "دریافت-پرداخت": PlanCounts(
+            insert_count=0, edit_count=0, void_count=0, unchanged_count=0
+        ),
+        "ورود-خروج": PlanCounts(
+            insert_count=0, edit_count=0, void_count=0, unchanged_count=0
+        ),
+        "لیست کسبه": PlanCounts(
+            insert_count=0, edit_count=0, void_count=0, unchanged_count=0
+        ),
+    }
+    hashes = {
+        "خرید-فروش": s_snap.sheet_snapshot_hash,
+        "دریافت-پرداخت": empty_dp.sheet_snapshot_hash,
+        "ورود-خروج": empty_vk.sheet_snapshot_hash,
+        "لیست کسبه": empty_lk.sheet_snapshot_hash,
+    }
+    counts = {
+        "خرید-فروش": 1,
+        "دریافت-پرداخت": 0,
+        "ورود-خروج": 0,
+        "لیست کسبه": 0,
+    }
+
+    plan = DeterministicSourceChangePlan(
+        version=SOURCE_CHANGE_PLAN_VERSION,
+        items=items_list,  # type: ignore[arg-type]
+        total_counts=PlanCounts(
+            insert_count=1, edit_count=0, void_count=0, unchanged_count=0
+        ),
+        per_sheet_counts=per_sheet,  # type: ignore[arg-type]
+        current_sheet_snapshot_hashes=hashes,  # type: ignore[arg-type]
+        current_sheet_row_counts=counts,  # type: ignore[arg-type]
+    )
+    items_list.clear()
+    per_sheet.clear()
+    hashes.clear()
+    counts.clear()
+
+    assert len(plan.items) == 1
+    assert len(plan.per_sheet_counts) == 4
+    assert len(plan.current_sheet_snapshot_hashes) == 4
+    assert len(plan.current_sheet_row_counts) == 4
 
 
 def test_immutability_and_tamper_resistance_across_all_models() -> None:

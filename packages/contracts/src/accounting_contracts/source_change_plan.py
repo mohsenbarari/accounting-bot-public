@@ -70,6 +70,10 @@ class InvalidPriorStateError(SourceChangePlanError):
 
 def _parse_and_validate_uuid7(val: Any) -> uuid.UUID:
     """Parse and strictly validate an RFC 4122 version 7 UUID."""
+    if isinstance(val, bool):
+        msg = f"Boolean value {val!r} is not a valid UUID"
+        raise InvalidIdentityError(msg)
+
     if isinstance(val, uuid.UUID):
         parsed = val
     elif isinstance(val, str):
@@ -116,7 +120,19 @@ class ValidatedSourceRow:
     source_hash: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.stable_id, uuid.UUID) or self.stable_id.version != 7:
+        if isinstance(self.raw_values, (Mapping, MappingProxyType)):
+            object.__setattr__(
+                self, "raw_values", MappingProxyType(dict(self.raw_values))
+            )
+        else:
+            msg = f"raw_values must be a Mapping, got {type(self.raw_values).__name__}"
+            raise InvalidIdentityError(msg)
+
+        if (
+            isinstance(self.stable_id, bool)
+            or not isinstance(self.stable_id, uuid.UUID)
+            or self.stable_id.version != 7
+        ):
             msg = f"Row stable_id must be UUIDv7, got {self.stable_id!r}"
             raise InvalidIdentityError(msg)
         if self.canonical_uuid != str(self.stable_id).lower():
@@ -128,8 +144,14 @@ class ValidatedSourceRow:
         if self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets:
             msg = f"Unknown sheet '{self.sheet_name}' in ValidatedSourceRow"
             raise UnknownSheetError(msg)
-        if not isinstance(self.raw_values, (Mapping, MappingProxyType)):
-            msg = f"raw_values must be a Mapping, got {type(self.raw_values).__name__}"
+        if (
+            not isinstance(self.source_hash, str)
+            or HEX_DIGEST_64_REGEX.fullmatch(self.source_hash) is None
+        ):
+            msg = (
+                "Invalid source_hash format in ValidatedSourceRow: "
+                f"{self.source_hash!r}"
+            )
             raise InvalidIdentityError(msg)
         recomputed_hash = compute_source_hash(
             self.sheet_name, self.raw_values
@@ -152,25 +174,50 @@ class ValidatedSourceSheetSnapshot:
     sheet_snapshot_hash: str
 
     def __post_init__(self) -> None:
+        if isinstance(self.rows, Iterable):
+            object.__setattr__(self, "rows", tuple(self.rows))
+        else:
+            msg = f"rows must be an Iterable, got {type(self.rows).__name__}"
+            raise InvalidIdentityError(msg)
+
         if self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets:
             msg = f"Unknown sheet '{self.sheet_name}' in ValidatedSourceSheetSnapshot"
             raise UnknownSheetError(msg)
-        if not isinstance(self.rows, tuple):
-            msg = f"rows must be a tuple, got {type(self.rows).__name__}"
+
+        if (
+            isinstance(self.row_count, bool)
+            or not isinstance(self.row_count, int)
+            or self.row_count < 0
+        ):
+            msg = f"row_count must be a non-negative integer, got {self.row_count!r}"
             raise InvalidIdentityError(msg)
-        for r in self.rows:
-            if not isinstance(r, ValidatedSourceRow) or r.sheet_name != self.sheet_name:
-                msg = f"Invalid row {r!r} in sheet snapshot '{self.sheet_name}'"
-                raise InvalidIdentityError(msg)
-        sorted_bytes = [r.stable_id.bytes for r in self.rows]
-        if sorted_bytes != sorted(sorted_bytes):
-            msg = f"Rows in sheet '{self.sheet_name}' are not sorted by UUID bytes"
-            raise InvalidIdentityError(msg)
+
         if self.row_count != len(self.rows):
             msg = (
                 f"row_count {self.row_count} does not match len(rows) {len(self.rows)}"
             )
             raise InvalidIdentityError(msg)
+
+        for r in self.rows:
+            if not isinstance(r, ValidatedSourceRow) or r.sheet_name != self.sheet_name:
+                msg = f"Invalid row {r!r} in sheet snapshot '{self.sheet_name}'"
+                raise InvalidIdentityError(msg)
+
+        sorted_bytes = [r.stable_id.bytes for r in self.rows]
+        if sorted_bytes != sorted(sorted_bytes):
+            msg = f"Rows in sheet '{self.sheet_name}' are not sorted by UUID bytes"
+            raise InvalidIdentityError(msg)
+
+        if (
+            not isinstance(self.sheet_snapshot_hash, str)
+            or HEX_DIGEST_64_REGEX.fullmatch(self.sheet_snapshot_hash) is None
+        ):
+            msg = (
+                "Invalid sheet_snapshot_hash format in "
+                f"ValidatedSourceSheetSnapshot: {self.sheet_snapshot_hash!r}"
+            )
+            raise InvalidIdentityError(msg)
+
         pairs = [(r.canonical_uuid, r.source_hash) for r in self.rows]
         recomputed_hash = compute_sheet_snapshot_hash(
             self.sheet_name, pairs
@@ -192,16 +239,44 @@ class ValidatedSourceWorkbookSnapshot:
     all_rows_by_id: MappingProxyType[uuid.UUID, ValidatedSourceRow]
 
     def __post_init__(self) -> None:
-        approved_sheets = tuple(RAW_CONTRACT_REGISTRY.sheets.keys())
-        if not isinstance(self.sheets, (Mapping, MappingProxyType)):
+        if isinstance(self.sheets, (Mapping, MappingProxyType)):
+            object.__setattr__(self, "sheets", MappingProxyType(dict(self.sheets)))
+        else:
             msg = f"sheets must be a Mapping, got {type(self.sheets).__name__}"
             raise IncompleteSnapshotError(msg)
+
+        if isinstance(self.all_rows_by_id, (Mapping, MappingProxyType)):
+            object.__setattr__(
+                self,
+                "all_rows_by_id",
+                MappingProxyType(dict(self.all_rows_by_id)),
+            )
+        else:
+            msg = (
+                "all_rows_by_id must be a Mapping, got "
+                f"{type(self.all_rows_by_id).__name__}"
+            )
+            raise IncompleteSnapshotError(msg)
+
+        approved_sheets = tuple(RAW_CONTRACT_REGISTRY.sheets.keys())
         if tuple(self.sheets.keys()) != approved_sheets:
             msg = (
                 "Workbook snapshot must contain exactly all 4 approved sheets "
                 f"in order: {approved_sheets}, got {tuple(self.sheets.keys())}"
             )
             raise IncompleteSnapshotError(msg)
+
+        if (
+            isinstance(self.total_row_count, bool)
+            or not isinstance(self.total_row_count, int)
+            or self.total_row_count < 0
+        ):
+            msg = (
+                "total_row_count must be a non-negative integer, got "
+                f"{self.total_row_count!r}"
+            )
+            raise IncompleteSnapshotError(msg)
+
         seen_uuids: set[uuid.UUID] = set()
         expected_total = 0
         for sheet_name, s_snap in self.sheets.items():
@@ -218,6 +293,14 @@ class ValidatedSourceWorkbookSnapshot:
                     raise DuplicateIdentityError(msg)
                 seen_uuids.add(r.stable_id)
 
+                # Exact object matching with all_rows_by_id
+                if self.all_rows_by_id.get(r.stable_id) is not r:
+                    msg = (
+                        f"Row '{r.stable_id}' in sheet '{sheet_name}' does not match "
+                        "the corresponding row object in all_rows_by_id"
+                    )
+                    raise IncompleteSnapshotError(msg)
+
         if self.total_row_count != expected_total:
             msg = (
                 f"total_row_count {self.total_row_count} does not match "
@@ -225,12 +308,13 @@ class ValidatedSourceWorkbookSnapshot:
             )
             raise IncompleteSnapshotError(msg)
 
-        if not isinstance(self.all_rows_by_id, (Mapping, MappingProxyType)):
-            msg = "all_rows_by_id must be a Mapping"
+        if len(self.all_rows_by_id) != self.total_row_count:
+            msg = (
+                f"all_rows_by_id length {len(self.all_rows_by_id)} does not match "
+                f"total_row_count {self.total_row_count}"
+            )
             raise IncompleteSnapshotError(msg)
-        if set(self.all_rows_by_id.keys()) != seen_uuids:
-            msg = "all_rows_by_id keys do not match workbook rows"
-            raise IncompleteSnapshotError(msg)
+
         if list(self.all_rows_by_id.keys()) != sorted(
             seen_uuids, key=lambda u: u.bytes
         ):
@@ -392,7 +476,11 @@ class PriorIdentityState:
     source_hash: str | None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.stable_id, uuid.UUID) or self.stable_id.version != 7:
+        if (
+            isinstance(self.stable_id, bool)
+            or not isinstance(self.stable_id, uuid.UUID)
+            or self.stable_id.version != 7
+        ):
             msg = f"stable_id must be UUIDv7, got {self.stable_id!r}"
             raise InvalidPriorStateError(msg)
         if self.canonical_uuid != str(self.stable_id).lower():
@@ -418,8 +506,9 @@ class PriorIdentityState:
             msg = f"lifecycle must be an IdentityLifecycle enum, got {self.lifecycle!r}"
             raise InvalidPriorStateError(msg)
         if self.lifecycle == IdentityLifecycle.ACTIVE:
-            if not isinstance(self.source_hash, str) or not HEX_DIGEST_64_REGEX.match(
-                self.source_hash
+            if (
+                not isinstance(self.source_hash, str)
+                or HEX_DIGEST_64_REGEX.fullmatch(self.source_hash) is None
             ):
                 msg = (
                     "Active prior identity requires 64-hex lowercase "
@@ -442,7 +531,11 @@ class PriorIdentityRegistry:
     identities: MappingProxyType[uuid.UUID, PriorIdentityState]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.identities, (Mapping, MappingProxyType)):
+        if isinstance(self.identities, (Mapping, MappingProxyType)):
+            object.__setattr__(
+                self, "identities", MappingProxyType(dict(self.identities))
+            )
+        else:
             msg = f"identities must be a Mapping, got {type(self.identities).__name__}"
             raise InvalidPriorStateError(msg)
         for k, v in self.identities.items():
@@ -517,8 +610,9 @@ def build_prior_identity_registry(
             raise InvalidPriorStateError(msg) from exc
 
         if parsed_lifecycle == IdentityLifecycle.ACTIVE:
-            if not isinstance(source_hash, str) or not HEX_DIGEST_64_REGEX.match(
-                source_hash
+            if (
+                not isinstance(source_hash, str)
+                or HEX_DIGEST_64_REGEX.fullmatch(source_hash) is None
             ):
                 msg = (
                     f"Active prior identity '{parsed_uuid}' requires 64-hex lowercase "
@@ -558,6 +652,17 @@ class PlanCounts:
     void_count: int
     unchanged_count: int
 
+    def __post_init__(self) -> None:
+        for name, val in [
+            ("insert_count", self.insert_count),
+            ("edit_count", self.edit_count),
+            ("void_count", self.void_count),
+            ("unchanged_count", self.unchanged_count),
+        ]:
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                msg = f"{name} must be a non-negative integer, got {val!r}"
+                raise SourceChangePlanError(msg)
+
 
 @dataclass(frozen=True, slots=True)
 class PlanItem:
@@ -573,6 +678,81 @@ class PlanItem:
     prior_source_hash: str | None
     current_source_hash: str | None
     current_row: ValidatedSourceRow | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action, PlanAction):
+            msg = f"action must be PlanAction, got {self.action!r}"
+            raise SourceChangePlanError(msg)
+        if self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets:
+            msg = f"sheet_name must be approved sheet, got {self.sheet_name!r}"
+            raise SourceChangePlanError(msg)
+        if (
+            isinstance(self.stable_id, bool)
+            or not isinstance(self.stable_id, uuid.UUID)
+            or self.stable_id.version != 7
+        ):
+            msg = f"stable_id must be UUIDv7, got {self.stable_id!r}"
+            raise SourceChangePlanError(msg)
+        if self.canonical_uuid != str(self.stable_id).lower():
+            msg = (
+                f"canonical_uuid mismatch: {self.canonical_uuid!r} vs "
+                f"{self.stable_id!r}"
+            )
+            raise SourceChangePlanError(msg)
+        if self.planned_revision is not None:
+            if (
+                isinstance(self.planned_revision, bool)
+                or not isinstance(self.planned_revision, int)
+                or self.planned_revision < 1
+            ):
+                msg = (
+                    "planned_revision must be positive int, got "
+                    f"{self.planned_revision!r}"
+                )
+                raise SourceChangePlanError(msg)
+        if self.prior_revision is not None:
+            if (
+                isinstance(self.prior_revision, bool)
+                or not isinstance(self.prior_revision, int)
+                or self.prior_revision < 1
+            ):
+                msg = (
+                    f"prior_revision must be positive int, got {self.prior_revision!r}"
+                )
+                raise SourceChangePlanError(msg)
+        if self.prior_lifecycle is not None and not isinstance(
+            self.prior_lifecycle, IdentityLifecycle
+        ):
+            msg = (
+                "prior_lifecycle must be IdentityLifecycle, got "
+                f"{self.prior_lifecycle!r}"
+            )
+            raise SourceChangePlanError(msg)
+        if self.prior_source_hash is not None:
+            if (
+                not isinstance(self.prior_source_hash, str)
+                or HEX_DIGEST_64_REGEX.fullmatch(self.prior_source_hash) is None
+            ):
+                msg = (
+                    "prior_source_hash must be 64-hex lowercase, got "
+                    f"{self.prior_source_hash!r}"
+                )
+                raise SourceChangePlanError(msg)
+        if self.current_source_hash is not None:
+            if (
+                not isinstance(self.current_source_hash, str)
+                or HEX_DIGEST_64_REGEX.fullmatch(self.current_source_hash) is None
+            ):
+                msg = (
+                    "current_source_hash must be 64-hex lowercase, got "
+                    f"{self.current_source_hash!r}"
+                )
+                raise SourceChangePlanError(msg)
+        if self.current_row is not None and not isinstance(
+            self.current_row, ValidatedSourceRow
+        ):
+            msg = f"current_row must be ValidatedSourceRow, got {self.current_row!r}"
+            raise SourceChangePlanError(msg)
 
     @property
     def is_reactivation(self) -> bool:
@@ -593,6 +773,79 @@ class DeterministicSourceChangePlan:
     per_sheet_counts: MappingProxyType[str, PlanCounts]
     current_sheet_snapshot_hashes: MappingProxyType[str, str]
     current_sheet_row_counts: MappingProxyType[str, int]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.items, Iterable):
+            object.__setattr__(self, "items", tuple(self.items))
+        else:
+            msg = f"items must be an Iterable, got {type(self.items).__name__}"
+            raise SourceChangePlanError(msg)
+
+        if isinstance(self.per_sheet_counts, (Mapping, MappingProxyType)):
+            object.__setattr__(
+                self,
+                "per_sheet_counts",
+                MappingProxyType(dict(self.per_sheet_counts)),
+            )
+        else:
+            msg = (
+                "per_sheet_counts must be a Mapping, got "
+                f"{type(self.per_sheet_counts).__name__}"
+            )
+            raise SourceChangePlanError(msg)
+
+        if isinstance(self.current_sheet_snapshot_hashes, (Mapping, MappingProxyType)):
+            object.__setattr__(
+                self,
+                "current_sheet_snapshot_hashes",
+                MappingProxyType(dict(self.current_sheet_snapshot_hashes)),
+            )
+        else:
+            msg = (
+                "current_sheet_snapshot_hashes must be a Mapping, got "
+                f"{type(self.current_sheet_snapshot_hashes).__name__}"
+            )
+            raise SourceChangePlanError(msg)
+
+        if isinstance(self.current_sheet_row_counts, (Mapping, MappingProxyType)):
+            object.__setattr__(
+                self,
+                "current_sheet_row_counts",
+                MappingProxyType(dict(self.current_sheet_row_counts)),
+            )
+        else:
+            msg = (
+                "current_sheet_row_counts must be a Mapping, got "
+                f"{type(self.current_sheet_row_counts).__name__}"
+            )
+            raise SourceChangePlanError(msg)
+
+        if self.version != SOURCE_CHANGE_PLAN_VERSION:
+            msg = (
+                f"version must be '{SOURCE_CHANGE_PLAN_VERSION}', got {self.version!r}"
+            )
+            raise SourceChangePlanError(msg)
+
+        if not isinstance(self.total_counts, PlanCounts):
+            msg = f"total_counts must be PlanCounts, got {self.total_counts!r}"
+            raise SourceChangePlanError(msg)
+
+        approved_sheets = tuple(RAW_CONTRACT_REGISTRY.sheets.keys())
+        if tuple(self.per_sheet_counts.keys()) != approved_sheets:
+            msg = f"per_sheet_counts keys must match approved sheets {approved_sheets}"
+            raise SourceChangePlanError(msg)
+        if tuple(self.current_sheet_snapshot_hashes.keys()) != approved_sheets:
+            msg = (
+                "current_sheet_snapshot_hashes keys must match approved "
+                f"sheets {approved_sheets}"
+            )
+            raise SourceChangePlanError(msg)
+        if tuple(self.current_sheet_row_counts.keys()) != approved_sheets:
+            msg = (
+                "current_sheet_row_counts keys must match approved sheets "
+                f"{approved_sheets}"
+            )
+            raise SourceChangePlanError(msg)
 
 
 def plan_source_changes(
