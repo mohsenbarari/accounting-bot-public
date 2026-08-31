@@ -63,7 +63,7 @@ configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 112 items                                       
+collected 112 items
 
 tests/test_architecture_guard.py ..............     [ 12%]
 tests/test_canonical_date.py ..........             [ 21%]
