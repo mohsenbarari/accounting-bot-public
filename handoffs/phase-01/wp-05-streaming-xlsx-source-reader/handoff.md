@@ -16,6 +16,8 @@
   - `b5ce0b5` (test(local_agent): complete R5-A evidence for E-01, E-02, E-03 (WP-05))
   - `8fab170` (docs(handoff): record R5-A evidence completion and benchmark results (WP-05))
   - `1ada40e` (fix(local_agent): selective SST index collection and activity exclusion per R5-02 (WP-05))
+  - `4049a6c` (docs(handoff): record R5-B evidence completion and benchmark results (WP-05))
+  - `b227875` (fix(local_agent): remediate R5-B findings RB-01..RB-04 for WP-05)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -25,27 +27,27 @@
 
 Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_agent` using standard library `zipfile` and existing pinned `lxml 6.1.2`, extracting literal raw source inputs from the four approved sheets according to `RAW_CONTRACT_REGISTRY`, strictly excluding formula elements and formula coverage ranges, evaluating row activity from literal inputs, validating Persian and technical headers and UUIDv7 identifiers, and returning an immutable `XlsxSourceReadResult` containing a validated `ValidatedSourceWorkbookSnapshot` (WP-04) alongside an immutable mapping of physical row locations (`SourceRowLocation`).
 
-This turn completes the limited remediation of review delivery R5-B (Finding R5-02 and residual E-04 documentation updates):
-- **Finding R5-02 (SST index selection and activity detection):**
-  - Updated `_discover_sheet_metadata_and_needed_sst` (Pass 1) to collect candidate SST indices for headers, activity columns, and secondary retained columns (`record_id`, `date_raw`), while guarding leaf text extraction against premature parsing.
-  - Excluded formula-covered ranges from candidate activity cells prior to SST decoding.
-  - Implemented multi-phase SST resolution: required headers and candidate activity SST cells are decoded first; candidate rows are evaluated against decoded activity strings; secondary SST entries (`record_id`, `date_raw`) are decoded only if candidate rows are confirmed active.
-  - Inactive rows' secondary SST entries (such as corrupt surrogate `_xD800_` at index 0) and unneeded leaf tags are completely skipped without parsing or raising errors.
-  - Created standalone regression test suite `tests/test_xlsx_source_reader_sst_activity_regressions.py` covering Cases 1–10, paired controls, shared SST entries, and all 4 sheets (14 tests total).
-- **Residual E-04 Documentation Updates:**
+This turn completes the limited remediation of review delivery R5-B based on findings RB-01 through RB-05:
+- **Finding RB-01 (Pass 1 inlineStr container extraction):**
+  - Updated `_discover_sheet_metadata_and_needed_sst` (Pass 1) to pass `&lt;is&gt;` child element directly to `_extract_text_from_si_or_is` instead of `&lt;c&gt;`.
+  - Supports plain text, rich runs (`&lt;r&gt;&lt;t&gt;`), XML comments/tails, and Persian/ASCII zeros across all 4 sheets and namespaces.
+- **Finding RB-02 (Escape & whitespace unification):**
+  - Unified OOXML escape decoding (`_decode_ooxml_escapes`) and whitespace semantics so direct string cells (`t="str"`) decode escapes before testing activity.
+  - Escaped whitespace (`_x0020_`, `_x0009_`, `_x000D_`, `_x00A0_`) is evaluated as inactive whitespace, whereas literal escaped markers (`_x005F_x0020_`) remain active.
+- **Finding RB-03 (Lazy secondary SST evaluation & consumer coordinates):**
+  - Secondary SST index evaluation is strictly lazy: candidate cells in inactive rows are not evaluated for `int()` or length limits, safely skipping 5000-digit string indices.
+  - Decoded SST entries track exact consumer coordinates (`sheet_name`, `cell_ref`, `physical_row_number`), propagating location metadata to needed SST decode failures and surrogate errors.
+- **Finding RB-04 (Regression suite completion):**
+  - Created 26 comprehensive standalone regression tests in `tests/test_xlsx_source_reader_sst_activity_regressions.py` covering RB-01..RB-04, Cases 1–10, paired controls, full snapshot equality, WP-03 source hashes, Decimal scale preservation, equivalent representations/permutations, and stream pass bounds.
+- **Finding RB-05 (Documentation integrity):**
   - Synchronized `acceptance-matrix.md`, `handoff.md`, and `test-results.txt`.
-  - XR-13 explicitly distinguishes lint/type/regression test PASS from performance benchmark measurements.
-  - Speculative causal phrasing ("under host load") removed; neutrally recorded: "Measured time exceeded limit; cause of variance not proven; R5-06 open".
-  - XR-08 states full transition matrix is deferred to future completion within WP-05 / R5-05.
-  - XR-09/10/11 accurately describe targeted subset tested without claiming full Hypothesis property testing.
-  - Exact scan commands recorded matching test results.
-  - Historical RED for R5-A explicitly marked as "ثبت نشده".
+  - Restored approved performance criterion (< 15.0s, < 128 MiB) under XR-12; documented historical RED baseline and exact command outputs in `test-results.txt`.
 
 ### Review items status
 
 - Finding R5-01 (Raw preservation & numeric validation): Remediated in R5-A and verified.
 - Finding R5-03 (Cell coordinate validation & bounds): Remediated in R5-A and verified.
-- Finding R5-02 (SST index selection & activity detection): Remediated in R5-B and ready for review.
+- Finding R5-02 / RB-01..RB-05 (SST index selection, inlineStr, escape semantics, lazy evaluation, regression suite): Remediated in R5-B and ready for review.
 - Findings R5-04, R5-05, R5-06: PENDING subsequent review rounds in WP-05.
 
 ### In scope
@@ -60,11 +62,11 @@ This turn completes the limited remediation of review delivery R5-B (Finding R5-
   - Strict text and leaf validation: Unsupported child tags inside text and value leaf nodes (t and v) raise `XlsxCellError(REASON_CELL_UNKNOWN_TYPE)` instead of false conversion; XML comments inside text nodes are preserved; strict worksheet root connection ignores nested worksheets inside `extLst`.
   - Raw preservation & numeric validation (Finding R5-01): Text in numeric/financial columns (`inlineStr`, `t="str"`, shared strings) retains exact original `str` (spaces, leading zeros, Persian/Arabic digits) in `raw_values`; financial numeric XML (`t=""` or `t="n"` with `v` element text) directly becomes `Decimal` (never `int` or `float`), preserving exact scale/precision; strict numeric XML regex applies only to numeric XML; active rows with explicit invalid/blank text in numeric columns raise `XlsxCellError(REASON_CELL_INVALID_NUMERIC_LEXEME)`; true missing cells remain `None`.
   - Exact Persian & technical headers matching: Validates all required Persian headers and technical ID headers (`record_id`) on row 1 with strict string equality (no `.strip()`), rejecting formula-backed or array-formula covered headers.
-  - Selective SST index decoding (Finding R5-02): Decodes only SST indices needed for active source inputs (excluding derived columns, non-whitelisted columns, formula cells, formula-covered cells, optional headers, and inactive rows). Corrupt SST strings at unused indices (e.g. index 0) do not fail parsing on inactive rows.
+  - Selective SST index decoding (Finding R5-02 & RB-01..RB-03): Decodes only SST indices needed for active source inputs (excluding derived columns, non-whitelisted columns, formula cells, formula-covered cells, optional headers, and inactive rows). Inactive rows with corrupt SST strings (e.g. index 0) or unneeded leaf tags in secondary columns are completely skipped.
   - Strict numeric/SST grammar: Strict regex `^(?:0|[1-9][0-9]*)$` for SST indices; domain and canonical date validation errors directly consumed and mapped to `XlsxCellError` with coordinate metadata and zero data leakage.
 - Public exports in `apps/local_agent/src/accounting_local_agent/__init__.py`.
 - Documentation in `apps/local_agent/README.md`.
-- Comprehensive test suite comprising 89 base tests, 38 reader suite tests in `tests/test_xlsx_source_reader.py`, 7 raw contract regression tests in `tests/test_xlsx_source_reader_raw_contract_regressions.py`, and 14 SST activity regression tests in `tests/test_xlsx_source_reader_sst_activity_regressions.py` (148 tests total).
+- Comprehensive test suite comprising 89 base tests, 38 reader suite tests in `tests/test_xlsx_source_reader.py`, 7 raw contract regression tests in `tests/test_xlsx_source_reader_raw_contract_regressions.py`, and 26 SST activity regression tests in `tests/test_xlsx_source_reader_sst_activity_regressions.py` (160 tests total).
 - Handoff package and acceptance evidence.
 
 ### Out of scope
@@ -90,9 +92,9 @@ This turn completes the limited remediation of review delivery R5-B (Finding R5-
 
 | File | Change | Reason |
 |---|---|---|
-| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Implemented R5-02 selective SST candidate collection, formula coverage filtering, guarded leaf extraction, and two-phase SST resolution. |
-| `tests/test_xlsx_source_reader_sst_activity_regressions.py` | Added | Added 14 standalone regression tests covering R5-02 Cases 1–10, paired controls, shared SST entries, and 4-sheet coverage. |
-| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Synchronized handoff documents, acceptance matrix, and captured command test results for R5-B remediation and E-04 fixes. |
+| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Implemented RB-01 inlineStr container extraction, RB-02 escape/whitespace unification, RB-03 lazy secondary SST evaluation and consumer coordinate propagation. |
+| `tests/test_xlsx_source_reader_sst_activity_regressions.py` | Modified | Added RB-01..RB-04 regression tests (26 tests total) for snapshot equality, hashes, scale preservation, permutations, stream bounds, and Cases 1–10. |
+| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Synchronized handoff documents, acceptance matrix, and captured command test results for R5-B remediation. |
 
 ## Schema and migrations
 
@@ -111,10 +113,10 @@ This turn completes the limited remediation of review delivery R5-B (Finding R5-
 | `uv run ruff format --check .` | 0 | Verify formatting compliance across 54 files |
 | `uv run ruff check .` | 0 | Verify linting rules compliance |
 | `uv run mypy .` | 0 | Verify strict static typing across 21 source files |
-| `uv run pytest tests/test_xlsx_source_reader_sst_activity_regressions.py -v` | 0 | Execute standalone R5-B SST activity regression tests (14 passed in 0.55s) |
-| `uv run pytest tests/test_xlsx_source_reader_raw_contract_regressions.py -v` | 0 | Execute standalone R5-A raw contract regression tests (7 passed in 0.75s) |
+| `uv run pytest tests/test_xlsx_source_reader_sst_activity_regressions.py -v` | 0 | Execute standalone R5-B SST activity regression tests (26 passed in 0.84s) |
+| `uv run pytest tests/test_xlsx_source_reader_raw_contract_regressions.py -v` | 0 | Execute standalone R5-A raw contract regression tests (7 passed in 0.63s) |
 | `uv run pytest tests/test_xlsx_source_reader.py -v` | 0 | Execute base reader test suite (38 passed in 15.43s) |
-| `uv run pytest -v` | 0 | Execute full suite of 148 tests (148 passed in 21.11s) |
+| `uv run pytest -v` | 0 | Execute full suite of 160 tests (160 passed in 21.42s) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
 | `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
 | `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); sys.exit(0 if res.returncode == 1 else 1)"` | 0 | Verify zero sensitive credentials, IPs or real phone numbers in code/tests |
