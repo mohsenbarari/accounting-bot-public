@@ -2,9 +2,13 @@
 
 - Phase: 1 — source and data-model foundation
 - Gate contribution: G1 deterministic Insert/Edit/Void/No-op classification only; this Work Package cannot close G1
-- Status: Issued — implementation and evidence pending
+- Status: Accepted and merged
 - Issued by: Codex Project Manager
 - Issued on: 2026-08-30
+- Accepted by: Codex Project Manager
+- Accepted on: 2026-08-31
+- Review evidence: PR #16 and final CI Run `33360537972`
+- Merge commit: `ebdbe837bf5064ad1809f7f66da8fac9ba1d6a55`
 - Required skill: `accounting-bot-implementer`
 - Branch: `antigravity/phase-01-deterministic-source-change-plan`
 - Baseline: latest clean `origin/main` containing this Work Package and ADR-0007
@@ -201,3 +205,16 @@ Follow the repository skill exactly. Commit the bounded implementation and compl
 - `test-results.txt`
 
 Run the skill validator, then report branch/baseline, commits, changed files, public API, transition table implementation, count/hash behavior, immutability strategy, property/complexity evidence, every command and exit code, Handoff path, remaining risks and pending decisions. Stop for Codex review. Do not push, open a PR, merge, deploy or continue into another Work Package.
+
+## Independent acceptance record
+
+Codex Project Manager accepted this package after independently reviewing candidate `c5be3b43d2121b6f3103c2a4ea01ea1dc93cee84` against baseline `64c300cb54df2b3b2dad822f7f59bc6f367a513c`, verifying all three correction rounds and merging [PR #16](https://github.com/mohsenbarari/accounting-bot-public/pull/16).
+
+- All 89 tests passed on the development server and in both Windows and Linux jobs of [CI Run 33360537972](https://github.com/mohsenbarari/accounting-bot-public/actions/runs/33360537972).
+- Independent regression probes passed for forged/incomplete snapshots, malformed prior state, mutation of caller-owned mappings, inconsistent workbook indexes, invalid count types, malformed digest suffixes and deterministic raw-key/serialization order.
+- The four-sheet raw-key regression exercises direct constructors and the builder. The property test uses independently created mappings and compares raw-key order, rows, hashes, full plan items, revisions, lifecycle states and counts.
+- The independently repeated 15,000-row synthetic benchmark measured `build_duration: 2.5017s` and `plan_duration: 0.2897s`, below the package thresholds of 5.0s and 1.0s. Reproduction: `uv run pytest tests/test_source_change_plan.py -k test_synthetic_15000_row_complexity_benchmark -s`.
+- Lockfile check, frozen workspace/group sync, Ruff format/lint, strict mypy, Handoff validation, diff checks and failure-on-match prohibited-asset/sensitive-pattern scans passed.
+- The shared `canonical_hashing.py` digest-validation correction rejects leading/trailing newlines without changing valid v1 canonical bytes, versions or Golden Vectors.
+
+Acceptance is limited to the pure snapshot/planning contract. Real-workbook extraction and performance, row/business validation, persisted revisions, atomic SQLite import, Outbox, financial effects and end-to-end G1 evidence remain outside this package. No real workbook/database, identity, secret or production asset was accessed or modified by this work. G1 remains open.

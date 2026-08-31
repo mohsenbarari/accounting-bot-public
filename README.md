@@ -6,7 +6,7 @@ This public repository is the governed operational source for the Telegram accou
 
 - Phase: 1 — source and data-model foundation
 - G0: approved on 2026-08-30
-- Product implementation: Work Packages 01 through 03 accepted and merged; Work Package 04 issued; G1 remains open
+- Product implementation: Work Packages 01 through 04 accepted and merged; G1 remains open
 - Reference Excel modification: not authorized
 
 Product implementation starts only after the Codex Project Manager records an evidence-backed G0 approval in [ROADMAP.md](ROADMAP.md). G0 is now approved; later work remains bounded by phase Gates and protected-asset rules.
@@ -20,7 +20,7 @@ Product implementation starts only after the Codex Project Manager records an ev
 - [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md) fixes the versioned canonical byte and source/snapshot hashing contract.
 - [Work Package 03](docs/work-packages/phase-01/WP-03-canonical-source-hashing.md) is accepted and merged: it implements deterministic source canonicalization, Jalali dates and source/sheet change-detection hashes with cross-platform evidence.
 - [ADR-0007](docs/adr/ADR-0007-full-snapshot-change-plan.md) fixes the complete-source-snapshot, stable-identity lifecycle and deterministic change-plan contract.
-- [Work Package 04](docs/work-packages/phase-01/WP-04-deterministic-source-change-plan.md) is issued for Antigravity implementation and remains pending independent Codex review.
+- [Work Package 04](docs/work-packages/phase-01/WP-04-deterministic-source-change-plan.md) is accepted and merged: it establishes validated, deeply immutable full-source snapshots and deterministic Insert/Edit/Void/Unchanged plans with independent review and cross-platform evidence. It does not yet read Excel or commit database changes.
 - [accounting-bot-implementer](.agents/skills/accounting-bot-implementer/SKILL.md) governs future Antigravity work packages and handoffs.
 
 The Owner defines the product vision, performs final acceptance testing and reports corrections. Codex acts as Project Manager and independent reviewer, maintaining the Roadmap and deciding work-package acceptance, Gates and merges. Antigravity only implements bounded approved work packages and cannot self-approve.
