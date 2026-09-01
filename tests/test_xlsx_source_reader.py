@@ -11,6 +11,8 @@ import io
 import json
 import subprocess
 import sys
+import threading
+import time
 import uuid
 import zipfile
 from decimal import Decimal
@@ -2274,12 +2276,12 @@ def test_xr12_synthetic_15000_row_benchmark(
         )
 
     bench_code = f"""
-import json, sys, time
+import json, sys, threading, time
 from pathlib import Path
 from accounting_contracts.raw_input_contracts import RAW_CONTRACT_REGISTRY
 from accounting_local_agent.xlsx_source_reader import read_xlsx_source_snapshot
 
-def get_peak_mem_mib():
+def get_current_process_rss_mib() -> float:
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
@@ -2325,24 +2327,90 @@ def get_peak_mem_mib():
                 f"Windows GetProcessMemoryInfo failed with error code {{err}}"
             )
 
-        val = counters.PeakWorkingSetSize / (1024.0 * 1024.0)
+        val = counters.WorkingSetSize / (1024.0 * 1024.0)
         if val <= 0.0:
             raise RuntimeError(
-                f"Windows GetProcessMemoryInfo returned non-positive peak: {{val}}"
+                f"Windows GetProcessMemoryInfo returned non-positive set: {{val}}"
             )
         return val
+    elif sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/status", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            val_kb = int(parts[1])
+                            val_mib = val_kb / 1024.0
+                            if val_mib > 0.0:
+                                return val_mib
+                            raise RuntimeError(
+                                f"Linux VmRSS non-positive: {{val_kb}}"
+                            )
+                        raise RuntimeError(
+                            f"Linux malformed VmRSS line: {{line.strip()}}"
+                        )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to read Linux current RSS: {{exc}}"
+            ) from exc
+        raise RuntimeError("Linux /proc/self/status missing VmRSS entry")
     else:
-        import resource
-        ru = resource.getrusage(resource.RUSAGE_SELF)
-        return ru.ru_maxrss / 1024.0
+        raise RuntimeError(f"Unsupported benchmark platform: {{sys.platform}}")
 
-baseline_rss_mib = get_peak_mem_mib()
+class CallWindowRssSampler:
+    def __init__(self, interval_seconds: float = 0.005) -> None:
+        self.interval_seconds = interval_seconds
+        self._stop_event = threading.Event()
+        self._thread = None
+        self.samples = []
+        self.error = None
+        self._lock = threading.Lock()
+
+    def _sample_loop(self):
+        try:
+            while not self._stop_event.is_set():
+                val = get_current_process_rss_mib()
+                with self._lock:
+                    self.samples.append(val)
+                time.sleep(self.interval_seconds)
+        except Exception as exc:
+            self.error = exc
+
+    def start(self):
+        initial_val = get_current_process_rss_mib()
+        with self._lock:
+            self.samples.append(initial_val)
+        self._stop_event.clear()
+        self.error = None
+        self._thread = threading.Thread(target=self._sample_loop, daemon=True)
+        self._thread.start()
+        return initial_val
+
+    def stop_and_get_peak(self):
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        final_val = get_current_process_rss_mib()
+        with self._lock:
+            self.samples.append(final_val)
+        if self.error is not None:
+            raise RuntimeError(
+                f"Call-window RSS sampler failed: {{self.error}}"
+            ) from self.error
+        if not self.samples:
+            raise RuntimeError("Call-window RSS sampler recorded zero samples")
+        baseline = self.samples[0]
+        peak = max(self.samples)
+        return baseline, peak
 
 pkg = Path({repr(str(pkg_path))})
+sampler = CallWindowRssSampler(interval_seconds=0.005)
+baseline_current_rss_mib = sampler.start()
 t0 = time.perf_counter()
 res = read_xlsx_source_snapshot(pkg)
 t1 = time.perf_counter()
-peak_mib = get_peak_mem_mib()
+baseline_check, call_peak_rss_mib = sampler.stop_and_get_peak()
 
 sheet_hashes = {{
     s_name: res.snapshot.sheets[s_name].sheet_snapshot_hash
@@ -2353,8 +2421,8 @@ out = {{
     "rows": res.snapshot.total_row_count,
     "locations": len(res.locations_by_uuid),
     "read_build_seconds": round(t1 - t0, 4),
-    "baseline_rss_mib": round(baseline_rss_mib, 2),
-    "peak_rss_mib": round(peak_mib, 2),
+    "baseline_current_rss_mib": round(baseline_current_rss_mib, 2),
+    "call_peak_rss_mib": round(call_peak_rss_mib, 2),
     "version": res.version,
     "platform": sys.platform,
     "sheet_hashes": sheet_hashes,
@@ -2376,16 +2444,16 @@ print(json.dumps(out))
 
     rows = data["rows"]
     duration = data["read_build_seconds"]
-    baseline_rss_mib = data["baseline_rss_mib"]
-    peak_rss_mib = data["peak_rss_mib"]
+    baseline_current_rss_mib = data["baseline_current_rss_mib"]
+    call_peak_rss_mib = data["call_peak_rss_mib"]
     sheet_hashes = data["sheet_hashes"]
 
     with capsys.disabled():
         print(
             f"\n[WP-05 BENCHMARK] 15,000 active rows -> "
             f"read_build_seconds: {duration:.4f}s | "
-            f"baseline_rss_mib: {baseline_rss_mib:.2f} MiB | "
-            f"peak_rss_mib: {peak_rss_mib:.2f} MiB | "
+            f"baseline_current_rss_mib: {baseline_current_rss_mib:.2f} MiB | "
+            f"call_peak_rss_mib: {call_peak_rss_mib:.2f} MiB | "
             f"rows: {rows} | platform: {data['platform']}"
         )
 
@@ -2393,10 +2461,12 @@ print(json.dumps(out))
     assert data["locations"] == 15000
     assert data["version"] == XLSX_SOURCE_READER_VERSION
     assert duration < 15.0, f"Benchmark exceeded 15.0s limit: {duration}s"
-    assert peak_rss_mib < 128.0, (
-        f"Peak RSS exceeded 128.0 MiB limit: {peak_rss_mib} MiB"
+    assert call_peak_rss_mib < 128.0, (
+        f"Call peak RSS exceeded 128.0 MiB limit: {call_peak_rss_mib} MiB"
     )
-    assert peak_rss_mib > 0.0, f"Peak RSS should be positive: {peak_rss_mib}"
+    assert call_peak_rss_mib > 0.0, (
+        f"Call peak RSS should be positive: {call_peak_rss_mib}"
+    )
 
     # Literal deterministic 64-hex golden digests checked into the test
     expected_golden_hashes = {
@@ -2453,3 +2523,185 @@ def test_r6_windows_memory_probe_structure_and_types() -> None:
     counters = PROCESS_MEMORY_COUNTERS()
     counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
     assert counters.cb in (72, 40)
+
+
+def _parse_linux_proc_status_vmrss_mib(content: str) -> float:
+    """Parse VmRSS in MiB from /proc/self/status content (R5-E1/R5-E2 helper)."""
+    for line in content.splitlines():
+        if line.startswith("VmRSS:"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                val_kb = int(parts[1])
+                val_mib = val_kb / 1024.0
+                if val_mib > 0.0:
+                    return val_mib
+                raise RuntimeError(
+                    f"Linux /proc/self/status non-positive VmRSS: {val_kb}"
+                )
+            raise RuntimeError(
+                f"Linux /proc/self/status malformed VmRSS line: {line.strip()}"
+            )
+    raise RuntimeError("Linux /proc/self/status missing VmRSS entry")
+
+
+def _get_current_process_rss_mib() -> float:
+    """Read current process absolute RSS in MiB for calling process (R5-E1)."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_uint32),
+                ("PageFaultCount", ctypes.c_uint32),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.argtypes = []
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+
+        try:
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        except Exception:
+            psapi = kernel32
+
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+            ctypes.c_uint32,
+        ]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+
+        counters = PROCESS_MEMORY_COUNTERS()
+        counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+        handle = kernel32.GetCurrentProcess()
+        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            err = ctypes.get_last_error()
+            raise RuntimeError(
+                f"Windows GetProcessMemoryInfo failed with error code {err}"
+            )
+
+        val = counters.WorkingSetSize / (1024.0 * 1024.0)
+        if val <= 0.0:
+            raise RuntimeError(
+                f"Windows GetProcessMemoryInfo returned non-positive working set: {val}"
+            )
+        return val
+    elif sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/status", encoding="utf-8") as f:
+                return _parse_linux_proc_status_vmrss_mib(f.read())
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to read Linux current RSS from /proc/self/status: {exc}"
+            ) from exc
+    else:
+        raise RuntimeError(f"Unsupported benchmark platform: {sys.platform}")
+
+
+class _CallWindowRssSampler:
+    """Thread-safe background sampler for process current RSS (R5-E1)."""
+
+    def __init__(self, interval_seconds: float = 0.005) -> None:
+        self.interval_seconds = interval_seconds
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.samples: list[float] = []
+        self.error: Exception | None = None
+        self._lock = threading.Lock()
+
+    def _sample_loop(self) -> None:
+        try:
+            while not self._stop_event.is_set():
+                val = _get_current_process_rss_mib()
+                with self._lock:
+                    self.samples.append(val)
+                time.sleep(self.interval_seconds)
+        except Exception as exc:
+            self.error = exc
+
+    def start(self) -> float:
+        initial_val = _get_current_process_rss_mib()
+        with self._lock:
+            self.samples.append(initial_val)
+        self._stop_event.clear()
+        self.error = None
+        self._thread = threading.Thread(target=self._sample_loop, daemon=True)
+        self._thread.start()
+        return initial_val
+
+    def stop_and_get_peak(self) -> tuple[float, float]:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        final_val = _get_current_process_rss_mib()
+        with self._lock:
+            self.samples.append(final_val)
+        if self.error is not None:
+            raise RuntimeError(
+                f"Call-window RSS sampler failed: {self.error}"
+            ) from self.error
+        if not self.samples:
+            raise RuntimeError("Call-window RSS sampler recorded zero samples")
+        baseline = self.samples[0]
+        peak = max(self.samples)
+        return baseline, peak
+
+
+def test_r6_current_process_rss_probe_and_sampler() -> None:
+    """Validate current RSS probe, sampler lifecycle, baseline and peak (R5-E2)."""
+    current_rss = _get_current_process_rss_mib()
+    assert isinstance(current_rss, float)
+    assert current_rss > 0.0
+    assert current_rss < 1024.0
+
+    sampler = _CallWindowRssSampler(interval_seconds=0.002)
+    baseline = sampler.start()
+    assert baseline == current_rss or abs(baseline - current_rss) < 10.0
+
+    # Allocate some temporary memory and do work
+    temp_buf = [b"x" * 1024 for _ in range(5000)]
+    time.sleep(0.02)
+    del temp_buf
+
+    baseline_ret, peak = sampler.stop_and_get_peak()
+    assert baseline_ret == baseline
+    assert peak >= baseline
+    assert len(sampler.samples) >= 2
+    assert peak > 0.0
+
+
+def test_r6_current_process_rss_sampler_error_propagation() -> None:
+    """Validate that sampler thread errors propagate and cannot yield 0 (R5-E2)."""
+    sampler = _CallWindowRssSampler(interval_seconds=0.001)
+    sampler.start()
+    # Inject an error into the sampler
+    sampler.error = RuntimeError("Injected probe failure")
+    with pytest.raises(RuntimeError, match="Injected probe failure"):
+        sampler.stop_and_get_peak()
+
+
+def test_r6_linux_proc_status_vmrss_parser_rejections() -> None:
+    """Validate Linux /proc/self/status parser success and failure modes (R5-E2)."""
+    valid_content = "Name:\tpython\nVmPeak:\t 100000 kB\nVmRSS:\t  51200 kB\n"
+    assert abs(_parse_linux_proc_status_vmrss_mib(valid_content) - 50.0) < 1e-6
+
+    # Missing VmRSS
+    with pytest.raises(RuntimeError, match="missing VmRSS entry"):
+        _parse_linux_proc_status_vmrss_mib("Name:\tpython\nVmSize:\t 100000 kB\n")
+
+    # Malformed VmRSS (non-digit)
+    with pytest.raises(RuntimeError, match="malformed VmRSS line"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t not_a_number kB\n")
+
+    # Zero VmRSS
+    with pytest.raises(RuntimeError, match="non-positive VmRSS"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t 0 kB\n")
