@@ -690,7 +690,7 @@ def test_sa07_zip_central_directory_only_and_no_testzip_or_open_called(
     src = tmp_path / "extra_members.xlsx"
     src.write_bytes(builder.build_bytes())
 
-    # Intercept ZipFile.open and ZipFile.testzip: they must NOT be called for reading entries
+    # Intercept ZipFile.open and ZipFile.testzip: must NOT be called for reading
     def forbidden_open(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("ZipFile.open was called during acquisition!")
 
@@ -1062,9 +1062,7 @@ def test_sa11_concurrent_disjoint_acquisitions(tmp_path: Path) -> None:
     builder3.add_sheet_rows(
         "ورود-خروج", [_sample_inventory_movements_row_data(u3_3, 2)]
     )
-    builder3.add_sheet_rows(
-        "لیست کسبه", [_sample_business_parties_row_data(u3_4, 2)]
-    )
+    builder3.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u3_4, 2)])
     data3 = builder3.build_bytes()
 
     src1.write_bytes(data1)
