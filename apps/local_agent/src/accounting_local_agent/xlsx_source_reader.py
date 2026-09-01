@@ -355,10 +355,13 @@ class XlsxSourceReadResult:
                 )
             seen_locations.add(loc_key)
 
+        sorted_locations = dict(
+            sorted(copied_locations.items(), key=lambda item: item[0].bytes)
+        )
         object.__setattr__(
             self,
             "locations_by_uuid",
-            MappingProxyType(copied_locations),
+            MappingProxyType(sorted_locations),
         )
 
 

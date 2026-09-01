@@ -25,6 +25,7 @@ from accounting_contracts.source_change_plan import (
     IdentityLifecycle,
     IdentityRelocationError,
     PlanAction,
+    PriorIdentityRegistry,
     PriorIdentityState,
     SourceRowInput,
     SourceSheetInput,
@@ -335,6 +336,7 @@ class SyntheticXlsxBuilder:
         # Special dict for custom formula/cell controls
         if isinstance(val, dict):
             t_attr = val.get("t")
+            s_attr = val.get("s")
             v_val = val.get("v")
             f_val = val.get("f")
             f_type = val.get("f_t")
@@ -343,6 +345,8 @@ class SyntheticXlsxBuilder:
             raw_inner = val.get("raw_inner")
 
             c_tag = f'<c r="{cell_ref}"'
+            if s_attr is not None:
+                c_tag += f' s="{s_attr}"'
             if t_attr is not None:
                 c_tag += f' t="{t_attr}"'
             c_tag += ">"
@@ -931,6 +935,44 @@ def test_r6_planner_full_lifecycle_transitions_and_idempotency(
     u3 = _make_uuid7(b"0000000000000003")
     u4 = _make_uuid7(b"0000000000000004")
 
+    def advance_registry(
+        prior_reg: PriorIdentityRegistry, plan: Any
+    ) -> PriorIdentityRegistry:
+        states = dict(prior_reg.identities)
+        for item in plan.items:
+            if item.action == PlanAction.UNCHANGED:
+                assert item.prior_revision is not None
+                assert item.prior_lifecycle is not None
+                states[item.stable_id] = PriorIdentityState(
+                    stable_id=item.stable_id,
+                    canonical_uuid=item.canonical_uuid,
+                    home_sheet=item.sheet_name,
+                    latest_revision=item.prior_revision,
+                    lifecycle=item.prior_lifecycle,
+                    source_hash=item.current_source_hash,
+                )
+            elif item.action in (PlanAction.INSERT, PlanAction.EDIT):
+                assert item.planned_revision is not None
+                states[item.stable_id] = PriorIdentityState(
+                    stable_id=item.stable_id,
+                    canonical_uuid=item.canonical_uuid,
+                    home_sheet=item.sheet_name,
+                    latest_revision=item.planned_revision,
+                    lifecycle=IdentityLifecycle.ACTIVE,
+                    source_hash=item.current_source_hash,
+                )
+            elif item.action == PlanAction.VOID:
+                assert item.planned_revision is not None
+                states[item.stable_id] = PriorIdentityState(
+                    stable_id=item.stable_id,
+                    canonical_uuid=item.canonical_uuid,
+                    home_sheet=item.sheet_name,
+                    latest_revision=item.planned_revision,
+                    lifecycle=IdentityLifecycle.VOIDED,
+                    source_hash=None,
+                )
+        return build_prior_identity_registry(list(states.values()))
+
     # Step 1: Initial file -> 4 Inserts (Planned revision = 1)
     builder1 = SyntheticXlsxBuilder()
     builder1.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u1, 2)])
@@ -944,30 +986,37 @@ def test_r6_planner_full_lifecycle_transitions_and_idempotency(
     p1.write_bytes(builder1.build_bytes())
 
     res1 = read_xlsx_source_snapshot(p1)
-    plan1 = plan_source_changes(res1.snapshot, build_prior_identity_registry([]))
+    empty_prior = build_prior_identity_registry([])
+    plan1 = plan_source_changes(res1.snapshot, empty_prior)
     assert plan1.total_counts.insert_count == 4
     assert plan1.total_counts.edit_count == 0
     assert plan1.total_counts.void_count == 0
     assert plan1.total_counts.unchanged_count == 0
 
+    for item in plan1.items:
+        assert item.action == PlanAction.INSERT
+        assert item.planned_revision == 1
+        assert item.prior_lifecycle is None
+        assert item.prior_revision is None
+        assert item.prior_source_hash is None
+        assert item.current_source_hash is not None
+        assert item.current_row is not None
+        assert not item.is_reactivation
+
     # Step 2: Idempotency with exact same snapshot
-    priors_rev1 = [
-        PriorIdentityState(
-            stable_id=item.stable_id,
-            canonical_uuid=item.canonical_uuid,
-            home_sheet=item.sheet_name,
-            latest_revision=1,
-            lifecycle=IdentityLifecycle.ACTIVE,
-            source_hash=item.current_source_hash,
-        )
-        for item in plan1.items
-    ]
-    prior_reg1 = build_prior_identity_registry(priors_rev1)
+    prior_reg1 = advance_registry(empty_prior, plan1)
     plan_same = plan_source_changes(res1.snapshot, prior_reg1)
     assert plan_same.total_counts.unchanged_count == 4
     assert plan_same.total_counts.insert_count == 0
     assert plan_same.total_counts.edit_count == 0
     assert plan_same.total_counts.void_count == 0
+    for item in plan_same.items:
+        assert item.action == PlanAction.UNCHANGED
+        assert item.planned_revision is None
+        assert item.prior_revision == 1
+        assert item.prior_lifecycle == IdentityLifecycle.ACTIVE
+        assert item.prior_source_hash == item.current_source_hash
+        assert not item.is_reactivation
 
     # Step 3: Edit row u1 and Void row u2 -> 1 Edit, 1 Void, 2 Unchanged
     builder2 = SyntheticXlsxBuilder()
@@ -987,60 +1036,51 @@ def test_r6_planner_full_lifecycle_transitions_and_idempotency(
     assert plan2.total_counts.unchanged_count == 2
     assert plan2.total_counts.insert_count == 0
 
-    # Step 4: Advance to Rev 2, then Reactivate u2 in SAME home sheet (دریافت-پرداخت)
-    priors_rev2 = []
-    for item in plan2.items:
-        if item.action == PlanAction.EDIT:
-            priors_rev2.append(
-                PriorIdentityState(
-                    stable_id=item.stable_id,
-                    canonical_uuid=item.canonical_uuid,
-                    home_sheet=item.sheet_name,
-                    latest_revision=2,
-                    lifecycle=IdentityLifecycle.ACTIVE,
-                    source_hash=item.current_source_hash,
-                )
-            )
-        elif item.action == PlanAction.VOID:
-            priors_rev2.append(
-                PriorIdentityState(
-                    stable_id=item.stable_id,
-                    canonical_uuid=item.canonical_uuid,
-                    home_sheet=item.sheet_name,
-                    latest_revision=2,
-                    lifecycle=IdentityLifecycle.VOIDED,
-                    source_hash=item.current_source_hash,
-                )
-            )
-        else:  # UNCHANGED
-            priors_rev2.append(
-                PriorIdentityState(
-                    stable_id=item.stable_id,
-                    canonical_uuid=item.canonical_uuid,
-                    home_sheet=item.sheet_name,
-                    latest_revision=1,
-                    lifecycle=IdentityLifecycle.ACTIVE,
-                    source_hash=item.current_source_hash,
-                )
-            )
-    prior_reg2 = build_prior_identity_registry(priors_rev2)
+    item_u1 = next(it for it in plan2.items if it.stable_id == u1)
+    assert item_u1.action == PlanAction.EDIT
+    assert item_u1.planned_revision == 2
+    assert item_u1.prior_revision == 1
+    assert item_u1.prior_lifecycle == IdentityLifecycle.ACTIVE
+    assert not item_u1.is_reactivation
 
-    # Re-introduce u2 in دریافت-پرداخت -> Reactivation planned as EDIT
+    item_u2 = next(it for it in plan2.items if it.stable_id == u2)
+    assert item_u2.action == PlanAction.VOID
+    assert item_u2.planned_revision == 2
+    assert item_u2.prior_revision == 1
+    assert item_u2.prior_lifecycle == IdentityLifecycle.ACTIVE
+    assert item_u2.current_source_hash is None
+    assert item_u2.current_row is None
+    assert not item_u2.is_reactivation
+
+    # Step 4: Advance to Rev 2, then Reactivate u2 in SAME home sheet (دریافت-پرداخت)
+    prior_reg2 = advance_registry(prior_reg1, plan2)
+    assert prior_reg2.identities[u2].lifecycle == IdentityLifecycle.VOIDED
+    assert prior_reg2.identities[u2].latest_revision == 2
+
     builder3 = SyntheticXlsxBuilder()
     builder3.add_sheet_rows("خرید-فروش", [edited_u1])
     builder3.add_sheet_rows(
         "دریافت-پرداخت", [_sample_receipts_payments_row_data(u2, 2)]
-    )  # Reactivated!
+    )
     builder3.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u3, 2)])
     builder3.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u4, 2)])
     p3 = tmp_path / "lifecycle3_reactivate.xlsx"
     p3.write_bytes(builder3.build_bytes())
     res3 = read_xlsx_source_snapshot(p3)
     plan3 = plan_source_changes(res3.snapshot, prior_reg2)
-    assert plan3.total_counts.edit_count == 1  # u2 reactivated as EDIT
+    assert plan3.total_counts.edit_count == 1
     assert plan3.total_counts.unchanged_count == 3
     assert plan3.total_counts.insert_count == 0
     assert plan3.total_counts.void_count == 0
+
+    item_u2_reactivate = next(it for it in plan3.items if it.stable_id == u2)
+    assert item_u2_reactivate.action == PlanAction.EDIT
+    assert item_u2_reactivate.planned_revision == 3
+    assert item_u2_reactivate.prior_revision == 2
+    assert item_u2_reactivate.prior_lifecycle == IdentityLifecycle.VOIDED
+    assert item_u2_reactivate.prior_source_hash is None
+    assert item_u2_reactivate.current_source_hash is not None
+    assert item_u2_reactivate.is_reactivation
 
     # Step 5: Cross-sheet identity movement error: Put u2 into ورود-خروج
     builder_cross = SyntheticXlsxBuilder()
@@ -1060,23 +1100,21 @@ def test_r6_planner_full_lifecycle_transitions_and_idempotency(
         plan_source_changes(res_cross.snapshot, prior_reg2)
 
     # Step 6: Advance to Revision 3 from plan3 and assert complete idempotency
-    priors_rev3 = [
-        PriorIdentityState(
-            stable_id=item.stable_id,
-            canonical_uuid=item.canonical_uuid,
-            home_sheet=item.sheet_name,
-            latest_revision=item.planned_revision or 1,
-            lifecycle=IdentityLifecycle.ACTIVE,
-            source_hash=item.current_source_hash,
-        )
-        for item in plan3.items
-    ]
-    prior_reg3 = build_prior_identity_registry(priors_rev3)
+    prior_reg3 = advance_registry(prior_reg2, plan3)
     plan_final_same = plan_source_changes(res3.snapshot, prior_reg3)
     assert plan_final_same.total_counts.unchanged_count == 4
     assert plan_final_same.total_counts.insert_count == 0
     assert plan_final_same.total_counts.edit_count == 0
     assert plan_final_same.total_counts.void_count == 0
+    for it in plan_final_same.items:
+        assert it.action == PlanAction.UNCHANGED
+        assert it.planned_revision is None
+        if it.stable_id == u1:
+            assert it.prior_revision == 2
+        elif it.stable_id == u2:
+            assert it.prior_revision == 3
+        elif it.stable_id in (u3, u4):
+            assert it.prior_revision == 1
 
 
 @given(
@@ -1086,6 +1124,7 @@ def test_r6_planner_full_lifecycle_transitions_and_idempotency(
     reverse_rows=st.booleans(),
     reverse_cells=st.booleans(),
     string_mode=st.sampled_from(["inline", "direct_str", "sst"]),
+    row_offset=st.integers(min_value=0, max_value=5),
 )
 @settings(max_examples=15, deadline=None)
 def test_r6_hypothesis_comprehensive_invariance_property(
@@ -1094,6 +1133,7 @@ def test_r6_hypothesis_comprehensive_invariance_property(
     reverse_rows: bool,
     reverse_cells: bool,
     string_mode: str,
+    row_offset: int,
 ) -> None:
     """Hypothesis test for snapshot and location invariance (C-02, R5-05, XR-09)."""
     tmp_path = tmp_path_factory.mktemp("hyp")
@@ -1101,22 +1141,40 @@ def test_r6_hypothesis_comprehensive_invariance_property(
     u2 = _make_uuid7(b"0000000000000002")
     u3 = _make_uuid7(b"0000000000000003")
     u4 = _make_uuid7(b"0000000000000004")
+    u5 = _make_uuid7(b"0000000000000005")
 
-    # Standard expected data matching exact sample helpers
+    r1_bf = 10 + row_offset
+    r2_bf = 20 + row_offset
+    r_dp = 2 + row_offset
+    r_vk = 2 + row_offset
+    r_lk = 2 + row_offset
+
+    row1_bf_data = _sample_buy_sell_row_data(u1, r1_bf)
+    row2_bf_data = _sample_buy_sell_row_data(u5, r2_bf)
+    row2_bf_data["C"] = "فروشگاه زرین"
+    row2_bf_data["F"] = "50.00"
+
+    bf_rows = (
+        [row2_bf_data, row1_bf_data] if reverse_rows else [row1_bf_data, row2_bf_data]
+    )
+
     rows_data = {
-        "خرید-فروش": [_sample_buy_sell_row_data(u1, 2)],
-        "دریافت-پرداخت": [_sample_receipts_payments_row_data(u2, 2)],
-        "ورود-خروج": [_sample_inventory_movements_row_data(u3, 2)],
-        "لیست کسبه": [_sample_business_parties_row_data(u4, 2)],
+        "خرید-فروش": bf_rows,
+        "دریافت-پرداخت": [_sample_receipts_payments_row_data(u2, r_dp)],
+        "ورود-خروج": [_sample_inventory_movements_row_data(u3, r_vk)],
+        "لیست کسبه": [_sample_business_parties_row_data(u4, r_lk)],
     }
 
     builder = SyntheticXlsxBuilder()
     sst_list = [
+        "DUMMY_UNUSED_0",
         "طلای آبشده",
+        "فروشگاه زرین",
         "بازرگانی احمدی",
         "همکار نمونه",
         "کارگاه زرگری",
         "فروشگاه نمونه",
+        str(u5).lower(),
         str(u1).lower(),
         str(u2).lower(),
         str(u3).lower(),
@@ -1131,6 +1189,8 @@ def test_r6_hypothesis_comprehensive_invariance_property(
         "تسویه حساب",
         "تحویل شمش",
         "SYNTHETIC-PHONE-001",
+        "توضیحات فاکتور",
+        "DUMMY_UNUSED_1",
     ]
     if string_mode == "sst":
         builder.shared_strings = sst_list
@@ -1166,6 +1226,38 @@ def test_r6_hypothesis_comprehensive_invariance_property(
     pkg_path = tmp_path / "hyp.xlsx"
     pkg_path.write_bytes(builder.build_bytes())
 
+    # Assert pre-reader XML reflects all generated parameters
+    with zipfile.ZipFile(pkg_path, "r") as zf_check:
+        bf_found = False
+        for fn in zf_check.namelist():
+            if fn.startswith("xl/worksheets/sheet"):
+                xml_content = zf_check.read(fn).decode("utf-8")
+                if f'r="{r1_bf}"' in xml_content or f'r="{r2_bf}"' in xml_content:
+                    bf_found = True
+                    pos_r1 = xml_content.find(f'<row r="{r1_bf}"')
+                    pos_r2 = xml_content.find(f'<row r="{r2_bf}"')
+                    if reverse_rows:
+                        assert pos_r2 < pos_r1, "Row reversal not observable in XML"
+                    else:
+                        assert pos_r1 < pos_r2, (
+                            "Row canonical order not observable in XML"
+                        )
+                    pos_z = xml_content.find(f'r="Z{r1_bf}"')
+                    pos_b = xml_content.find(f'r="B{r1_bf}"')
+                    if reverse_cells:
+                        assert pos_z < pos_b, "Cell reversal not observable in XML"
+                    else:
+                        assert pos_b < pos_z, (
+                            "Cell canonical order not observable in XML"
+                        )
+                    break
+        assert bf_found
+
+        if string_mode == "sst":
+            assert "xl/sharedStrings.xml" in zf_check.namelist()
+            sst_content = zf_check.read("xl/sharedStrings.xml").decode("utf-8")
+            assert "DUMMY_UNUSED_0" in sst_content
+
     res = read_xlsx_source_snapshot(pkg_path)
 
     # Assert exact equality with independent Oracle snapshot
@@ -1186,7 +1278,20 @@ def test_r6_hypothesis_comprehensive_invariance_property(
                             "discount_toman_raw": "0",
                             "notes_raw": "توضیحات فاکتور",
                         },
-                    )
+                    ),
+                    SourceRowInput(
+                        u5,
+                        {
+                            "date_raw": "1403/05/15",
+                            "party_name_raw": "فروشگاه زرین",
+                            "transaction_type_raw": "خرید",
+                            "item_name_raw": "طلای آبشده",
+                            "quantity_raw": "50.00",
+                            "unit_price_toman_raw": "1500000",
+                            "discount_toman_raw": "0",
+                            "notes_raw": "توضیحات فاکتور",
+                        },
+                    ),
                 ],
             ),
             SourceSheetInput(
@@ -1253,11 +1358,56 @@ def test_r6_hypothesis_comprehensive_invariance_property(
             assert r_act.source_hash == r_exp.source_hash
 
     assert res.locations_by_uuid == {
-        u1: SourceRowLocation("خرید-فروش", 2),
-        u2: SourceRowLocation("دریافت-پرداخت", 2),
-        u3: SourceRowLocation("ورود-خروج", 2),
-        u4: SourceRowLocation("لیست کسبه", 2),
+        u1: SourceRowLocation("خرید-فروش", r1_bf),
+        u5: SourceRowLocation("خرید-فروش", r2_bf),
+        u2: SourceRowLocation("دریافت-پرداخت", r_dp),
+        u3: SourceRowLocation("ورود-خروج", r_vk),
+        u4: SourceRowLocation("لیست کسبه", r_lk),
     }
+
+    # Plan source changes on nontrivial prior registry
+    u_voided = _make_uuid7(b"0000000000000099")
+    prior_reg = build_prior_identity_registry(
+        [
+            PriorIdentityState(
+                stable_id=u1,
+                canonical_uuid=str(u1).lower(),
+                home_sheet="خرید-فروش",
+                latest_revision=1,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash=expected_snap.all_rows_by_id[u1].source_hash,
+            ),
+            PriorIdentityState(
+                stable_id=u2,
+                canonical_uuid=str(u2).lower(),
+                home_sheet="دریافت-پرداخت",
+                latest_revision=1,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash="0" * 64,
+            ),
+            PriorIdentityState(
+                stable_id=u_voided,
+                canonical_uuid=str(u_voided).lower(),
+                home_sheet="لیست کسبه",
+                latest_revision=1,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash="1" * 64,
+            ),
+        ]
+    )
+
+    plan_act = plan_source_changes(res.snapshot, prior_reg)
+    plan_exp = plan_source_changes(expected_snap, prior_reg)
+
+    assert plan_act == plan_exp
+    assert plan_act.version == plan_exp.version
+    assert plan_act.items == plan_exp.items
+    assert plan_act.total_counts == plan_exp.total_counts
+    assert plan_act.per_sheet_counts == plan_exp.per_sheet_counts
+    assert (
+        plan_act.current_sheet_snapshot_hashes == plan_exp.current_sheet_snapshot_hashes
+    )
+    assert plan_act.current_sheet_row_counts == plan_exp.current_sheet_row_counts
 
 
 def test_r6_direct_construction_comprehensive_matrix() -> None:
@@ -1312,9 +1462,12 @@ def test_r6_direct_construction_comprehensive_matrix() -> None:
             SourceRowLocation("خرید-فروش", bad_r)  # type: ignore[arg-type]
         assert exc.value.reason == REASON_STRUCTURE_ROW_OUT_OF_BOUNDS
 
-    # 4. XlsxSourceReadResult: Positive valid construction
+    # 4. XlsxSourceReadResult: Positive valid construction & canonical ordering
     u1 = _make_uuid7(b"0000000000000001")
     u2 = _make_uuid7(b"0000000000000002")
+    u3 = _make_uuid7(b"0000000000000003")
+    u4 = _make_uuid7(b"0000000000000004")
+
     r1 = SourceRowInput(
         u1,
         {
@@ -1329,47 +1482,71 @@ def test_r6_direct_construction_comprehensive_matrix() -> None:
             for col in RAW_CONTRACT_REGISTRY.sheets["دریافت-پرداخت"].raw_columns
         },
     )
+    r3 = SourceRowInput(
+        u3,
+        {
+            col.field_name: None
+            for col in RAW_CONTRACT_REGISTRY.sheets["ورود-خروج"].raw_columns
+        },
+    )
+    r4 = SourceRowInput(
+        u4,
+        {
+            col.field_name: None
+            for col in RAW_CONTRACT_REGISTRY.sheets["لیست کسبه"].raw_columns
+        },
+    )
     snap = build_source_workbook_snapshot(
         [
             SourceSheetInput("خرید-فروش", [r1]),
             SourceSheetInput("دریافت-پرداخت", [r2]),
-            SourceSheetInput("ورود-خروج", []),
-            SourceSheetInput("لیست کسبه", []),
+            SourceSheetInput("ورود-خروج", [r3]),
+            SourceSheetInput("لیست کسبه", [r4]),
         ]
     )
-    locs = {
-        u1: SourceRowLocation("خرید-فروش", 2),
-        u2: SourceRowLocation("دریافت-پرداخت", 2),
-    }
+    loc1 = SourceRowLocation("خرید-فروش", 2)
+    loc2 = SourceRowLocation("دریافت-پرداخت", 2)
+    loc3 = SourceRowLocation("ورود-خروج", 2)
+    loc4 = SourceRowLocation("لیست کسبه", 2)
 
-    res = XlsxSourceReadResult(
+    # Reverse-inserted input
+    locs_rev = {u4: loc4, u3: loc3, u2: loc2, u1: loc1}
+    res_rev = XlsxSourceReadResult(
         snapshot=snap,
-        locations_by_uuid=locs,
+        locations_by_uuid=locs_rev,
         version=XLSX_SOURCE_READER_VERSION,
     )
-    assert res.snapshot == snap
-    assert res.version == XLSX_SOURCE_READER_VERSION
-    assert len(res.locations_by_uuid) == 2
-    assert res.locations_by_uuid[u1].physical_row_number == 2
+    assert res_rev.snapshot == snap
+    assert res_rev.version == XLSX_SOURCE_READER_VERSION
+    assert len(res_rev.locations_by_uuid) == 4
+    # Exact iteration order by uuid.bytes
+    assert list(res_rev.locations_by_uuid.keys()) == [u1, u2, u3, u4]
+
+    # Permuted insertion input
+    locs_perm = {u2: loc2, u4: loc4, u1: loc1, u3: loc3}
+    res_perm = XlsxSourceReadResult(snapshot=snap, locations_by_uuid=locs_perm)
+    assert list(res_perm.locations_by_uuid.keys()) == [u1, u2, u3, u4]
+    assert res_rev.locations_by_uuid == res_perm.locations_by_uuid
 
     # Defensive copy: caller mutating dict after construction does not affect res
-    locs_copy = dict(locs)
+    locs_copy = dict(locs_perm)
     res_defensive = XlsxSourceReadResult(snapshot=snap, locations_by_uuid=locs_copy)
     locs_copy[u1] = SourceRowLocation("خرید-فروش", 999)
     locs_copy.clear()
     assert res_defensive.locations_by_uuid[u1].physical_row_number == 2
-    assert len(res_defensive.locations_by_uuid) == 2
+    assert len(res_defensive.locations_by_uuid) == 4
+    assert list(res_defensive.locations_by_uuid.keys()) == [u1, u2, u3, u4]
 
     # Immutability: MappingProxyType prevents mutation
     with pytest.raises(TypeError):
-        res.locations_by_uuid[u1] = SourceRowLocation("خرید-فروش", 5)  # type: ignore[index]
+        res_rev.locations_by_uuid[u1] = SourceRowLocation("خرید-فروش", 5)  # type: ignore[index]
     with pytest.raises(TypeError):
-        del res.locations_by_uuid[u1]  # type: ignore[union-attr]
+        del res_rev.locations_by_uuid[u1]  # type: ignore[attr-defined]
 
     # 5. XlsxSourceReadResult: Invalid snapshot type
-    for bad_snap in [None, "bad_snapshot", 123, True, {}, locs]:
+    for bad_snap in [None, "bad_snapshot", 123, True, {}, locs_rev]:
         with pytest.raises(XlsxStructureError) as exc:
-            XlsxSourceReadResult(snapshot=bad_snap, locations_by_uuid=locs)  # type: ignore[arg-type]
+            XlsxSourceReadResult(snapshot=bad_snap, locations_by_uuid=locs_rev)  # type: ignore[arg-type]
         assert exc.value.reason == REASON_STRUCTURE_INVALID_SNAPSHOT_TYPE
 
     # 6. XlsxSourceReadResult: Invalid version
@@ -1377,43 +1554,47 @@ def test_r6_direct_construction_comprehensive_matrix() -> None:
         with pytest.raises(XlsxStructureError) as exc:
             XlsxSourceReadResult(
                 snapshot=snap,
-                locations_by_uuid=locs,
+                locations_by_uuid=locs_rev,
                 version=bad_ver,  # type: ignore[arg-type]
             )
         assert exc.value.reason == REASON_STRUCTURE_INVALID_VERSION
 
     # 7. XlsxSourceReadResult: Invalid locations type
-    for bad_locs in [None, "str", 123, [locs], (locs,)]:
+    for bad_locs in [None, "str", 123, [locs_rev], (locs_rev,)]:
         with pytest.raises(XlsxStructureError) as exc:
             XlsxSourceReadResult(snapshot=snap, locations_by_uuid=bad_locs)  # type: ignore[arg-type]
         assert exc.value.reason == REASON_STRUCTURE_INVALID_SNAPSHOT_TYPE
 
     # 8. XlsxSourceReadResult: Key mismatch (missing UUID, extra UUID, non-UUID key)
-    u3 = _make_uuid7(b"0000000000000003")
+    u_extra = _make_uuid7(b"0000000000000005")
     # Missing u2
     with pytest.raises(XlsxStructureError) as exc:
         XlsxSourceReadResult(
             snapshot=snap,
-            locations_by_uuid={u1: SourceRowLocation("خرید-فروش", 2)},
+            locations_by_uuid={u1: loc1, u3: loc3, u4: loc4},
         )
     assert exc.value.reason == REASON_STRUCTURE_LOCATION_IDENTITY_MISMATCH
 
-    # Extra u3
+    # Extra u_extra
     with pytest.raises(XlsxStructureError) as exc:
         XlsxSourceReadResult(
             snapshot=snap,
             locations_by_uuid={
-                u1: SourceRowLocation("خرید-فروش", 2),
-                u2: SourceRowLocation("دریافت-پرداخت", 2),
-                u3: SourceRowLocation("ورود-خروج", 2),
+                u1: loc1,
+                u2: loc2,
+                u3: loc3,
+                u4: loc4,
+                u_extra: SourceRowLocation("ورود-خروج", 5),
             },
         )
     assert exc.value.reason == REASON_STRUCTURE_LOCATION_IDENTITY_MISMATCH
 
     # Non-UUID key
     bad_key_dict: dict[Any, Any] = {
-        str(u1): SourceRowLocation("خرید-فروش", 2),
-        str(u2): SourceRowLocation("دریافت-پرداخت", 2),
+        str(u1): loc1,
+        str(u2): loc2,
+        str(u3): loc3,
+        str(u4): loc4,
     }
     with pytest.raises(XlsxStructureError) as exc:
         XlsxSourceReadResult(
@@ -1425,7 +1606,9 @@ def test_r6_direct_construction_comprehensive_matrix() -> None:
     # 9. XlsxSourceReadResult: Non-SourceRowLocation value
     bad_val_dict: dict[Any, Any] = {
         u1: ("خرید-فروش", 2),
-        u2: ("دریافت-پرداخت", 2),
+        u2: loc2,
+        u3: loc3,
+        u4: loc4,
     }
     with pytest.raises(XlsxStructureError) as exc:
         XlsxSourceReadResult(
@@ -1440,7 +1623,9 @@ def test_r6_direct_construction_comprehensive_matrix() -> None:
             snapshot=snap,
             locations_by_uuid={
                 u1: SourceRowLocation("دریافت-پرداخت", 2),  # u1 is in خرید-فروش
-                u2: SourceRowLocation("دریافت-پرداخت", 3),
+                u2: loc2,
+                u3: loc3,
+                u4: loc4,
             },
         )
     assert exc.value.reason == REASON_STRUCTURE_LOCATION_SHEET_MISMATCH
@@ -2020,10 +2205,10 @@ def test_r4_04_strict_sst_index_grammar_and_error_boundaries(
 def test_xr12_synthetic_15000_row_benchmark(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Benchmark 15,000 active rows in isolated process (XR-12, R4-06)."""
+    """Benchmark 15,000 active rows in isolated process (XR-12, R4-06, F3)."""
     builder = SyntheticXlsxBuilder()
     builder.dimension_ref = "A1:Z1000000"  # Large misleading dimension
-    builder.shared_strings = ["UNUSED_SST_STRING"]
+    builder.shared_strings = [f"UNUSED_SST_ENTRY_{i:04d}" for i in range(100)]
 
     total_active_target = 15000
     rows_per_sheet = total_active_target // 4
@@ -2042,22 +2227,33 @@ def test_xr12_synthetic_15000_row_benchmark(
             else:
                 sheet_rows.append(_sample_business_parties_row_data(u, r_idx))
 
-        # 1,250 inactive tail rows per sheet (5,000 total)
-        for r_idx in range(rows_per_sheet + 2, rows_per_sheet + 1252):
+        # 1,250 tail rows per sheet (5,000 total across 4 sheets):
+        # 1) Inactive rows: 417 rows
+        for r_idx in range(rows_per_sheet + 2, rows_per_sheet + 419):
             sheet_rows.append(
                 {
                     "__row_num__": r_idx,
                     "A": str(r_idx),
                     "B": "" if s_name == "لیست کسبه" else "1403/01/01",
                     "C": "",
-                    "D": "",
-                    "E": "",
-                    "F": "",
-                    "G": "",
-                    "H": "",
-                    "I": "",
-                    "J": "",
-                    "K": "",
+                }
+            )
+        # 2) Formula-only rows: 417 rows
+        for r_idx in range(rows_per_sheet + 419, rows_per_sheet + 836):
+            sheet_rows.append(
+                {
+                    "__row_num__": r_idx,
+                    "A": str(r_idx),
+                    "F": {"f": "SUM(F2:F3751)", "v": "12345.67"},
+                }
+            )
+        # 3) Style/formatting-only rows: 416 rows
+        for r_idx in range(rows_per_sheet + 836, rows_per_sheet + 1252):
+            sheet_rows.append(
+                {
+                    "__row_num__": r_idx,
+                    "A": {"s": "1", "v": str(r_idx)},
+                    "B": {"s": "2", "v": ""},
                 }
             )
 
@@ -2066,9 +2262,21 @@ def test_xr12_synthetic_15000_row_benchmark(
     pkg_path = tmp_path / "benchmark_15000.xlsx"
     pkg_path.write_bytes(builder.build_bytes())
 
+    # Pre-reader XML assertions: verify formula, style, and unused SST constructs
+    with zipfile.ZipFile(pkg_path, "r") as zf_check:
+        s1_xml = zf_check.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        assert "<f" in s1_xml, "Missing <f tag in pre-reader worksheet XML"
+        assert 's="1"' in s1_xml, "Missing s=1 style in pre-reader worksheet XML"
+        assert 's="2"' in s1_xml, "Missing s=2 style in pre-reader worksheet XML"
+        sst_xml = zf_check.read("xl/sharedStrings.xml").decode("utf-8")
+        assert "UNUSED_SST_ENTRY_0000" in sst_xml, (
+            "Missing unused SST entry in pre-reader sharedStrings XML"
+        )
+
     bench_code = f"""
 import json, sys, time
 from pathlib import Path
+from accounting_contracts.raw_input_contracts import RAW_CONTRACT_REGISTRY
 from accounting_local_agent.xlsx_source_reader import read_xlsx_source_snapshot
 
 def get_peak_mem_mib():
@@ -2109,6 +2317,11 @@ res = read_xlsx_source_snapshot(pkg)
 t1 = time.perf_counter()
 peak_mib = get_peak_mem_mib()
 
+sheet_hashes = {{
+    s_name: res.snapshot.sheets[s_name].sheet_snapshot_hash
+    for s_name in RAW_CONTRACT_REGISTRY.sheets
+}}
+
 out = {{
     "rows": res.snapshot.total_row_count,
     "locations": len(res.locations_by_uuid),
@@ -2116,6 +2329,7 @@ out = {{
     "peak_rss_mib": round(peak_mib, 2),
     "version": res.version,
     "platform": sys.platform,
+    "sheet_hashes": sheet_hashes,
 }}
 print(json.dumps(out))
 """
@@ -2135,6 +2349,7 @@ print(json.dumps(out))
     rows = data["rows"]
     duration = data["read_build_seconds"]
     peak_rss_mib = data["peak_rss_mib"]
+    sheet_hashes = data["sheet_hashes"]
 
     with capsys.disabled():
         print(
@@ -2152,3 +2367,22 @@ print(json.dumps(out))
         f"Peak RSS exceeded 128.0 MiB limit: {peak_rss_mib} MiB"
     )
     assert peak_rss_mib > 0.0, f"Peak RSS should be positive: {peak_rss_mib}"
+
+    # Literal deterministic 64-hex golden digests checked into the test
+    expected_golden_hashes = {
+        "خرید-فروش": (
+            "b07faa7f4a680ab01c2da88105e0b7aff7f9b0251bc9fdd8269734a0ca9027a5"
+        ),
+        "دریافت-پرداخت": (
+            "040a8e31178c14d7b7937384a82770d18a8d677156515b4d98b9f496469f9c68"
+        ),
+        "ورود-خروج": (
+            "e2d1c853b83547ccfd9f549a9a17014a7bc8e54e5957ab49f1dcff30165c4349"
+        ),
+        "لیست کسبه": (
+            "ab51f1f0e34de06e78bd8f066584f84705fd77b98f541b6af060e8ac118f1ed1"
+        ),
+    }
+    assert sheet_hashes == expected_golden_hashes, (
+        f"Snapshot hashes differed from golden digests: {sheet_hashes}"
+    )
