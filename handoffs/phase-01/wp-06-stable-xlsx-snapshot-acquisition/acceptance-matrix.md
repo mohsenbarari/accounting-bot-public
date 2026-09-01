@@ -7,11 +7,11 @@
 - **Component Version:** `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
 - **Baseline Commit:** `bc085acd8852e2293fdfcb786a7694fe96e93407`
 - **Current Branch:** `antigravity/phase-01-stable-xlsx-snapshot-acquisition`
-- **Remediation Scope:** Codex Round 3 Review Remediation (R3-01 to R3-06)
+- **Remediation Scope:** Codex Round 4 Review Remediation (R4-01 to R4-06)
 
 ---
 
-## Detailed Requirement Verification (SA-01 to SA-14 & R3-01 to R3-06)
+## Detailed Requirement Verification (SA-01 to SA-14 & R4-01 to R4-06)
 
 | Item ID | Requirement / Scope | Status | Verification & Evidence |
 | :--- | :--- | :--- | :--- |
@@ -32,14 +32,14 @@
 
 ---
 
-## Round 3 Refinement Focus Points (R3-01 to R3-06)
+## Round 4 Refinement Focus Points & Verified Oracles (R4-01 to R4-06)
 
-1. **R3-01 (Explicit Artifact Ownership & Nullable Identity):** `lease_created`, `part_created`, `final_promoted` states explicitly track lifecycle; non-recorded identities are `None`; pre-existing foreign `snapshot.part` is never deleted during cleanup (`test_r3_01_pre_existing_candidate_part_not_deleted`).
-2. **R3-02 (Immediate Cleanup Scope After Lease mkdir):** Cleanup begins immediately after successful `mkdir`; early failure on `chmod` or `lstat` cleans up the newly created lease directory without leaving orphaned folders (`test_r3_02_early_lease_mkdir_cleanup_on_stat_failure`).
-3. **R3-03 (FD Lifecycle, Short-Write Taxonomy & Zero FD Leak):** All secondary errors in `_open_source_nofollow` mapped to `XlsxSourceNotReadyError`; Candidate `fstat`/open errors mapped to `XlsxSnapshotStorageError`; short write or `None` write returns mapped to `XlsxSnapshotStorageError`; zero FD leaks verified across success, consumer crashes, and faults via `/proc/self/fd` (`test_r3_03_fd_lifecycle_and_zero_fd_leak`, `test_r3_03_short_write_and_write_failure_taxonomy`).
-4. **R3-04 (Post-Promotion Attestation & No Leaf Resolve):** Promoted file is attested without following symlinks and compared to recorded candidate identity; `snapshot_path` is constructed safely without resolving through leaf symlinks (`test_r3_04_post_promotion_attestation_and_no_path_resolve`).
-5. **R3-05 (Zero Sentinels Removed / Valid `mtime_ns = 0`):** `mtime_ns = 0` (Epoch 1970) is treated as a valid timestamp and strictly verified; modifications during lease trigger `XlsxSnapshotIntegrityError` (`test_r3_05_valid_zero_mtime_ns_integrity`).
-6. **R3-06 (ZIP Validation on Candidate Handle & Real Flush Failure):** ZIP Central Directory validation executed on verified Candidate handle with nofollow; real flush failure verified via stream wrapper (`test_r3_06_real_flush_failure_taxonomy`).
+1. **R4-01 (Artifact Ownership & Cleanup Without Wildcards):** `_cleanup_managed_artifacts()` requires an exact recorded token (`_FileToken(device, inode)`); `None` is never a deletion wildcard. Foreign directories or pre-existing files are preserved on disk and reported via `XlsxSnapshotCleanupError` (`EARLY_LEASE_FOREIGN_SURVIVED = True` verified in `test_r4_01_early_lease_foreign_dir_survives_cleanup_oracle`).
+2. **R4-02 (Full FD Lifecycle & Zero Leak Verification):** All early error paths (including Candidate `os.fstat` failure) close file descriptors in `try...except` blocks; `XlsxSnapshotStorageError` is raised with `retryable=False`; verified zero FD leaks via `/proc/self/fd` (`CANDIDATE_FSTAT_LEAKED_FDS = []` verified in `test_r4_02_candidate_fstat_failure_fd_lifecycle_and_leak_oracle`).
+3. **R4-03 (Content & Attestation Before Yield):** After promotion, `final_file` is reopened via no-follow handle, stat-checked, and its full SHA-256 digest re-verified against candidate digest; post-promotion swaps are detected before yield (`POST_PROMOTION_YIELDED = False`, `POST_PROMOTION_FOREIGN_SURVIVED = True` in `test_r4_03_post_promotion_swap_attestation_oracle`; `POST_ZIP_MUTATION_WAS_YIELDED = False` in `test_r4_03_post_zip_validation_candidate_mutation_oracle`).
+4. **R4-04 (Fail-if-exists Atomic Promotion Without Overwriting):** `_promote_candidate_atomic_fail_if_exists` uses `os.link` / `os.rename` with true fail-if-exists semantics; pre-existing foreign files at target path trigger `XlsxSnapshotStorageError` and are never overwritten (`PROMOTION_OVERWROTE_FOREIGN = False` verified in `test_r4_04_promotion_no_overwrite_fail_if_exists_oracle`).
+5. **R4-05 (Zero Sentinels Removed & Exact Mtime 0 Integrity):** `mtime_ns = 0` is treated as a valid timestamp and strictly verified against lease mutations (`test_r4_05_mtime_zero_on_candidate_integrity_oracle`); identity unavailable conditions operate cleanly without false positives (`test_r4_05_identity_unavailable_fallback`).
+6. **R4-06 (Evidence & Oracle Alignment):** All 6 required oracles implemented, asserted, and verified in dedicated test cases.
 
 ---
 

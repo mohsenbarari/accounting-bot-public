@@ -20,18 +20,21 @@
   - `34d26e0` — `docs(handoff): update WP-06 handoff with Codex review round 3 evidence`
   - `49c2727` — `docs(handoff): finalize exact commit list for round 3 handoff`
   - `19248db` — `style(tests): format test_sa06 comment under 88 chars`
+  - `66fa211` — `docs(handoff): synchronize full commit list in handoff package`
+  - `b75f7c4` — `fix(local_agent): address Codex review round 4 R4-01 to R4-06`
+  - `(pending)` — `docs(handoff): update WP-06 handoff with Codex review round 4 evidence`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
 
 Delivers bounded, atomic XLSX snapshot acquisition, exclusive leased consumer access, post-lease integrity verification, and cleanup lifecycle under ADR-0009 and WP-06.
-Addresses all Round 3 Codex review remediation directives (R3-01 to R3-06):
-1. **R3-01:** `lease_created`, `part_created`, `final_promoted` states explicitly track lifecycle; non-recorded identities are `None`; pre-existing foreign `snapshot.part` is never deleted during cleanup.
-2. **R3-02:** Cleanup begins immediately after successful `mkdir`; early failure on `chmod` or `lstat` cleans up the newly created lease directory without leaving orphaned folders.
-3. **R3-03:** All secondary errors in `_open_source_nofollow` mapped to `XlsxSourceNotReadyError`; Candidate `fstat`/open errors mapped to `XlsxSnapshotStorageError`; short write or `None` write returns mapped to `XlsxSnapshotStorageError`; zero FD leaks verified across success, consumer crashes, and faults via `/proc/self/fd`.
-4. **R3-04:** Promoted file is attested without following symlinks and compared to recorded candidate identity; `snapshot_path` is constructed safely without resolving through leaf symlinks.
-5. **R3-05:** `mtime_ns = 0` (Epoch 1970) is treated as a valid timestamp and strictly verified; modifications during lease trigger `XlsxSnapshotIntegrityError`.
-6. **R3-06:** ZIP Central Directory validation executed on verified Candidate handle with nofollow; real flush failure verified via stream wrapper.
+Addresses all Round 4 Codex review remediation directives (R4-01 to R4-06):
+1. **R4-01 (Artifact Ownership & Cleanup Without Wildcards):** `_cleanup_managed_artifacts()` requires an exact recorded token (`_FileToken(device, inode)`); `None` is never a deletion wildcard. Foreign directories or pre-existing files are preserved on disk and reported via `XlsxSnapshotCleanupError` (`EARLY_LEASE_FOREIGN_SURVIVED = True`).
+2. **R4-02 (Full FD Lifecycle & Zero Leak Verification):** All early error paths (including Candidate `os.fstat` failure) close file descriptors in `try...except` blocks; `XlsxSnapshotStorageError` is raised with `retryable=False`; verified zero FD leaks via `/proc/self/fd` (`CANDIDATE_FSTAT_LEAKED_FDS = []`).
+3. **R4-03 (Content & Attestation Before Yield):** After promotion, `final_file` is reopened via no-follow handle, stat-checked, and its full SHA-256 digest re-verified against candidate digest; post-promotion swaps are detected before yield (`POST_PROMOTION_YIELDED = False`, `POST_PROMOTION_FOREIGN_SURVIVED = True`, `POST_ZIP_MUTATION_WAS_YIELDED = False`).
+4. **R4-04 (Fail-if-exists Atomic Promotion Without Overwriting):** `_promote_candidate_atomic_fail_if_exists` uses `os.link` / `os.rename` with true fail-if-exists semantics; pre-existing foreign files at target path trigger `XlsxSnapshotStorageError` and are never overwritten (`PROMOTION_OVERWROTE_FOREIGN = False`).
+5. **R4-05 (Zero Sentinels Removed & Exact Mtime 0 Integrity):** `mtime_ns = 0` is treated as a valid timestamp and strictly verified against lease mutations; identity unavailable conditions operate cleanly without false positives.
+6. **R4-06 (Evidence & Oracle Alignment):** All 6 required oracles implemented, asserted, and verified in dedicated test cases.
 
 ## Roadmap traceability
 
@@ -42,8 +45,8 @@ Addresses all Round 3 Codex review remediation directives (R3-01 to R3-06):
 ## Changed files
 
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported `DEFAULT_COPY_CHUNK_SIZE`, `XLSX_SNAPSHOT_ACQUISITION_VERSION`, `StableXlsxSnapshot`, error taxonomy classes, and `open_stable_xlsx_snapshot`.
-- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Implemented versioned context manager with Round 3 review fixes (R3-01 to R3-06).
-- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 50 tests covering SA-01 to SA-14 and R3-01 to R3-06 evidence.
+- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Implemented versioned context manager with Round 4 review fixes (R4-01 to R4-06).
+- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 50 tests covering SA-01 to SA-14 and R4-01 to R4-06 evidence.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/acceptance-matrix.md`: Detailed requirement acceptance matrix.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/test-results.txt`: Verbatim command outputs, 3-run benchmark logs, and quality scan records.
@@ -58,9 +61,9 @@ Addresses all Round 3 Codex review remediation directives (R3-01 to R3-06):
 2. `uv run ruff check .` (Exit 0, all checks passed)
 3. `uv run mypy .` (Exit 0, 23 source files checked)
 4. `uv run mypy --platform win32 .` (Exit 0, 23 source files checked)
-5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 50 passed in 13.43s)
-6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 11.83s, 10.69s, 10.60s duration; 59.02 MiB, 58.57 MiB, 58.99 MiB peak RSS)
-7. `uv run pytest -v` (Exit 0, 250 passed in 33.61s)
+5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 50 passed in 14.53s)
+6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 10.88s, 10.37s, 10.92s duration; 59.19 MiB, 58.98 MiB, 58.94 MiB peak RSS)
+7. `uv run pytest -v` (Exit 0, 250 passed in 33.27s)
 8. `git ls-files` check (Exit 0, 92 tracked files, 0 prohibited files)
 9. `git grep` sensitive patterns check (Exit 1 failure-on-match -> Exit 0 clean)
 

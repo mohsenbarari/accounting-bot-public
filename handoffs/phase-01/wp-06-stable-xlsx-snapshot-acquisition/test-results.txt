@@ -1,25 +1,25 @@
 WORK PACKAGE: WP-06: Stable XLSX snapshot acquisition and cleanup
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-01T15:45:00Z
+RECORDED AT UTC: 2026-09-01T16:17:00Z
 
-# Test Results: WP-06 Stable XLSX Snapshot Acquisition and Cleanup (Codex Review Round 3 Remediation)
+# Test Results: WP-06 Stable XLSX Snapshot Acquisition and Cleanup (Codex Review Round 4 Remediation)
 
 ## FINAL SUMMARY
 
-- Status: ALL PASS (Linux & Windows Mypy Clean) / WP-06 Round 3 Remediation & Evidence Delivery
+- Status: ALL PASS (Linux & Windows Mypy Clean) / WP-06 Round 4 Remediation & Evidence Delivery
 - Test suites:
   - Base architecture, contracts & domain tests: 89 passed
   - Reader suite (tests/test_xlsx_source_reader.py): 45 passed
   - Raw contract regressions (tests/test_xlsx_source_reader_raw_contract_regressions.py): 7 passed
   - SST activity regressions (tests/test_xlsx_source_reader_sst_activity_regressions.py): 59 passed
-  - Snapshot acquisition suite (tests/test_xlsx_snapshot_acquisition.py): 50 passed (SA-01 to SA-14, R3-01 explicit artifact ownership & retention of foreign partial files, R3-02 immediate cleanup scope from lease mkdir, R3-03 FD lifecycle, taxonomy & zero FD leak verification, R3-04 post-promotion attestation without leaf symlink resolution, R3-05 valid zero mtime_ns timestamp integrity, R3-06 ZIP validation on candidate handle & real flush failure taxonomy)
-  - Total: 250 passed in 33.61s (zero failures)
+  - Snapshot acquisition suite (tests/test_xlsx_snapshot_acquisition.py): 50 passed (SA-01 to SA-14, R4-01 to R4-06: EARLY_LEASE_FOREIGN_SURVIVED=True, CANDIDATE_FSTAT_LEAKED_FDS=[], POST_PROMOTION_YIELDED=False, POST_PROMOTION_FOREIGN_SURVIVED=True, POST_ZIP_MUTATION_WAS_YIELDED=False, PROMOTION_OVERWROTE_FOREIGN=False, mtime_ns=0 integrity oracle, identity unavailable fallback)
+  - Total: 250 passed in 33.27s (zero failures)
 - Linters & Types: Ruff format 0 errors (60 files already formatted), Ruff check 0 errors, Mypy Linux native 0 errors (23 source files), Mypy win32 target 0 errors (23 source files)
 - Combined Streaming Benchmark (Acquisition + WP-05 Reader, 15,000 active rows + 5,000 tail rows, CPython 3.13.15 Linux):
   - 3 Isolated Subprocess Benchmark Runs:
-    - Run 1: duration 11.8276s, baseline current RSS 27.48 MiB, call peak RSS 59.02 MiB, rows 15,000, file_bytes 549,787, file_sha b58ab2f280e6...
-    - Run 2: duration 10.6873s, baseline current RSS 27.49 MiB, call peak RSS 58.57 MiB, rows 15,000, file_bytes 549,787, file_sha c163e3f35e08...
-    - Run 3: duration 10.5963s, baseline current RSS 27.49 MiB, call peak RSS 58.99 MiB, rows 15,000, file_bytes 549,787, file_sha 7b34870891f1...
+    - Run 1: duration 10.8775s, baseline current RSS 27.49 MiB, call peak RSS 59.19 MiB, rows 15,000, file_bytes 549,787, file_sha 26bac83a0b97...
+    - Run 2: duration 10.3685s, baseline current RSS 27.45 MiB, call peak RSS 58.98 MiB, rows 15,000, file_bytes 549,787, file_sha eb06b19af3ba...
+    - Run 3: duration 10.9151s, baseline current RSS 27.47 MiB, call peak RSS 58.94 MiB, rows 15,000, file_bytes 549,787, file_sha 974717c4476e...
   - Limits: duration < 15.0s, call peak RSS < 128.0 MiB
 - Platform Note: Windows execution and benchmark metrics remain PENDING independent Codex CI execution on PR.
 - Security scans: 0 tracked prohibited binaries/databases (git ls-files scan, 92 tracked files), 0 sensitive patterns/credentials (git grep failure-on-match exit code 1)
@@ -135,15 +135,15 @@ tests/test_xlsx_snapshot_acquisition.py::test_sa12_end_to_end_reader_and_planner
 tests/test_xlsx_snapshot_acquisition.py::test_sa13_source_change_prevents_partial_planner_voids PASSED [ 82%]
 tests/test_xlsx_snapshot_acquisition.py::test_sa14_hypothesis_chunk_and_interval_properties PASSED [ 84%]
 tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark PASSED [ 86%]
-tests/test_xlsx_snapshot_acquisition.py::test_r3_01_pre_existing_candidate_part_not_deleted PASSED [ 88%]
-tests/test_xlsx_snapshot_acquisition.py::test_r3_02_early_lease_mkdir_cleanup_on_stat_failure PASSED [ 90%]
-tests/test_xlsx_snapshot_acquisition.py::test_r3_03_fd_lifecycle_and_zero_fd_leak PASSED [ 92%]
-tests/test_xlsx_snapshot_acquisition.py::test_r3_03_short_write_and_write_failure_taxonomy PASSED [ 94%]
-tests/test_xlsx_snapshot_acquisition.py::test_r3_04_post_promotion_attestation_and_no_path_resolve PASSED [ 96%]
-tests/test_xlsx_snapshot_acquisition.py::test_r3_05_valid_zero_mtime_ns_integrity PASSED [ 98%]
-tests/test_xlsx_snapshot_acquisition.py::test_r3_06_real_flush_failure_taxonomy PASSED [100%]
+tests/test_xlsx_snapshot_acquisition.py::test_r4_01_early_lease_foreign_dir_survives_cleanup_oracle PASSED [ 88%]
+tests/test_xlsx_snapshot_acquisition.py::test_r4_02_candidate_fstat_failure_fd_lifecycle_and_leak_oracle PASSED [ 90%]
+tests/test_xlsx_snapshot_acquisition.py::test_r4_03_post_promotion_swap_attestation_oracle PASSED [ 92%]
+tests/test_xlsx_snapshot_acquisition.py::test_r4_03_post_zip_validation_candidate_mutation_oracle PASSED [ 94%]
+tests/test_xlsx_snapshot_acquisition.py::test_r4_04_promotion_no_overwrite_fail_if_exists_oracle PASSED [ 96%]
+tests/test_xlsx_snapshot_acquisition.py::test_r4_05_mtime_zero_on_candidate_integrity_oracle PASSED [ 98%]
+tests/test_xlsx_snapshot_acquisition.py::test_r4_05_identity_unavailable_fallback PASSED [100%]
 
-=================== 50 passed in 13.43s ====================
+=================== 50 passed in 14.53s ====================
 ```
 
 ### 8. Focused Combined Benchmark 3-Run Repetition under CPython 3.13.15
@@ -152,23 +152,23 @@ Exit code: 0
 
 - **Run 1 Output:**
 ```text
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.8276s | baseline_current_rss_mib: 27.48 MiB | call_peak_rss_mib: 59.02 MiB | rows: 15000 | file_bytes: 549787 | file_sha: b58ab2f280e6... | platform: linux
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.8775s | baseline_current_rss_mib: 27.49 MiB | call_peak_rss_mib: 59.19 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 26bac83a0b97... | platform: linux
 PASSED
-1 passed, 49 deselected in 13.20s
+1 passed, 49 deselected in 12.45s
 ```
 
 - **Run 2 Output:**
 ```text
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.6873s | baseline_current_rss_mib: 27.49 MiB | call_peak_rss_mib: 58.57 MiB | rows: 15000 | file_bytes: 549787 | file_sha: c163e3f35e08... | platform: linux
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.3685s | baseline_current_rss_mib: 27.45 MiB | call_peak_rss_mib: 58.98 MiB | rows: 15000 | file_bytes: 549787 | file_sha: eb06b19af3ba... | platform: linux
 PASSED
-1 passed, 49 deselected in 12.08s
+1 passed, 49 deselected in 11.81s
 ```
 
 - **Run 3 Output:**
 ```text
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.5963s | baseline_current_rss_mib: 27.49 MiB | call_peak_rss_mib: 58.99 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 7b34870891f1... | platform: linux
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.9151s | baseline_current_rss_mib: 27.47 MiB | call_peak_rss_mib: 58.94 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 974717c4476e... | platform: linux
 PASSED
-1 passed, 49 deselected in 12.12s
+1 passed, 49 deselected in 12.34s
 ```
 
 ### 9. Full Repository Quality Suite (250 Tests)
@@ -196,7 +196,7 @@ tests/test_xlsx_snapshot_acquisition.py ............ [ 40%]
 ......................................               [ 55%]
 tests/test_xlsx_source_reader.py ................... [ 63%]
 ...................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.6525s | baseline_current_rss_mib: 27.65 MiB | call_peak_rss_mib: 59.26 MiB | rows: 15000 | platform: linux
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.6677s | baseline_current_rss_mib: 27.61 MiB | call_peak_rss_mib: 58.98 MiB | rows: 15000 | platform: linux
 .......                           [ 73%]
 tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 74%]
 ......                                               [ 76%]
@@ -204,7 +204,7 @@ tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 76%]
 .................................................... [ 97%]
 ......                                               [100%]
 
-=================== 250 passed in 33.61s ===================
+=================== 250 passed in 33.27s ===================
 ```
 
 ### 10. Git Diff Cleanliness Check
