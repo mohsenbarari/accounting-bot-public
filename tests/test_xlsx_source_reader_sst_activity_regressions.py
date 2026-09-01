@@ -2,15 +2,16 @@
 
 Verifies:
 1. RB-01: Correct <is> container extraction in Pass 1 activity discovery across
-   plain text, rich runs (<r><t>), XML comments/tails, and ASCII/Persian zeros.
+   plain text, rich runs (<r><t>), XML comments/tails, ASCII/Persian zeros,
+   and Strict vs Transitional OpenXML namespaces.
 2. RB-02: Unified escape/whitespace semantics between discovery and decode:
    escaped whitespace (_x0020_, _x0009_, _x000D_, _x00A0_) is inactive,
    double-escaped _x005F_x0020_ is active, and _x0000_ (NUL) is active.
-3. RB-03: Lazy secondary SST index evaluation (5000-digit integer avoidance)
-   and accurate consumer coordinate metadata on needed SST failures.
+3. RB-03: Truly lazy secondary SST index evaluation and accurate consumer
+   coordinates on typed cell errors.
 4. RB-04: Full snapshot equality, WP-03 hashes, Decimal scale preservation with
    as_tuple(), equivalent representations, physical row/cell permutations,
-   and observer-based stream pass bounds for N=1 and N=200.
+   read-only integrity on success and failure, and observer pass bounds.
 5. Cases 1-10: Inactive rows with corrupt SST 0, unsupported leaf tags,
    covered formula caches, XML comments in activity, and paired controls.
 """
@@ -35,6 +36,7 @@ from accounting_contracts.source_change_plan import (
 )
 from accounting_local_agent import xlsx_source_reader
 from accounting_local_agent.xlsx_source_reader import (
+    REASON_CELL_INVALID_SST_INDEX,
     REASON_CELL_SST_INDEX_OUT_OF_RANGE,
     REASON_CELL_UNKNOWN_TYPE,
     REASON_CELL_UNPAIRED_SURROGATE,
@@ -51,7 +53,7 @@ from test_xlsx_source_reader import (
 
 
 def _assert_row_equality(actual_row: Any, expected_row: Any, sheet_name: str) -> None:
-    """Assert strict type and value equality including Decimal.as_tuple()."""
+    """Assert strict type/value equality including Decimal.as_tuple() & key order."""
     assert actual_row.stable_id == expected_row.stable_id
     exp_dict = (
         expected_row.raw_values
@@ -65,7 +67,17 @@ def _assert_row_equality(actual_row: Any, expected_row: Any, sheet_name: str) ->
     )
     expected_hash = compute_source_hash(sheet_name, exp_dict).source_hash
     assert actual_row.source_hash == expected_hash
+
+    # Verify raw_values keys order strictly matches RAW_CONTRACT_REGISTRY column order
+    expected_column_order = tuple(
+        col.field_name for col in RAW_CONTRACT_REGISTRY.sheets[sheet_name].raw_columns
+    )
+    assert tuple(act_dict.keys()) == expected_column_order, (
+        f"Sheet {sheet_name!r}: raw_values keys order mismatch "
+        f"actual={tuple(act_dict.keys())} vs expected={expected_column_order}"
+    )
     assert set(act_dict.keys()) == set(exp_dict.keys())
+
     for k, exp_v in exp_dict.items():
         act_v = act_dict[k]
         assert type(act_v) is type(exp_v), (
@@ -105,8 +117,47 @@ def _assert_snapshot_and_locations(
             assert loc.physical_row_number == expected_locations[act_row.stable_id]
 
 
+def _make_sample_expected_rows_3_sheets(
+    u_dp: uuid.UUID, u_vk: uuid.UUID, u_lk: uuid.UUID
+) -> tuple[SourceRowInput, SourceRowInput, SourceRowInput]:
+    """Construct independent expected rows matching the standard 3 sample sheets."""
+    exp_dp = SourceRowInput(
+        stable_id=u_dp,
+        source_values={
+            "date_raw": "1403/01/01",
+            "party_name_raw": "همکار نمونه",
+            "entry_type_raw": "RS",
+            "amount_toman_raw": "50000000",
+            "notes_raw": "تسویه حساب",
+            "account_code_raw": "101",
+            "customer_flag_raw": "1",
+        },
+    )
+    exp_vk = SourceRowInput(
+        stable_id=u_vk,
+        source_values={
+            "date_raw": "1403/12/29",
+            "party_name_raw": "کارگاه زرگری",
+            "movement_type_raw": "ورود",
+            "item_name_raw": "شمش طلا",
+            "quantity_raw": "100.5",
+            "purity_raw": "750",
+            "notes_raw": "تحویل شمش",
+            "customer_flag_raw": "1",
+        },
+    )
+    exp_lk = SourceRowInput(
+        stable_id=u_lk,
+        source_values={
+            "party_name_raw": "فروشگاه نمونه",
+            "phone_number_raw": "SYNTHETIC-PHONE-001",
+        },
+    )
+    return exp_dp, exp_vk, exp_lk
+
+
 # ==============================================================================
-# RB-01: Correct container in inlineStr activity extraction
+# RB-01: Correct container in inlineStr activity extraction & Namespace Matrix
 # ==============================================================================
 
 
@@ -326,23 +377,34 @@ def test_rb_01_inlinestr_zeros_persian_and_ascii_count_as_activity(
             "notes_raw": None,
         },
     )
-    _assert_row_equality(res.snapshot.sheets["خرید-فروش"].rows[0], exp_r1, "خرید-فروش")
-    _assert_row_equality(res.snapshot.sheets["خرید-فروش"].rows[1], exp_r2, "خرید-فروش")
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_r1, exp_r2]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u1: 2, u2: 3, u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
+@pytest.mark.parametrize("is_strict", [False, True])
 def test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitional(
     tmp_path: Path,
+    is_strict: bool,
 ) -> None:
-    """RB-01: 3 sheets with date_raw: literal ID, SST date, inline activity."""
+    """RB-01: Strict & Transitional: literal ID, SST date, inline activity."""
     u_bf = _make_uuid7(b"0000000000000001")
     u_dp = _make_uuid7(b"0000000000000002")
     u_vk = _make_uuid7(b"0000000000000003")
     u_lk = _make_uuid7(b"0000000000000004")
 
-    builder = SyntheticXlsxBuilder()
+    builder = SyntheticXlsxBuilder(is_strict=is_strict)
     builder.shared_strings = ["1403/05/15", "1403/05/16", "1403/05/17"]
 
-    # In 3 date sheets: date is SST, ID is literal string, activity is inlineStr
+    # In 3 date sheets: date is SST, ID is literal string, sole activity is inlineStr
     builder.add_sheet_rows(
         "خرید-فروش",
         [
@@ -385,28 +447,180 @@ def test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitio
             {
                 "__row_num__": 2,
                 "A": "2",
-                "B": "کاسب چهارم",
-                "C": "SYNTHETIC-PHONE-001",
+                "B": {"t": "inlineStr", "raw_inner": "<is><t>کاسب چهارم</t></is>"},
                 "D": str(u_lk),
             }
         ],
     )
 
-    pkg = tmp_path / "rb_01_strict_transitional.xlsx"
+    pkg = tmp_path / f"rb_01_strict_{is_strict}.xlsx"
+    pkg.write_bytes(builder.build_bytes())
+
+    # Verify actual generated XML namespace in ZIP before calling reader
+    expected_ns = (
+        "http://purl.oclc.org/ooxml/spreadsheetml/main"
+        if is_strict
+        else "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    )
+    with zipfile.ZipFile(pkg, "r") as zf_check:
+        for ws_name in [
+            "xl/worksheets/sheet1.xml",
+            "xl/worksheets/sheet2.xml",
+            "xl/worksheets/sheet3.xml",
+            "xl/worksheets/sheet4.xml",
+        ]:
+            xml_text = zf_check.read(ws_name).decode("utf-8")
+            assert expected_ns in xml_text, (
+                f"Expected namespace {expected_ns} not found in {ws_name}"
+            )
+
+    res = read_xlsx_source_snapshot(pkg)
+
+    exp_bf = SourceRowInput(
+        stable_id=u_bf,
+        source_values={
+            "date_raw": "1403/05/15",
+            "party_name_raw": "بازرگانی اول",
+            "transaction_type_raw": None,
+            "item_name_raw": None,
+            "quantity_raw": None,
+            "unit_price_toman_raw": None,
+            "discount_toman_raw": None,
+            "notes_raw": None,
+        },
+    )
+    exp_dp = SourceRowInput(
+        stable_id=u_dp,
+        source_values={
+            "date_raw": "1403/05/16",
+            "party_name_raw": "طرف حساب دوم",
+            "entry_type_raw": None,
+            "amount_toman_raw": None,
+            "notes_raw": None,
+            "account_code_raw": None,
+            "customer_flag_raw": None,
+        },
+    )
+    exp_vk = SourceRowInput(
+        stable_id=u_vk,
+        source_values={
+            "date_raw": "1403/05/17",
+            "party_name_raw": "انبار سوم",
+            "movement_type_raw": None,
+            "item_name_raw": None,
+            "quantity_raw": None,
+            "purity_raw": None,
+            "notes_raw": None,
+            "customer_flag_raw": None,
+        },
+    )
+    exp_lk = SourceRowInput(
+        stable_id=u_lk,
+        source_values={
+            "party_name_raw": "کاسب چهارم",
+            "phone_number_raw": None,
+        },
+    )
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_bf]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_bf: 2, u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
+
+
+@pytest.mark.parametrize(
+    "sheet_name",
+    ["خرید-فروش", "دریافت-پرداخت", "ورود-خروج", "لیست کسبه"],
+)
+@pytest.mark.parametrize(
+    ("mode_name", "raw_inner_xml", "expected_val"),
+    [
+        ("inline_plain", "<is><t>متن ساده</t></is>", "متن ساده"),
+        (
+            "rich_runs",
+            "<is><r><t>متن </t></r><r><t>ترکیبی</t></r></is>",
+            "متن ترکیبی",
+        ),
+        (
+            "comment_tail",
+            "<is><t><!--cmt-->متن با کامنت</t></is>",
+            "متن با کامنت",
+        ),
+        ("ascii_zero", "<is><t>0</t></is>", "0"),
+        ("persian_zero", "<is><t>۰</t></is>", "۰"),
+    ],
+)
+def test_rb_01_four_sheets_five_activity_modes_matrix(
+    tmp_path: Path,
+    sheet_name: str,
+    mode_name: str,
+    raw_inner_xml: str,
+    expected_val: str,
+) -> None:
+    """RB-01: 4 sheets × 5 activity modes (plain, rich, comment, 0, ۰)."""
+    u_target = _make_uuid7(f"{sheet_name[:4]}_{mode_name[:4]}".encode())
+    builder = SyntheticXlsxBuilder()
+    builder.shared_strings = [str(u_target), "1403/05/15"]
+
+    # Retrieve column letters and roles from RAW_CONTRACT_REGISTRY
+    sheet_contract = RAW_CONTRACT_REGISTRY.sheets[sheet_name]
+    id_col_letter = sheet_contract.stable_id_column.column_letter
+
+    # The sole activity column for all 4 sheets is party_name_raw
+    act_col_letter = (
+        "C" if sheet_name in ("خرید-فروش", "دریافت-پرداخت", "ورود-خروج") else "B"
+    )
+
+    row_data: dict[str, Any] = {
+        "__row_num__": 2,
+        "A": "2",
+        id_col_letter: {"t": "s", "v": "0"},
+        act_col_letter: {"t": "inlineStr", "raw_inner": raw_inner_xml},
+    }
+    has_date = any(col.field_name == "date_raw" for col in sheet_contract.raw_columns)
+    if has_date:
+        row_data["B"] = {"t": "s", "v": "1"}
+
+    # Build workbook with all 4 sheets present (3 empty sheets, 1 target sheet)
+    for s_name in RAW_CONTRACT_REGISTRY.sheets:
+        if s_name == sheet_name:
+            builder.add_sheet_rows(s_name, [row_data])
+        else:
+            builder.add_sheet_rows(s_name, [])
+
+    pkg = tmp_path / f"matrix_{sheet_name}_{mode_name}.xlsx"
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 4
-    assert (
-        res.snapshot.sheets["خرید-فروش"].rows[0].raw_values["date_raw"] == "1403/05/15"
+
+    # Build expected source values with None for all other fields
+    expected_source_values: dict[str, Any] = {
+        col.field_name: None for col in sheet_contract.raw_columns
+    }
+    expected_source_values["party_name_raw"] = expected_val
+    if has_date:
+        expected_source_values["date_raw"] = "1403/05/15"
+
+    exp_target_row = SourceRowInput(
+        stable_id=u_target,
+        source_values=expected_source_values,
     )
-    assert (
-        res.snapshot.sheets["دریافت-پرداخت"].rows[0].raw_values["date_raw"]
-        == "1403/05/16"
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(
+                sheet_name=s_name,
+                rows=[exp_target_row] if s_name == sheet_name else [],
+            )
+            for s_name in RAW_CONTRACT_REGISTRY.sheets
+        ]
     )
-    assert (
-        res.snapshot.sheets["ورود-خروج"].rows[0].raw_values["date_raw"] == "1403/05/17"
-    )
+    exp_locations = {u_target: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 # ==============================================================================
@@ -455,8 +669,17 @@ def test_rb_02_escaped_whitespace_in_direct_string_is_inactive(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_rb_02_single_pass_escaped_literal_is_active(
@@ -477,6 +700,7 @@ def test_rb_02_single_pass_escaped_literal_is_active(
         "A": "2",
         "B": "1403/05/15",
         "C": {"t": "str", "v": "_x005F_x0020_"},
+        "G": {"t": "", "v": "1500000.00"},  # Native financial numeric scale test
         "Z": {"t": "s", "v": "0"},
     }
     builder.add_sheet_rows("خرید-فروش", [row_target])
@@ -490,10 +714,30 @@ def test_rb_02_single_pass_escaped_literal_is_active(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 4
-    r_bf = res.snapshot.sheets["خرید-فروش"].rows[0]
-    assert r_bf.raw_values["party_name_raw"] == "_x0020_"
-    assert r_bf.stable_id == u_bf
+    exp_bf = SourceRowInput(
+        stable_id=u_bf,
+        source_values={
+            "date_raw": "1403/05/15",
+            "party_name_raw": "_x0020_",
+            "transaction_type_raw": None,
+            "item_name_raw": None,
+            "quantity_raw": None,
+            "unit_price_toman_raw": Decimal("1500000.00"),
+            "discount_toman_raw": None,
+            "notes_raw": None,
+        },
+    )
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_bf]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_bf: 2, u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_rb_02_escaped_nul_control_char_is_active_and_preserved(
@@ -527,10 +771,30 @@ def test_rb_02_escaped_nul_control_char_is_active_and_preserved(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 4
-    r_bf = res.snapshot.sheets["خرید-فروش"].rows[0]
-    assert r_bf.raw_values["party_name_raw"] == "\x00"
-    assert r_bf.stable_id == u_bf
+    exp_bf = SourceRowInput(
+        stable_id=u_bf,
+        source_values={
+            "date_raw": "1403/05/15",
+            "party_name_raw": "\x00",
+            "transaction_type_raw": None,
+            "item_name_raw": None,
+            "quantity_raw": None,
+            "unit_price_toman_raw": None,
+            "discount_toman_raw": None,
+            "notes_raw": None,
+        },
+    )
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_bf]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_bf: 2, u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 # ==============================================================================
@@ -567,8 +831,17 @@ def test_rb_03_oversized_sst_index_on_inactive_row_is_safely_ignored(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_rb_03_oversized_sst_index_on_active_row_fails_with_cell_error(
@@ -651,49 +924,97 @@ def test_rb_03_active_row_corrupt_sst_has_exact_consumer_coordinates(
     assert exc.value.physical_row_number == 2
 
 
+@pytest.mark.parametrize(
+    ("tag_mode", "raw_inner_xml"),
+    [
+        ("inline_unknown_leaf", "<is><t><unknownleaf>متن</unknownleaf></t></is>"),
+        ("direct_unknown_leaf", "<v><unknownleaf>متن</unknownleaf></v>"),
+    ],
+)
 def test_rb_03_malformed_activity_controls_and_error_coordinates(
     tmp_path: Path,
+    tag_mode: str,
+    raw_inner_xml: str,
 ) -> None:
-    """RB-03: Malformed activity cell controls (unknown leaf tag, out-of-range SST)."""
+    """RB-03: Malformed activity cell controls (unknown leaf tag in inline & direct)."""
     u_dp = _make_uuid7(b"0000000000000002")
     u_vk = _make_uuid7(b"0000000000000003")
     u_lk = _make_uuid7(b"0000000000000004")
 
-    # Control 1: Unknown leaf tag in inlineStr activity
-    builder1 = SyntheticXlsxBuilder()
-    builder1.shared_strings = [str(_make_uuid7(b"0000000000000001"))]
+    builder = SyntheticXlsxBuilder()
+    builder.shared_strings = [str(_make_uuid7(b"0000000000000001"))]
+    t_val = "inlineStr" if "inline" in tag_mode else "str"
     row_unknown_leaf = {
         "__row_num__": 2,
         "A": "2",
         "B": "1403/05/15",
         "C": {
-            "t": "inlineStr",
-            "raw_inner": "<is><t><badtag>متن</badtag></t></is>",
+            "t": t_val,
+            "raw_inner": raw_inner_xml,
         },
         "Z": {"t": "s", "v": "0"},
     }
-    builder1.add_sheet_rows("خرید-فروش", [row_unknown_leaf])
-    builder1.add_sheet_rows(
+    builder.add_sheet_rows("خرید-فروش", [row_unknown_leaf])
+    builder.add_sheet_rows(
         "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
     )
-    builder1.add_sheet_rows(
-        "ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)]
+    builder.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    builder.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+
+    pkg = tmp_path / f"unknown_leaf_{tag_mode}.xlsx"
+    pkg.write_bytes(builder.build_bytes())
+
+    with pytest.raises(XlsxCellError) as exc:
+        read_xlsx_source_snapshot(pkg)
+    assert exc.value.reason == REASON_CELL_UNKNOWN_TYPE
+    assert exc.value.sheet_name == "خرید-فروش"
+    assert exc.value.cell_ref == "C2"
+    assert exc.value.physical_row_number == 2
+
+
+@pytest.mark.parametrize(
+    "invalid_idx_str",
+    ["abc", "-1", "01", "1.5"],
+)
+def test_rb_03_invalid_sst_index_grammar_fails_with_coordinates(
+    tmp_path: Path,
+    invalid_idx_str: str,
+) -> None:
+    """RB-03: Invalid SST index grammar raises error with consumer coordinates."""
+    u_dp = _make_uuid7(b"0000000000000002")
+    u_vk = _make_uuid7(b"0000000000000003")
+    u_lk = _make_uuid7(b"0000000000000004")
+
+    builder = SyntheticXlsxBuilder()
+    builder.shared_strings = ["valid_string"]
+
+    row_target = {
+        "__row_num__": 2,
+        "A": "2",
+        "B": "1403/05/15",
+        "C": {"t": "s", "v": invalid_idx_str},
+        "Z": str(_make_uuid7(b"0000000000000001")),
+    }
+    builder.add_sheet_rows("خرید-فروش", [row_target])
+    builder.add_sheet_rows(
+        "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
     )
-    builder1.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    builder.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)])
+    builder.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
 
-    pkg1 = tmp_path / "unknown_leaf.xlsx"
-    pkg1.write_bytes(builder1.build_bytes())
+    pkg = tmp_path / f"invalid_grammar_{invalid_idx_str}.xlsx"
+    pkg.write_bytes(builder.build_bytes())
 
-    with pytest.raises(XlsxCellError) as exc1:
-        read_xlsx_source_snapshot(pkg1)
-    assert exc1.value.reason == REASON_CELL_UNKNOWN_TYPE
-    assert exc1.value.sheet_name == "خرید-فروش"
-    assert exc1.value.cell_ref == "C2"
-    assert exc1.value.physical_row_number == 2
+    with pytest.raises(XlsxCellError) as exc:
+        read_xlsx_source_snapshot(pkg)
+    assert exc.value.reason == REASON_CELL_INVALID_SST_INDEX
+    assert exc.value.sheet_name == "خرید-فروش"
+    assert exc.value.cell_ref == "C2"
+    assert exc.value.physical_row_number == 2
 
 
 # ==============================================================================
-# RB-04: Equivalence, row/cell permutations & stream pass bounds
+# RB-04: Equivalence, row/cell permutations, stream pass bounds & failure cleanup
 # ==============================================================================
 
 
@@ -802,7 +1123,7 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
     pkg_b_bytes = builder_b.build_bytes()
     pkg_b.write_bytes(pkg_b_bytes)
 
-    # Assert that XML structure of pkg_b actually has inverted row order
+    # Assert XML structure of pkg_b has inverted row order and column order
     with zipfile.ZipFile(pkg_b, "r") as zf_check:
         sheet1_xml = zf_check.read("xl/worksheets/sheet1.xml").decode("utf-8")
         pos_r20 = sheet1_xml.find('<row r="20"')
@@ -810,6 +1131,12 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
         assert pos_r20 != -1 and pos_r10 != -1
         assert pos_r20 < pos_r10, (
             "Physical row 20 must appear before row 10 in XML for permutation test"
+        )
+        pos_z20 = sheet1_xml.find('r="Z20"')
+        pos_a20 = sheet1_xml.find('r="A20"')
+        assert pos_z20 != -1 and pos_a20 != -1
+        assert pos_z20 < pos_a20, (
+            "Column Z20 must appear before A20 in XML for permutation test"
         )
 
     # Verify read-only archive integrity before and after read
@@ -858,38 +1185,7 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
             "notes_raw": None,
         },
     )
-    exp_dp = SourceRowInput(
-        stable_id=u_dp,
-        source_values={
-            "date_raw": "1403/01/01",
-            "party_name_raw": "همکار نمونه",
-            "entry_type_raw": "RS",
-            "amount_toman_raw": "50000000",
-            "notes_raw": "تسویه حساب",
-            "account_code_raw": "101",
-            "customer_flag_raw": "1",
-        },
-    )
-    exp_vk = SourceRowInput(
-        stable_id=u_vk,
-        source_values={
-            "date_raw": "1403/12/29",
-            "party_name_raw": "کارگاه زرگری",
-            "movement_type_raw": "ورود",
-            "item_name_raw": "شمش طلا",
-            "quantity_raw": "100.5",
-            "purity_raw": "750",
-            "notes_raw": "تحویل شمش",
-            "customer_flag_raw": "1",
-        },
-    )
-    exp_lk = SourceRowInput(
-        stable_id=u_lk,
-        source_values={
-            "party_name_raw": "فروشگاه نمونه",
-            "phone_number_raw": "SYNTHETIC-PHONE-001",
-        },
-    )
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
     exp_snapshot = build_source_workbook_snapshot(
         [
             SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_bf1, exp_bf2]),
@@ -906,6 +1202,70 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
     assert res_a.snapshot == res_b.snapshot
     _assert_snapshot_and_locations(res_a, exp_snapshot, exp_loc_a)
     _assert_snapshot_and_locations(res_b, exp_snapshot, exp_loc_b)
+
+
+def test_rb_04_read_only_integrity_and_cleanup_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RB-04: Read-only integrity and handle release on required SST error."""
+    builder = SyntheticXlsxBuilder()
+    builder.override_sst_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'count="1" uniqueCount="1">\n'
+        "  <si><t>_xD800_</t></si>\n"
+        "</sst>"
+    )
+
+    row_target = {
+        "__row_num__": 2,
+        "A": "2",
+        "B": "1403/05/15",
+        "C": "بازرگانی فعال",
+        "J": {"t": "s", "v": "0"},  # Active row referencing corrupt SST 0
+        "Z": str(_make_uuid7(b"0000000000000001")),
+    }
+    builder.add_sheet_rows("خرید-فروش", [row_target])
+    builder.add_sheet_rows("دریافت-پرداخت", [])
+    builder.add_sheet_rows("ورود-خروج", [])
+    builder.add_sheet_rows("لیست کسبه", [])
+
+    pkg = tmp_path / "failure_integrity.xlsx"
+    pkg.write_bytes(builder.build_bytes())
+
+    stat_before = pkg.stat()
+    bytes_before = pkg.read_bytes()
+
+    zip_closed = False
+    orig_zip_close = zipfile.ZipFile.close
+
+    def tracking_zip_close(zf_self: Any) -> Any:
+        nonlocal zip_closed
+        zip_closed = True
+        return orig_zip_close(zf_self)
+
+    monkeypatch.setattr(zipfile.ZipFile, "close", tracking_zip_close)
+
+    with pytest.raises(XlsxCellError) as exc:
+        read_xlsx_source_snapshot(pkg)
+    assert exc.value.reason == REASON_CELL_UNPAIRED_SURROGATE
+
+    # Verify ZipFile handle was cleanly closed
+    assert zip_closed, "ZipFile.close was not called during exception unwinding"
+
+    # Verify bytes, size, and mtime remain completely unmodified
+    stat_after = pkg.stat()
+    bytes_after = pkg.read_bytes()
+    assert bytes_before == bytes_after
+    assert stat_before.st_size == stat_after.st_size
+    assert stat_before.st_mtime == stat_after.st_mtime
+
+    # Verify file can be cleanly renamed and deleted after failure
+    renamed_pkg = tmp_path / "failure_integrity_renamed.xlsx"
+    pkg.rename(renamed_pkg)
+    assert renamed_pkg.is_file()
+    renamed_pkg.unlink()
 
 
 @pytest.mark.parametrize("active_n", [1, 200])
@@ -1073,7 +1433,7 @@ def test_rb_04_stream_passes_and_selective_sst_decoding_bounds(
 
 
 # ==============================================================================
-# Preserved Initial 10 Cases & Paired Controls
+# Preserved Initial 10 Cases & Paired Controls with Complete Expected Oracle
 # ==============================================================================
 
 
@@ -1112,8 +1472,17 @@ def test_r5_02_case_01_inactive_inlinestr_empty_with_corrupt_id_sst(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_02_inactive_inlinestr_whitespace_with_corrupt_id_sst(
@@ -1151,8 +1520,17 @@ def test_r5_02_case_02_inactive_inlinestr_whitespace_with_corrupt_id_sst(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_03_inactive_str_whitespace_with_corrupt_id_sst(
@@ -1190,8 +1568,17 @@ def test_r5_02_case_03_inactive_str_whitespace_with_corrupt_id_sst(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_04_inactive_sst_empty_with_corrupt_id_sst(
@@ -1230,8 +1617,17 @@ def test_r5_02_case_04_inactive_sst_empty_with_corrupt_id_sst(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_05_inactive_sst_whitespace_with_corrupt_id_sst(
@@ -1270,8 +1666,17 @@ def test_r5_02_case_05_inactive_sst_whitespace_with_corrupt_id_sst(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_06_inactive_covered_literal_with_corrupt_id_sst(
@@ -1310,8 +1715,17 @@ def test_r5_02_case_06_inactive_covered_literal_with_corrupt_id_sst(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_07_inactive_unsupported_leaf_in_date(
@@ -1346,8 +1760,17 @@ def test_r5_02_case_07_inactive_unsupported_leaf_in_date(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_08_inactive_unsupported_leaf_in_id(
@@ -1381,8 +1804,17 @@ def test_r5_02_case_08_inactive_unsupported_leaf_in_id(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 3
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 0
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_09_covered_formula_cache_on_active_row(
@@ -1405,7 +1837,7 @@ def test_r5_02_case_09_covered_formula_cache_on_active_row(
         "D": "خرید",
         "E": "طلای ۱۸ عیار",
         "F": "10.5",
-        "G": "1500000",
+        "G": {"t": "", "v": "1500000.00"},  # Native financial numeric scale test
         "H": {
             "t": "s",
             "raw_inner": "<v><unsupported>0</unsupported></v>",
@@ -1425,9 +1857,30 @@ def test_r5_02_case_09_covered_formula_cache_on_active_row(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 4
-    r_bf = res.snapshot.sheets["خرید-فروش"].rows[0]
-    assert r_bf.raw_values["discount_toman_raw"] is None
+    exp_bf = SourceRowInput(
+        stable_id=u_bf,
+        source_values={
+            "date_raw": "1403/05/15",
+            "party_name_raw": "بازرگانی فعال",
+            "transaction_type_raw": "خرید",
+            "item_name_raw": "طلای ۱۸ عیار",
+            "quantity_raw": "10.5",
+            "unit_price_toman_raw": Decimal("1500000.00"),
+            "discount_toman_raw": None,
+            "notes_raw": None,
+        },
+    )
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_bf]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_bf: 2, u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_case_10_activity_with_xml_comment_and_sst_id(
@@ -1463,10 +1916,30 @@ def test_r5_02_case_10_activity_with_xml_comment_and_sst_id(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 4
-    r_bf = res.snapshot.sheets["خرید-فروش"].rows[0]
-    assert r_bf.raw_values["party_name_raw"] == "SYNTHETIC-ACTIVITY-MARKER"
-    assert r_bf.stable_id == u_bf
+    exp_bf = SourceRowInput(
+        stable_id=u_bf,
+        source_values={
+            "date_raw": "1403/05/15",
+            "party_name_raw": "SYNTHETIC-ACTIVITY-MARKER",
+            "transaction_type_raw": None,
+            "item_name_raw": None,
+            "quantity_raw": None,
+            "unit_price_toman_raw": None,
+            "discount_toman_raw": None,
+            "notes_raw": None,
+        },
+    )
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_bf]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_bf: 2, u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_paired_control_corrupt_sst_in_active_row_fails(
@@ -1561,11 +2034,30 @@ def test_r5_02_shared_sst_entry_between_inactive_and_active_consumers(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 4
-    assert res.snapshot.sheets["خرید-فروش"].row_count == 1
-    r3 = res.snapshot.sheets["خرید-فروش"].rows[0]
-    assert r3.raw_values["party_name_raw"] == "بازرگانی مشترک"
-    assert r3.stable_id == u_bf_active
+    exp_bf = SourceRowInput(
+        stable_id=u_bf_active,
+        source_values={
+            "date_raw": "1403/05/16",
+            "party_name_raw": "بازرگانی مشترک",
+            "transaction_type_raw": "خرید",
+            "item_name_raw": "طلای ۱۸ عیار",
+            "quantity_raw": "10",
+            "unit_price_toman_raw": "1000",
+            "discount_toman_raw": None,
+            "notes_raw": None,
+        },
+    )
+    exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_bf]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_bf_active: 3, u_dp: 2, u_vk: 2, u_lk: 2}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
 
 
 def test_r5_02_invalid_sst_index_in_activity_column_raises_typed_error(
@@ -1712,8 +2204,58 @@ def test_r5_02_activity_and_sst_across_all_four_sheets(
     pkg.write_bytes(builder.build_bytes())
 
     res = read_xlsx_source_snapshot(pkg)
-    assert res.snapshot.total_row_count == 4
-    for s_name in RAW_CONTRACT_REGISTRY.sheets:
-        s = res.snapshot.sheets[s_name]
-        assert s.row_count == 1
-        assert s.rows[0].raw_values["party_name_raw"] == "بازرگانی معتبر"
+    exp_bf = SourceRowInput(
+        stable_id=u_bf,
+        source_values={
+            "date_raw": "1403/05/16",
+            "party_name_raw": "بازرگانی معتبر",
+            "transaction_type_raw": "خرید",
+            "item_name_raw": "طلای ۱۸ عیار",
+            "quantity_raw": "10",
+            "unit_price_toman_raw": "1000",
+            "discount_toman_raw": None,
+            "notes_raw": None,
+        },
+    )
+    exp_dp = SourceRowInput(
+        stable_id=u_dp,
+        source_values={
+            "date_raw": "1403/05/16",
+            "party_name_raw": "بازرگانی معتبر",
+            "entry_type_raw": "دریافت چک",
+            "amount_toman_raw": "5000000",
+            "notes_raw": None,
+            "account_code_raw": None,
+            "customer_flag_raw": None,
+        },
+    )
+    exp_vk = SourceRowInput(
+        stable_id=u_vk,
+        source_values={
+            "date_raw": "1403/05/16",
+            "party_name_raw": "بازرگانی معتبر",
+            "movement_type_raw": "ورود",
+            "item_name_raw": "طلای ۱۸ عیار",
+            "quantity_raw": "10",
+            "purity_raw": "750",
+            "notes_raw": None,
+            "customer_flag_raw": None,
+        },
+    )
+    exp_lk = SourceRowInput(
+        stable_id=u_lk,
+        source_values={
+            "party_name_raw": "بازرگانی معتبر",
+            "phone_number_raw": "SYNTHETIC-PHONE-001",
+        },
+    )
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[exp_bf]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[exp_dp]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[exp_vk]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    exp_locations = {u_bf: 3, u_dp: 3, u_vk: 3, u_lk: 3}
+    _assert_snapshot_and_locations(res, exp_snapshot, exp_locations)
