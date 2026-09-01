@@ -7,11 +7,11 @@
 - **Component Version:** `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
 - **Baseline Commit:** `bc085acd8852e2293fdfcb786a7694fe96e93407`
 - **Current Branch:** `antigravity/phase-01-stable-xlsx-snapshot-acquisition`
-- **Remediation Scope:** Codex Round 5 Review Remediation (R5-01 to R5-06)
+- **Remediation Scope:** Codex Round 6 Review Remediation (R6-01 to R6-05)
 
 ---
 
-## Detailed Requirement Verification (SA-01 to SA-14 & R5-01 to R5-06)
+## Detailed Requirement Verification (SA-01 to SA-14 & R6-01 to R6-05)
 
 | Item ID | Requirement / Scope | Status | Verification & Evidence |
 | :--- | :--- | :--- | :--- |
@@ -32,16 +32,19 @@
 
 ---
 
-## Round 5 Refinements & Eight Verified Deterministic Oracles (R5-01 to R5-06)
+## Round 6 Refinements & Eleven Verified Deterministic Oracles (R6-01 to R6-05)
 
-1. **Oracle 1 — Candidate fstat Failure Lifecycle (R5-02 & R5-05):** Injected candidate `os.fstat(dst_fd)` failure closes FD immediately with zero leaks (`FD delta = []`) and cleans up `snapshot_root` (`snapshot_root contents = []`). Verified in `test_r5_01_candidate_fstat_failure_fd_lifecycle_and_leak_oracle`.
-2. **Oracle 2 — First Lease lstat Failure Cleanup (R5-02 & R5-05):** Injected one-shot failure on initial `lease_dir.lstat()` leaves no orphaned directory (`snapshot_root contents = []`). Verified in `test_r5_02_first_lease_lstat_failure_without_replacement_oracle`.
-3. **Oracle 3 — Early Lease Replacement Protection (R5-01, R5-02 & R5-05):** Foreign pre-existing candidate/lease entity is preserved on disk (`foreign survives = True`) and reports visible `XlsxSnapshotCleanupError`. Verified in `test_r5_03_early_lease_replacement_foreign_survives_oracle`.
-4. **Oracle 4 — Partial POSIX Promotion Cleanup (R5-03 & R5-05):** When `os.link(part, final)` succeeds and `part.unlink()` fails, acquisition raises `XlsxSnapshotStorageError` and cleanup removes both `part` and `final` (`snapshot_root contents = []`). Verified in `test_r5_04_partial_posix_promotion_cleanup_oracle`.
-5. **Oracle 5 — Lease lstat/open Race Taxonomy (R5-04 & R5-05):** Race deletion between lease-exit `lstat` and `open` maps to `XlsxSnapshotIntegrityError` without top-level `XlsxSnapshotStorageError`. Verified in `test_r5_05_lease_lstat_open_race_taxonomy_oracle`.
-6. **Oracle 6 — Inode Reuse Conservative Fingerprinting (R5-01 & R5-05):** Inode reuse with foreign payload is detected via size/digest check on handle; foreign file survives deletion and reports `XlsxSnapshotCleanupError`. Verified in `test_r5_06_inode_reuse_protection_oracle`.
-7. **Oracle 7 — Candidate mtime_ns = 0 in Context (R5-05):** Candidate with real `mtime_ns = 0` verified in context (`snap.snapshot_path.stat().st_mtime_ns == 0`) and subsequent mutations raise `XlsxSnapshotIntegrityError`. Verified in `test_r5_07_real_mtime_zero_integrity_oracle`.
-8. **Oracle 8 — Real Identity Unavailable Provider Fallback (R5-05):** Provider returning `(None, None)` executes all operations cleanly and removes artifacts on normal completion. Verified in `test_r5_08_real_identity_unavailable_fallback_oracle`.
+1. **Test 1 — Candidate fstat Transient Failure Recovery (R6-04):** Injected single transient `os.fstat(dst_fd)` failure recovers on handle retry without leaking FDs (`FD delta = []`) and cleans up root (`snapshot_root contents = []`). Verified in `test_r6_01_candidate_fstat_transient_failure_no_replacement_oracle`.
+2. **Test 2 — Candidate fstat Failure with Path Replacement (R6-01 & R6-04):** Persistent `fstat` failure with simultaneous path replacement preserves foreign candidate file on disk and reports visible `XlsxSnapshotCleanupError`. Verified in `test_r6_02_candidate_fstat_failure_with_path_replacement_oracle`.
+3. **Test 3 — First Lease lstat Transient Failure Recovery (R6-04):** Injected single transient `lease_dir.lstat()` failure recovers on retry and cleans up directory (`snapshot_root contents = []`). Verified in `test_r6_03_first_lease_lstat_transient_failure_no_replacement_oracle`.
+4. **Test 4 — First Lease lstat Failure with Directory Replacement (R6-01 & R6-04):** Persistent `lstat` failure with simultaneous directory replacement preserves foreign directory and internal contents on disk and reports visible `XlsxSnapshotCleanupError`. Verified in `test_r6_04_first_lease_lstat_failure_with_directory_replacement_oracle`.
+5. **Test 5 — Partial POSIX Promotion Cleanup without Replacement (R6-02 & R6-04):** When `os.link(part, final)` succeeds and `part.unlink()` fails, cleanup removes both `part` and `final` using token carried in structured exception (`snapshot_root contents = []`). Verified in `test_r6_05_partial_posix_promotion_cleanup_without_replacement_oracle`.
+6. **Test 6 — Partial POSIX Promotion with Byte-Identical Foreign Final (R6-02 & R6-04):** Replacing `final` after partial promotion with a byte-identical foreign file preserves the foreign file on disk (ownership token is never constructed from post-failure lstat) and reports `XlsxSnapshotCleanupError`. Verified in `test_r6_06_partial_posix_promotion_with_byte_identical_foreign_final_oracle`.
+7. **Test 7 — Final Replacement Immediately Before Unlink (R6-03 & R6-04):** Replacing `final` right after cleanup hash check and before `unlink()` preserves the foreign file on disk via pre-unlink path verification and reports `XlsxSnapshotCleanupError`. Verified in `test_r6_07_final_replacement_before_final_unlink_oracle`.
+8. **Test 8 — Real Lease Exit Race Between lstat and Open (R6-04):** Deleting final file precisely at `between_lease_lstat_and_open` maps to `XlsxSnapshotIntegrityError` without top-level `XlsxSnapshotStorageError` and cleans up root. Verified in `test_r6_08_real_lease_exit_race_between_lstat_and_open_oracle`.
+9. **Test 9 — Inode Reuse Collision Proven (R6-04):** Inode reuse collision is explicitly asserted (`assert foreign_st.st_ino == orig_token_ino`), and conservative hash verification on handle preserves foreign file and reports `XlsxSnapshotCleanupError`. Verified in `test_r6_09_identity_collision_inode_reuse_proven_oracle`.
+10. **Test 10 — Candidate mtime_ns = 0 in Context (R6-04):** Candidate with real `mtime_ns = 0` verified in context (`snap.snapshot_path.stat().st_mtime_ns == 0`) and subsequent mutations raise `XlsxSnapshotIntegrityError`. Verified in `test_r6_10_real_mtime_zero_integrity_oracle`.
+11. **Test 11 — Real Identity Unavailable Provider Fallback (R6-04):** Provider returning `(None, None)` executes all operations cleanly and removes artifacts on normal completion. Verified in `test_r6_11_real_identity_unavailable_provider_fallback_oracle`.
 
 ---
 
