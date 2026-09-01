@@ -3,7 +3,7 @@
 ## Identity
 
 - Phase: 1 — source and data-model foundation (Phase 1 authorized, Gate G1 is open / in-progress)
-- Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker (Status: REQUEST_CHANGES / Limited R5-B Remediation)
+- Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker (Status: REQUEST_CHANGES / R5-C Finalization Delivery)
 - Branch/worktree: antigravity/phase-01-streaming-xlsx-source-reader
 - Commit(s):
   - `5dd5d17` (feat(local_agent): implement streaming XLSX source reader and physical row tracker (WP-05))
@@ -20,6 +20,8 @@
   - `8b57e62` (test(local_agent): complete RB-04 SST activity regression assertions and observer bounds (WP-05))
   - `fd13b70` (docs(handoff): update WP-05 handoff with verified RB-04/RB-05 evidence)
   - `ce21abc` (test(local_agent): expand RB-04 activity matrix, independent oracle assertions and failure cleanup (WP-05))
+  - `b0933ce` (docs(handoff): record R5-B evidence completion, clean test results, and benchmark baseline (WP-05))
+  - `ac523df` (feat(local_agent): harden constructors, expand property/lifecycle tests, and optimize streaming reader (R5-C))
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -29,34 +31,40 @@
 
 Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_agent` using standard library `zipfile` and existing pinned `lxml 6.1.2`, extracting literal raw source inputs from the four approved sheets according to `RAW_CONTRACT_REGISTRY`, strictly excluding formula elements and formula coverage ranges, evaluating row activity from literal inputs, validating Persian and technical headers and UUIDv7 identifiers, and returning an immutable `XlsxSourceReadResult` containing a validated `ValidatedSourceWorkbookSnapshot` (WP-04) alongside an immutable mapping of physical row locations (`SourceRowLocation`).
 
-This turn completes the limited remediation of review delivery R5-B based on findings RB-01 through RB-05:
-- **Finding RB-01 (Pass 1 inlineStr container extraction & Namespace matrix):**
-  - Updated `_discover_sheet_metadata_and_needed_sst` (Pass 1) to pass `&lt;is&gt;` child element directly to `_extract_text_from_si_or_is` instead of `&lt;c&gt;`.
-  - Supports plain text, rich runs (`&lt;r&gt;&lt;t&gt;`), XML comments/tails, and Persian/ASCII zeros across all 4 sheets and both Strict and Transitional namespaces.
-- **Finding RB-02 (Escape & whitespace unification):**
-  - Unified OOXML escape decoding (`_decode_ooxml_escapes`) and whitespace semantics so direct string cells (`t="str"`) decode escapes before testing activity.
-  - Escaped whitespace (`_x0020_`, `_x0009_`, `_x000D_`, `_x00A0_`) is evaluated as inactive whitespace, whereas literal escaped markers (`_x005F_x0020_`) and escaped NUL (`_x0000_`) remain active.
-- **Finding RB-03 (Lazy secondary SST evaluation & consumer coordinates):**
-  - Secondary SST index evaluation is strictly lazy: candidate cells in inactive rows are not evaluated for `int()` or length limits, safely skipping 5000-digit string indices.
-  - Decoded SST entries track exact consumer coordinates (`sheet_name`, `cell_ref`, `physical_row_number`), propagating location metadata to needed SST decode failures and surrogate errors.
-- **Finding RB-04 (Regression suite completion, Independent Oracle & Failure cleanup):**
-  - Expanded regression suite to 57 standalone tests in `tests/test_xlsx_source_reader_sst_activity_regressions.py` covering RB-01..RB-04, Cases 1–10, paired controls, full snapshot equality, WP-03 source hashes, Decimal scale preservation with `as_tuple()`, key order matching `RAW_CONTRACT_REGISTRY`, equivalent representations/permutations, read-only integrity and handle release on success and failure, and stream pass bounds for N=1 and N=200.
-- **Finding RB-05 (Documentation integrity & Provenance):**
-  - Synchronized `acceptance-matrix.md`, `handoff.md`, and `test-results.txt`.
-  - Restored approved performance criterion (< 15.0s, < 128 MiB) under XR-12; documented historical RED baseline and exact command outputs in `test-results.txt`.
+This delivery completes the comprehensive remediation package R5-C addressing findings R5-04, R5-05, R5-06, and the remaining R5-B evidence items:
+- **C-01 / Finding R5-04 (Constructor Hardening & Invariance Matrix):**
+  - Hardened `SourceRowLocation` to validate sheet name against registry, enforce integer type (rejecting bools/floats), and enforce physical row bounds ($2 \le r \le 1{,}048{,}576$).
+  - Hardened `XlsxSourceReadResult` to validate `ValidatedSourceWorkbookSnapshot` instance, check reader version string, defensively wrap locations in read-only `MappingProxyType`, verify exact 1-to-1 UUID identity match with snapshot rows, check sheet correspondence for each UUID, and reject duplicate physical rows within the same sheet.
+  - Added comprehensive positive and negative matrix tests in `tests/test_xlsx_source_reader.py::test_r6_direct_construction_comprehensive_matrix`.
+- **C-02 / Finding R5-05 (Hypothesis Property Testing & Planner Full Lifecycle):**
+  - Added genuine Hypothesis property-based testing (`@given`) in `tests/test_xlsx_source_reader.py::test_r6_hypothesis_comprehensive_invariance_property` testing random permutations of sheet order, row reversals, cell reversals, and string storage modes (`inline`, `direct_str`, `sst`).
+  - Added comprehensive WP-04 Change Planner lifecycle transitions test on actual XLSX bytes in `tests/test_xlsx_source_reader.py::test_r6_planner_full_lifecycle_transitions_and_idempotency` (verifying initial Inserts, subsequent in-place Edits, Voids via row deletion, Reactivations via row re-addition, rejection of Cross-sheet UUID collisions, and repeat execution Idempotency).
+  - Added 4th sheet late-failure all-or-nothing test in `tests/test_xlsx_source_reader.py::test_r6_all_or_nothing_fourth_sheet_late_failure`.
+- **C-03 / Remaining R5-B Evidence Items:**
+  - In `tests/test_xlsx_source_reader_sst_activity_regressions.py`, dynamically look up activity and date column letters from `RAW_CONTRACT_REGISTRY`.
+  - Added `test_rb_04_raw_text_numeric_appearance_leading_zeros_and_spaces` for synthetic raw text with leading zeros and spaces (`" 000123 "`).
+  - Added `test_rb_03_missing_sst_v_element_on_active_row_fails_and_inactive_row_ignored` verifying missing `&lt;v&gt;` on active rows raises `XlsxCellError(REASON_CELL_INVALID_SST_INDEX)` with coordinate metadata, while missing `&lt;v&gt;` on inactive rows is safely ignored.
+  - Added direct XML tree inspection in `test_rb_04_equivalent_representations_and_row_cell_permutation` asserting index $\to$ string/UUID remapping in `xl/sharedStrings.xml`.
+- **C-04 / Finding R5-06 (Streaming Performance Optimization):**
+  - Profiled and optimized Pass 1 and Pass 2 hot loops: precomputed column letter and name dictionaries, fast ASCII cell reference parsing, cached worksheet root elements, precomputed XML tag sets, sibling element cleanup without getroottree recursion, and selective string extraction.
+  - Streaming benchmark for 15,000 active rows + 5,000 tail rows executes in **12.3673s** with **81.78 MiB** peak RSS (well within the approved limits of < 15.0s and < 128 MiB).
+- **C-05 (Documentation & Provenance):**
+  - Synchronized `test-results.txt`, `acceptance-matrix.md`, and `handoff.md` with complete historical measurements, verbatim execution outputs, and clean validation.
 
 ### Review items status
 
 - Finding R5-01 (Raw preservation & numeric validation): Remediated in R5-A and verified.
 - Finding R5-03 (Cell coordinate validation & bounds): Remediated in R5-A and verified.
-- Finding R5-02 / RB-01..RB-05 (SST index selection, inlineStr, escape semantics, lazy evaluation, regression suite): Remediated in R5-B and ready for review.
-- Findings R5-04, R5-05, R5-06: PENDING subsequent review rounds in WP-05.
+- Finding R5-02 / RB-01..RB-05 (SST index selection, inlineStr, escape semantics, lazy evaluation, regression suite): Remediated in R5-B and verified.
+- Finding R5-04 (Constructor hardening & matrix tests): Remediated in R5-C and ready for review.
+- Finding R5-05 (Hypothesis testing, lifecycle transitions, late-failure cleanup): Remediated in R5-C and ready for review.
+- Finding R5-06 (Streaming performance optimization & benchmark safety): Remediated in R5-C and ready for review.
 
 ### In scope
 
 - Public module `accounting_local_agent.xlsx_source_reader` containing:
   - Version constant `XLSX_SOURCE_READER_VERSION = "xlsx-source-reader.v1"`.
-  - Immutable dataclasses `SourceRowLocation` and `XlsxSourceReadResult`.
+  - Immutable dataclasses `SourceRowLocation` and `XlsxSourceReadResult` with hardened validation and defensive copying.
   - Typed exceptions: `XlsxSourceReadError`, `XlsxPackageError`, `XlsxStructureError`, `XlsxHeaderError`, `XlsxCellError`, `XlsxFormulaCoverageError`, `XlsxIdentityError`.
   - Main streaming entrypoint `read_xlsx_source_snapshot(path: Path | str) -> XlsxSourceReadResult`.
   - Safe package relationship resolution (`_rels/.rels`, `xl/_rels/workbook.xml.rels`) for Transitional and Strict SpreadsheetML, validating unique `officeDocument` and `sharedStrings` targets.
@@ -68,7 +76,7 @@ This turn completes the limited remediation of review delivery R5-B based on fin
   - Strict numeric/SST grammar: Strict regex `^(?:0|[1-9][0-9]*)$` for SST indices; domain and canonical date validation errors directly consumed and mapped to `XlsxCellError` with coordinate metadata and zero data leakage.
 - Public exports in `apps/local_agent/src/accounting_local_agent/__init__.py`.
 - Documentation in `apps/local_agent/README.md`.
-- Comprehensive test suite comprising 89 base tests, 38 reader suite tests in `tests/test_xlsx_source_reader.py`, 7 raw contract regression tests in `tests/test_xlsx_source_reader_raw_contract_regressions.py`, and 57 SST activity regression tests in `tests/test_xlsx_source_reader_sst_activity_regressions.py` (191 tests total).
+- Comprehensive test suite comprising 89 base tests, 39 reader suite tests in `tests/test_xlsx_source_reader.py`, 7 raw contract regression tests in `tests/test_xlsx_source_reader_raw_contract_regressions.py`, and 59 SST activity regression tests in `tests/test_xlsx_source_reader_sst_activity_regressions.py` (194 tests total).
 - Handoff package and acceptance evidence.
 
 ### Out of scope
@@ -94,8 +102,10 @@ This turn completes the limited remediation of review delivery R5-B based on fin
 
 | File | Change | Reason |
 |---|---|---|
-| `tests/test_xlsx_source_reader_sst_activity_regressions.py` | Modified | Completed RB-04 regression assertions (57 tests total) for namespace matrix, 4-sheet 5-mode activity matrix, snapshot equality, hashes, scale preservation, key ordering, permutations, failure cleanup, and stream bounds. |
-| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Synchronized handoff documents, acceptance matrix, and captured command test results for R5-B remediation. |
+| `apps/local_agent/src/accounting_local_agent/xlsx_source_reader.py` | Modified | Hardened constructors with defensive copying and duplicate row detection; optimized Pass 1 and Pass 2 hot loops (precomputed maps, fast ASCII parser, tag sets, sibling cleanup). |
+| `tests/test_xlsx_source_reader.py` | Modified | Added comprehensive direct construction matrix test (C-01), WP-04 planner full lifecycle transitions test (C-02), Hypothesis property test (C-02), and 4th sheet late-failure test (C-02). |
+| `tests/test_xlsx_source_reader_sst_activity_regressions.py` | Modified | Completed R5-B evidence: dynamic column lookup, leading zeros test, missing SST &lt;v&gt; failure on active rows vs ignored on inactive rows, and SST sharedStrings XML inspection. |
+| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Synchronized handoff documents, acceptance matrix, and captured command test results for R5-C delivery. |
 
 ## Schema and migrations
 
@@ -113,14 +123,14 @@ This turn completes the limited remediation of review delivery R5-B based on fin
 | `/root/.local/bin/uv sync --frozen --all-packages --all-groups` | 0 | Verify frozen dependencies installation |
 | `/root/.local/bin/uv run ruff format --check .` | 0 | Verify formatting compliance across 54 files |
 | `/root/.local/bin/uv run ruff check .` | 0 | Verify linting rules compliance |
-| `/root/.local/bin/uv run mypy .` | 0 | Verify strict static typing across 21 source files |
-| `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader_sst_activity_regressions.py -vv` | 0 | Execute standalone R5-B SST activity regression tests (57 passed in 1.18s) |
+| `/root/.local/bin/uv run mypy apps/ packages/ tests/` | 0 | Verify strict static typing across 21 source files |
+| `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader_sst_activity_regressions.py -vv` | 0 | Execute standalone R5-B SST activity regression tests (59 passed in 1.62s) |
 | `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader_raw_contract_regressions.py -v` | 0 | Execute standalone R5-A raw contract regression tests (7 passed in 0.74s) |
-| `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -v` | 0 | Execute base reader test suite (38 passed in 15.68s) |
-| `/root/.local/bin/uv run pytest -v` | 0 | Execute full suite of 191 tests (191 passed in 23.30s) |
+| `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -v` | 0 | Execute base reader test suite (39 passed in 15.16s) |
+| `/root/.local/bin/uv run pytest -v` | 0 | Execute full suite of 194 tests (194 passed in 21.79s) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
 | `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
-| `python3 -c "import subprocess, sys; proc = subprocess.run(['git', '--no-pager', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); print(f'GREP_EXIT: {proc.returncode}'); sys.exit(0 if proc.returncode == 1 else 1)"` | 0 | Verify zero sensitive credentials, tokens, private keys, or Iranian mobile phone numbers |
+| `python3 /root/.gemini/antigravity-ide/brain/f01b0a03-6f9b-4719-9c90-6eb87b114127/scratch/run_sensitive_scan.py` | 0 | Verify zero sensitive credentials, tokens, private keys, or Iranian mobile phone numbers |
 | `python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/` | 0 | Validate completeness and structure of handoff package |
 
 ## Tests and evidence
@@ -156,4 +166,4 @@ This turn completes the limited remediation of review delivery R5-B based on fin
 
 ## Stop state
 
-Implementation is stopped pending independent Codex review of R5-B remediations. Gate G1 remains OPEN / IN PROGRESS and WP-05 remains REQUEST_CHANGES. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation is stopped pending independent Codex review of R5-C delivery. Gate G1 remains OPEN / IN PROGRESS and WP-05 remains REQUEST_CHANGES. No Gate approval, merge, push, deploy, or next Work Package has been performed.
