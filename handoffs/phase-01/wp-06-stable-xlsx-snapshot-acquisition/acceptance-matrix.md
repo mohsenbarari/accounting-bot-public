@@ -7,11 +7,11 @@
 - **Component Version:** `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
 - **Baseline Commit:** `bc085acd8852e2293fdfcb786a7694fe96e93407`
 - **Current Branch:** `antigravity/phase-01-stable-xlsx-snapshot-acquisition`
-- **Remediation Scope:** Codex Round 8 Review Remediation (R8-01 to R8-04)
+- **Remediation Scope:** Codex Round 9 Review Remediation (R9-01 to R9-04)
 
 ---
 
-## Detailed Requirement Verification (SA-01 to SA-14 & R8-01 to R8-04)
+## Detailed Requirement Verification (SA-01 to SA-14 & R9-01 to R9-04)
 
 | Item ID | Requirement / Scope | Status | Verification & Evidence |
 | :--- | :--- | :--- | :--- |
@@ -32,27 +32,40 @@
 
 ---
 
-## Round 8 Refinements & Verified Deterministic Oracles (R8-01 to R8-04)
+## Round 9 Refinements & Verified Deterministic Oracles (R9-01 to R9-04)
 
-1. **R8-01: Fail-Closed Descriptor/Handle Anchor (`test_r8_01`, `test_r8_02`):**
-   - Fallback constructing ownership from `lease_dir.lstat()` upon `os.open`/`os.fstat` failure completely removed.
-   - If descriptor/handle anchor cannot be established, snapshot is never yielded (`ANCHOR_FAILURE_YIELDED = False`), `XlsxSnapshotStorageError` is raised, displaced owned dir is preserved (`ANCHOR_DISPLACED_OWNED_SURVIVED = True`), foreign dir is untouched and preserved (`ANCHOR_FOREIGN_SURVIVED = True`), and no write occurs into foreign directory.
-2. **R8-02: Atomic No-Replace Quarantine and Restore (`test_r8_03` to `test_r8_06`):**
-   - Replaced direct `os.replace` with `_atomic_move_no_replace` helper implementing kernel-level fail-if-exists semantics (`os.link` on POSIX, `renameat2(RENAME_NOREPLACE)` on Linux, `os.rename` on Windows).
-   - Pre-existing foreign files at target `qpart` or `qfinal` destinations are NEVER overwritten (`QPART_FOREIGN_OVERWRITTEN = False`, `QFINAL_FOREIGN_OVERWRITTEN = False`).
-   - Pre-existing foreign directories at target `qdir` destination are NEVER overwritten (`QDIR_FOREIGN_OVERWRITTEN = False`).
-   - Foreign files created at original path during restore are NEVER overwritten (`RESTORE_FOREIGN_OVERWRITTEN = False`).
-3. **R8-03: Safe Typed Error Messages (`test_r8_07`):**
-   - Static typed error strings without path leakage (`TYPED_ERROR_ABSOLUTE_PATH_LEAK = False`).
-   - No raw `OSError` or exception strings interpolated in `str(e)` or `repr(e)` (`TYPED_ERROR_RAW_OSERROR_INTERPOLATED = False`).
-   - Underlying raw exceptions chained strictly via `__cause__` / `from exc`.
+1. **R9-01: Windows Real Directory Handle (`test_r9_09`, `test_r9_10`):**
+   - Uses real `CreateFileW` with `FILE_FLAG_BACKUP_SEMANTICS` and `FILE_FLAG_OPEN_REPARSE_POINT` on Windows instead of `os.open` on directories.
+   - Extracts Volume Serial Number and 64-bit File ID via `GetFileInformationByHandle`.
+   - Fails closed on any creation/query error, ensuring no snapshot is yielded.
+   - Closed exactly once across all execution outcomes in `finally`.
+   - Windows runtime integration test provided as platform-conditional (`test_r9_10`).
+
+2. **R9-02: Atomic Move No-Replace Primitive (`test_r9_01` to `test_r9_05`):**
+   - Replaced all `os.link` + `unlink` patterns across Quarantine, Restore, and Promotion (`LINK_UNLINK_API_USED = False`).
+   - Single shared `_atomic_move_no_replace` primitive using `renameat2(RENAME_NOREPLACE)` on Linux and `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows.
+   - Guaranteed fail-if-exists semantics:
+     - Foreign source at quarantine destination survives (`QUARANTINE_FOREIGN_SOURCE_SURVIVED = True`).
+     - Foreign final file survives promotion collision (`PROMOTION_FOREIGN_PART_SURVIVED = True`).
+     - Displaced owned candidate survives promotion collision (`PROMOTION_DISPLACED_OWNED_SURVIVED = True`).
+     - Unsupported primitive fails closed without fallback overwrite (`RENAME_NOREPLACE_UNAVAILABLE_FAILED_CLOSED = True`, `RENAME_FALLBACK_FOREIGN_OVERWRITTEN = False`).
+     - Pre-existing empty foreign directory survives (`EMPTY_FOREIGN_QDIR_SURVIVED = True`).
+
+3. **R9-03: Re-attestation after Hook and before Delete (`test_r9_06` to `test_r9_08`):**
+   - Before `unlink` or `rmdir` on quarantined artifacts (`qpart`, `qfinal`, `qdir`), re-attests path identity (`lstat`), and for `qfinal` re-verifies file size and full SHA-256 digest.
+   - If foreign artifact is swapped into `qpart`, `qfinal`, or `qdir`, the foreign artifact is never deleted (`QPART_POSTVERIFY_FOREIGN_SURVIVED = True`, `QFINAL_POSTVERIFY_FOREIGN_SURVIVED = True`, `QDIR_POSTVERIFY_FOREIGN_SURVIVED = True`), displaced owned artifact is preserved (`QPART_POSTVERIFY_DISPLACED_OWNED_SURVIVED = True`, `QFINAL_POSTVERIFY_DISPLACED_OWNED_SURVIVED = True`, `QDIR_POSTVERIFY_DISPLACED_OWNED_SURVIVED = True`), and cleanup error is reported.
+
+4. **R9-04: Preservation of Historical Round 8 Refinements:**
+   - Fail-closed POSIX descriptor anchor preserved.
+   - Safe typed error messages without path leakage or raw `OSError` string interpolation preserved.
+   - All historical regression tests (tests 1 through 16) preserved and passing.
 
 ---
 
 ## Coverage gaps
 
-- None for local Linux platform.
-- Windows runtime execution and benchmark metrics remain PENDING independent Codex CI execution on PR.
+- **Linux (Native Platform):** Full test suite (268/268 active tests passing, 3 benchmark runs under 12s and 60 MiB RSS).
+- **Windows Runtime Platform:** Platform-conditional runtime execution (`test_r9_10`) is recorded as **PENDING** independent Codex CI execution on PR. Static type compliance verified via `mypy --platform win32` (Exit 0).
 
 ---
 

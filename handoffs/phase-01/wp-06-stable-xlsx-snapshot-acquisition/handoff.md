@@ -37,16 +37,19 @@
   - `d10492b` — `docs(handoff): finalize exact commit list for round 7 handoff`
   - `a935c08` — `fix(local_agent,tests): address Codex review round 8 R8-01 to R8-04`
   - `2f816b6` — `docs(handoff): update WP-06 handoff with Codex review round 8 evidence`
+  - `2373d36` — `docs(handoff): finalize exact commit list for round 8 handoff`
+  - `d5afc04` — `fix(local_agent,tests): address Codex review round 9 R9-01 to R9-04`
+  - `(pending)` — `docs(handoff): update WP-06 handoff with Codex review round 9 evidence`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
 
 Delivers bounded, atomic XLSX snapshot acquisition, exclusive leased consumer access, post-lease integrity verification, and namespace-safe cleanup lifecycle under ADR-0009 and WP-06.
-Addresses all Round 8 Codex review remediation directives (R8-01 to R8-04):
-1. **R8-01 (Fail-Closed Descriptor/Handle Anchor):** Completely removed `lstat` fallback on anchor establishment; failures immediately reject snapshot yielding and report typed storage errors while preserving displaced owned and foreign directories.
-2. **R8-02 (Atomic No-Replace Quarantine & Restore):** Replaced direct `os.replace` with `_atomic_move_no_replace` implementing kernel-level fail-if-exists semantics across platforms, guaranteeing that foreign artifacts at quarantine or restore destinations are never overwritten.
-3. **R8-03 (Safe Typed Error Messages):** Eliminated all raw exception string interpolations and path leaks from `XlsxSnapshot*Error` messages; raw exceptions are preserved solely through structured exception chaining (`__cause__`).
-4. **R8-04 (Independent Regression Oracles):** Verified all 9 explicit boolean invariants.
+Addresses all Round 9 Codex review remediation directives (R9-01 to R9-04):
+1. **R9-01 (Windows Real Directory Handle):** Implemented real Windows handle anchor via `CreateFileW` with `FILE_FLAG_BACKUP_SEMANTICS` and `FILE_FLAG_OPEN_REPARSE_POINT`, retrieving volume serial and file index via `GetFileInformationByHandle`. Closed in `finally`. Platform-conditional test added (`test_r9_10`).
+2. **R9-02 (Atomic Move No-Replace Primitive):** Unified all promotions, quarantines, and restores under a single atomic primitive (`_atomic_move_no_replace`) using `renameat2(RENAME_NOREPLACE)` on Linux and `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows. Fully eliminated `os.link` + `unlink` patterns (`LINK_UNLINK_API_USED = False`).
+3. **R9-03 (Re-attestation after Hook and before Delete):** Added pre-deletion identity and digest re-attestation on `qpart`, `qfinal`, and `qdir`, guaranteeing foreign artifacts swapped in during cleanup hooks are never unlinked/rmdir'd and displaced owned artifacts survive.
+4. **R9-04 (Preservation of Historical Refinements):** All historical Round 8 invariants, descriptor anchoring, error sanitization, and 16 regression oracles preserved and verified.
 
 ## Roadmap traceability
 
@@ -57,8 +60,8 @@ Addresses all Round 8 Codex review remediation directives (R8-01 to R8-04):
 ## Changed files
 
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported `DEFAULT_COPY_CHUNK_SIZE`, `XLSX_SNAPSHOT_ACQUISITION_VERSION`, `StableXlsxSnapshot`, error taxonomy classes, and `open_stable_xlsx_snapshot`.
-- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Implemented versioned context manager with Round 8 review fixes (R8-01 to R8-04).
-- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 59 tests covering SA-01 to SA-14 and all 16 regression oracles.
+- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Versioned context manager with Round 9 review fixes (R9-01 to R9-04).
+- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 69 tests covering SA-01 to SA-14 and all regression oracles.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/acceptance-matrix.md`: Detailed requirement acceptance matrix.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/test-results.txt`: Verbatim command outputs, 3-run benchmark logs, and quality scan records.
@@ -73,21 +76,22 @@ Addresses all Round 8 Codex review remediation directives (R8-01 to R8-04):
 2. `uv run ruff check .` (Exit 0, all checks passed)
 3. `uv run mypy .` (Exit 0, 23 source files checked)
 4. `uv run mypy --platform win32 .` (Exit 0, 23 source files checked)
-5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 59 passed in 13.55s)
-6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 10.47s, 10.77s, 10.69s duration; 59.31 MiB, 59.33 MiB, 59.32 MiB peak RSS)
-7. `uv run pytest -v` (Exit 0, 259 passed in 33.22s)
+5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 68 passed, 1 skipped in 13.60s)
+6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 11.36s, 10.72s, 11.30s duration; 59.59 MiB, 59.54 MiB, 59.58 MiB peak RSS)
+7. `uv run pytest -v` (Exit 0, 268 passed, 1 skipped in 35.50s)
 8. `git ls-files` check (Exit 0, 92 tracked files, 0 prohibited files)
 9. `git grep` sensitive patterns check (Exit 1 failure-on-match -> Exit 0 clean)
 
 ## Tests and evidence
 
-- Full repository suite: 259 tests passing cleanly (zero failures).
-- SA-01 to SA-14 coverage: 59 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
+- Full repository suite: 268 tests passing cleanly (1 skipped Windows-runtime-only test).
+- SA-01 to SA-14 coverage: 69 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
 - Verbatim execution logs and metrics recorded in `test-results.txt`.
 
 ## Assumptions and open items
 
-- Windows runtime behavior and benchmark performance are verified via cross-platform typing and will be executed by Codex in Windows CI environment.
+- **Linux (Native Platform):** Fully verified with clean test suite execution and benchmark profiling under CPython 3.13.15 on Linux.
+- **Windows Runtime:** Type checked via `mypy --platform win32` (Exit 0). Runtime execution on Windows remains **PENDING** independent Codex CI execution on PR.
 - Downstream orchestration (sync worker lifecycle, Telegram outbox processing) will consume `open_stable_xlsx_snapshot` in subsequent work packages.
 
 ## Risks
