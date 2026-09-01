@@ -227,12 +227,40 @@ class StableXlsxSnapshot:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _FileToken:
-    """Internal immutable metadata token capturing verified file identity."""
+    """Internal immutable metadata token capturing verified file observation."""
 
     device: int | None
     inode: int | None
     size: int | None = None
     mtime_ns: int | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ArtifactOwnershipToken:
+    """Ownership token used exclusively for safe cleanup without wildcards."""
+
+    device: int | None
+    inode: int | None
+    size: int | None = None
+    expected_sha256: str | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _VerifiedSnapshotToken:
+    """Verified token used exclusively to authorize yielding to consumer."""
+
+    device: int | None
+    inode: int | None
+    size: int
+    mtime_ns: int
+    sha256: str
+
+
+def _extract_device_and_inode(
+    st: os.stat_result,
+) -> tuple[int | None, int | None]:
+    """Extract platform device and inode identifiers, or (None, None) if unavailable."""
+    return st.st_dev, st.st_ino
 
 
 def _get_path_observation(path: Path) -> _FileToken:
@@ -252,11 +280,12 @@ def _get_path_observation(path: Path) -> _FileToken:
     if not stat.S_ISREG(st.st_mode):
         raise XlsxSourceNotReadyError("Source file is not a regular file")
 
+    dev, ino = _extract_device_and_inode(st)
     return _FileToken(
         size=st.st_size,
         mtime_ns=st.st_mtime_ns,
-        device=st.st_dev,
-        inode=st.st_ino,
+        device=dev,
+        inode=ino,
     )
 
 
@@ -269,11 +298,12 @@ def _check_fd_observation(fd: int, expected: _FileToken) -> None:
     if not stat.S_ISREG(st.st_mode):
         raise XlsxSourceNotReadyError("Source handle is not a regular file")
 
+    dev, ino = _extract_device_and_inode(st)
     if (
         (expected.size is not None and st.st_size != expected.size)
         or (expected.mtime_ns is not None and st.st_mtime_ns != expected.mtime_ns)
-        or (expected.device is not None and st.st_dev != expected.device)
-        or (expected.inode is not None and st.st_ino != expected.inode)
+        or (expected.device is not None and dev != expected.device)
+        or (expected.inode is not None and ino != expected.inode)
     ):
         raise XlsxSourceNotReadyError(
             "Source file handle metadata modified or replaced"
@@ -302,7 +332,11 @@ def _open_source_nofollow(path: Path) -> int:
             raise XlsxSourceNotReadyError(
                 "Source file is a symlink or non-regular file"
             )
-        if fst.st_dev != lst.st_dev or fst.st_ino != lst.st_ino:
+        f_dev, f_ino = _extract_device_and_inode(fst)
+        l_dev, l_ino = _extract_device_and_inode(lst)
+        if (f_dev is not None and f_dev != l_dev) or (
+            f_ino is not None and f_ino != l_ino
+        ):
             raise XlsxSourceNotReadyError(
                 "Source file handle does not match path identity"
             )
@@ -344,8 +378,10 @@ def _open_candidate_nofollow(
         )
     if not stat.S_ISREG(lst.st_mode):
         raise XlsxSnapshotStorageError("Candidate partial file is not a regular file")
-    if (expected_dev is not None and lst.st_dev != expected_dev) or (
-        expected_ino is not None and lst.st_ino != expected_ino
+
+    l_dev, l_ino = _extract_device_and_inode(lst)
+    if (expected_dev is not None and l_dev != expected_dev) or (
+        expected_ino is not None and l_ino != expected_ino
     ):
         raise XlsxSnapshotStorageError("Candidate partial file identity was replaced")
 
@@ -358,8 +394,9 @@ def _open_candidate_nofollow(
         fst = os.fstat(fd)
         if not stat.S_ISREG(fst.st_mode):
             raise XlsxSnapshotStorageError("Candidate handle is not a regular file")
-        if (expected_dev is not None and fst.st_dev != expected_dev) or (
-            expected_ino is not None and fst.st_ino != expected_ino
+        f_dev, f_ino = _extract_device_and_inode(fst)
+        if (expected_dev is not None and f_dev != expected_dev) or (
+            expected_ino is not None and f_ino != expected_ino
         ):
             raise XlsxSnapshotStorageError("Candidate handle identity does not match")
     except XlsxSnapshotAcquisitionError:
@@ -456,10 +493,17 @@ def _stream_hash_leased_snapshot(
     expected_dev: int | None = None,
     expected_ino: int | None = None,
 ) -> tuple[str, int]:
+    """Re-stream and verify leased snapshot digest, mapping errors to IntegrityError."""
     hasher = hashlib.sha256()
     total_bytes = 0
 
-    fd = _open_candidate_nofollow(path, expected_dev, expected_ino)
+    try:
+        fd = _open_candidate_nofollow(path, expected_dev, expected_ino)
+    except Exception as exc:
+        raise XlsxSnapshotIntegrityError(
+            "Leased snapshot handle could not be opened for verification"
+        ) from exc
+
     try:
         with open(fd, "rb", closefd=True) as f:
             while True:
@@ -475,7 +519,7 @@ def _stream_hash_leased_snapshot(
                 total_bytes += len(chunk)
     except XlsxSnapshotAcquisitionError:
         raise
-    except OSError as exc:
+    except Exception as exc:
         raise XlsxSnapshotIntegrityError("Leased snapshot read failed") from exc
 
     return hasher.hexdigest().lower(), total_bytes
@@ -508,7 +552,7 @@ def _validate_zip_container_candidate(
 
 def _promote_candidate_atomic_fail_if_exists(
     part_file: Path, final_file: Path, is_posix: bool
-) -> None:
+) -> tuple[int | None, int | None]:
     """Promote part_file to final_file with fail-if-exists semantics.
 
     On POSIX systems with link(), hard-linking guarantees atomic fail-if-exists
@@ -516,45 +560,56 @@ def _promote_candidate_atomic_fail_if_exists(
     without overwriting final_file. Then part_file is unlinked.
     On other platforms, os.rename provides fail-if-exists semantics.
     """
-    try:
-        if is_posix and hasattr(os, "link"):
-            try:
-                os.link(part_file, final_file)
-            except FileExistsError as exc:
+    if is_posix and hasattr(os, "link"):
+        try:
+            os.link(part_file, final_file)
+        except FileExistsError as exc:
+            raise XlsxSnapshotStorageError(
+                "Promoted file already exists in private lease directory"
+            ) from exc
+        except OSError as exc:
+            if getattr(exc, "errno", None) == 17:  # EEXIST
                 raise XlsxSnapshotStorageError(
-                    "Promoted snapshot file already exists in private lease directory"
+                    "Promoted file already exists in private lease directory"
                 ) from exc
-            except OSError as exc:
-                if getattr(exc, "errno", None) == 17:  # EEXIST
-                    raise XlsxSnapshotStorageError(
-                        "Promoted file already exists in private lease directory"
-                    ) from exc
-                raise XlsxSnapshotStorageError(
-                    "Hard-link promotion of snapshot candidate failed"
-                ) from exc
-            try:
-                part_file.unlink()
-            except OSError as exc:
-                raise XlsxSnapshotStorageError(
-                    "Unlink of partial candidate after promotion failed"
-                ) from exc
-        else:
-            try:
-                os.rename(part_file, final_file)
-            except FileExistsError as exc:
-                raise XlsxSnapshotStorageError(
-                    "Promoted snapshot file already exists in private lease directory"
-                ) from exc
-            except OSError as exc:
-                raise XlsxSnapshotStorageError(
-                    "Atomic promotion of snapshot candidate failed"
-                ) from exc
-    except XlsxSnapshotAcquisitionError:
-        raise
-    except OSError as exc:
-        raise XlsxSnapshotStorageError(
-            "Atomic promotion of snapshot candidate failed"
-        ) from exc
+            raise XlsxSnapshotStorageError(
+                "Hard-link promotion of snapshot candidate failed"
+            ) from exc
+
+        # Immediate stat of final_file to capture token even if unlink fails
+        try:
+            fin_st = final_file.lstat()
+            fin_dev, fin_ino = _extract_device_and_inode(fin_st)
+        except OSError:
+            fin_dev, fin_ino = None, None
+
+        try:
+            part_file.unlink()
+        except OSError as exc:
+            raise XlsxSnapshotStorageError(
+                "Unlink of partial candidate after promotion failed"
+            ) from exc
+
+        return fin_dev, fin_ino
+    else:
+        try:
+            os.rename(part_file, final_file)
+        except FileExistsError as exc:
+            raise XlsxSnapshotStorageError(
+                "Promoted file already exists in private lease directory"
+            ) from exc
+        except OSError as exc:
+            raise XlsxSnapshotStorageError(
+                "Atomic promotion of snapshot candidate failed"
+            ) from exc
+
+        try:
+            fin_st = final_file.lstat()
+            fin_dev, fin_ino = _extract_device_and_inode(fin_st)
+        except OSError:
+            fin_dev, fin_ino = None, None
+
+        return fin_dev, fin_ino
 
 
 def _combine_exceptions(
@@ -681,10 +736,14 @@ def open_stable_xlsx_snapshot(
     final_file = lease_dir / "snapshot.xlsx"
     is_posix = os.name == "posix" or sys.platform != "win32"
 
-    # Explicit artifact ownership tokens
-    lease_token: _FileToken | None = None
-    part_token: _FileToken | None = None
-    final_token: _FileToken | None = None
+    # Explicit lifecycle state & ownership tokens
+    lease_created: bool = False
+    part_created: bool = False
+
+    owned_lease_token: _ArtifactOwnershipToken | None = None
+    owned_part_token: _ArtifactOwnershipToken | None = None
+    owned_final_token: _ArtifactOwnershipToken | None = None
+    verified_final_token: _VerifiedSnapshotToken | None = None
 
     def _cleanup_managed_artifacts() -> list[BaseException]:
         cleanup_excs: list[BaseException] = []
@@ -693,26 +752,36 @@ def open_stable_xlsx_snapshot(
         try:
             if part_file.exists(follow_symlinks=False):
                 part_lst = part_file.lstat()
-                if (
-                    part_token is not None
-                    and stat.S_ISREG(part_lst.st_mode)
-                    and not stat.S_ISLNK(part_lst.st_mode)
-                    and (
-                        part_token.inode is not None
-                        and part_lst.st_ino == part_token.inode
-                    )
-                    and (
-                        part_token.device is not None
-                        and part_lst.st_dev == part_token.device
-                    )
-                ):
-                    part_file.unlink()
-                else:
+                if stat.S_ISLNK(part_lst.st_mode):
                     cleanup_excs.append(
-                        XlsxSnapshotCleanupError(
-                            "Candidate file was not created by acquisition"
-                        )
+                        XlsxSnapshotCleanupError("Candidate file is a symlink")
                     )
+                elif not stat.S_ISREG(part_lst.st_mode):
+                    cleanup_excs.append(
+                        XlsxSnapshotCleanupError("Candidate file is not a regular file")
+                    )
+                else:
+                    p_dev, p_ino = _extract_device_and_inode(part_lst)
+                    if (
+                        owned_part_token is not None
+                        and (
+                            owned_part_token.inode is None
+                            or p_ino == owned_part_token.inode
+                        )
+                        and (
+                            owned_part_token.device is None
+                            or p_dev == owned_part_token.device
+                        )
+                    ):
+                        part_file.unlink()
+                    elif owned_part_token is None and part_created:
+                        part_file.unlink()
+                    else:
+                        cleanup_excs.append(
+                            XlsxSnapshotCleanupError(
+                                "Candidate file was not created by acquisition"
+                            )
+                        )
         except OSError as exc:
             cleanup_excs.append(exc)
 
@@ -720,26 +789,74 @@ def open_stable_xlsx_snapshot(
         try:
             if final_file.exists(follow_symlinks=False):
                 final_lst = final_file.lstat()
-                if (
-                    final_token is not None
-                    and stat.S_ISREG(final_lst.st_mode)
-                    and not stat.S_ISLNK(final_lst.st_mode)
-                    and (
-                        final_token.inode is not None
-                        and final_lst.st_ino == final_token.inode
-                    )
-                    and (
-                        final_token.device is not None
-                        and final_lst.st_dev == final_token.device
-                    )
-                ):
-                    final_file.unlink()
-                else:
+                if stat.S_ISLNK(final_lst.st_mode):
                     cleanup_excs.append(
-                        XlsxSnapshotCleanupError(
-                            "Snapshot file was not promoted by acquisition"
-                        )
+                        XlsxSnapshotCleanupError("Snapshot file is a symlink")
                     )
+                elif not stat.S_ISREG(final_lst.st_mode):
+                    cleanup_excs.append(
+                        XlsxSnapshotCleanupError("Snapshot file is not a regular file")
+                    )
+                else:
+                    f_dev, f_ino = _extract_device_and_inode(final_lst)
+                    if (
+                        owned_final_token is not None
+                        and (
+                            owned_final_token.inode is None
+                            or f_ino == owned_final_token.inode
+                        )
+                        and (
+                            owned_final_token.device is None
+                            or f_dev == owned_final_token.device
+                        )
+                    ):
+                        can_unlink = True
+                        if (
+                            owned_final_token.size is not None
+                            and final_lst.st_size != owned_final_token.size
+                        ):
+                            can_unlink = False
+                        if can_unlink and owned_final_token.expected_sha256 is not None:
+                            try:
+                                chk_fd = _open_candidate_nofollow(
+                                    final_file,
+                                    owned_final_token.device,
+                                    owned_final_token.inode,
+                                )
+                            except Exception:
+                                chk_fd = -1
+
+                            if chk_fd >= 0:
+                                try:
+                                    with open(chk_fd, "rb", closefd=True) as chk_f:
+                                        chk_hasher = hashlib.sha256()
+                                        while True:
+                                            chk_chunk = chk_f.read(_copy_chunk_size)
+                                            if not chk_chunk:
+                                                break
+                                            chk_hasher.update(chk_chunk)
+                                    if (
+                                        chk_hasher.hexdigest().lower()
+                                        != owned_final_token.expected_sha256
+                                    ):
+                                        can_unlink = False
+                                except Exception:
+                                    can_unlink = False
+
+                        if can_unlink:
+                            final_file.unlink()
+                        else:
+                            cleanup_excs.append(
+                                XlsxSnapshotCleanupError(
+                                    "Snapshot file identity or content mismatch"
+                                )
+                            )
+                    else:
+                        cleanup_excs.append(
+                            XlsxSnapshotCleanupError(
+                                "Snapshot file was not promoted by acquisition"
+                            )
+                        )
         except OSError as exc:
             cleanup_excs.append(exc)
 
@@ -747,26 +864,36 @@ def open_stable_xlsx_snapshot(
         try:
             if lease_dir.exists(follow_symlinks=False):
                 dir_lst = lease_dir.lstat()
-                if (
-                    lease_token is not None
-                    and stat.S_ISDIR(dir_lst.st_mode)
-                    and not stat.S_ISLNK(dir_lst.st_mode)
-                    and (
-                        lease_token.inode is not None
-                        and dir_lst.st_ino == lease_token.inode
-                    )
-                    and (
-                        lease_token.device is not None
-                        and dir_lst.st_dev == lease_token.device
-                    )
-                ):
-                    lease_dir.rmdir()
-                else:
+                if stat.S_ISLNK(dir_lst.st_mode):
                     cleanup_excs.append(
-                        XlsxSnapshotCleanupError(
-                            "Lease directory was not created by acquisition"
-                        )
+                        XlsxSnapshotCleanupError("Lease directory is a symlink")
                     )
+                elif not stat.S_ISDIR(dir_lst.st_mode):
+                    cleanup_excs.append(
+                        XlsxSnapshotCleanupError("Lease directory is not a directory")
+                    )
+                else:
+                    d_dev, d_ino = _extract_device_and_inode(dir_lst)
+                    if (
+                        owned_lease_token is not None
+                        and (
+                            owned_lease_token.inode is None
+                            or d_ino == owned_lease_token.inode
+                        )
+                        and (
+                            owned_lease_token.device is None
+                            or d_dev == owned_lease_token.device
+                        )
+                    ):
+                        lease_dir.rmdir()
+                    elif owned_lease_token is None and lease_created:
+                        lease_dir.rmdir()
+                    else:
+                        cleanup_excs.append(
+                            XlsxSnapshotCleanupError(
+                                "Lease directory was not created by acquisition"
+                            )
+                        )
         except OSError as exc:
             cleanup_excs.append(exc)
 
@@ -783,14 +910,16 @@ def open_stable_xlsx_snapshot(
                     pass
             else:
                 lease_dir.mkdir(parents=False, exist_ok=False)
+            lease_created = True
         except OSError as exc:
             raise XlsxSnapshotStorageError("Failed to create lease directory") from exc
 
         try:
             lease_dir_st = lease_dir.lstat()
-            lease_token = _FileToken(
-                device=lease_dir_st.st_dev,
-                inode=lease_dir_st.st_ino,
+            l_dev, l_ino = _extract_device_and_inode(lease_dir_st)
+            owned_lease_token = _ArtifactOwnershipToken(
+                device=l_dev,
+                inode=l_ino,
             )
         except OSError as exc:
             raise XlsxSnapshotStorageError("Failed to stat lease directory") from exc
@@ -816,6 +945,7 @@ def open_stable_xlsx_snapshot(
 
                 try:
                     dst_fd = os.open(part_file, dst_flags, 0o600)
+                    part_created = True
                 except OSError as exc:
                     raise XlsxSnapshotStorageError(
                         "Failed to create snapshot candidate file"
@@ -824,9 +954,10 @@ def open_stable_xlsx_snapshot(
                 try:
                     try:
                         dst_st = os.fstat(dst_fd)
-                        part_token = _FileToken(
-                            device=dst_st.st_dev,
-                            inode=dst_st.st_ino,
+                        p_dev, p_ino = _extract_device_and_inode(dst_st)
+                        owned_part_token = _ArtifactOwnershipToken(
+                            device=p_dev,
+                            inode=p_ino,
                         )
                         dst_f = open(dst_fd, "wb", closefd=True)
                     except BaseException as pre_stream_exc:
@@ -915,11 +1046,12 @@ def open_stable_xlsx_snapshot(
             )
 
         copy_sha256 = hasher.hexdigest().lower()
-        if part_token is not None:
-            part_token = _FileToken(
-                device=part_token.device,
-                inode=part_token.inode,
+        if owned_part_token is not None:
+            owned_part_token = _ArtifactOwnershipToken(
+                device=owned_part_token.device,
+                inode=owned_part_token.inode,
                 size=copied_bytes,
+                expected_sha256=copy_sha256,
             )
 
         if _fault_hook is not None:
@@ -953,8 +1085,8 @@ def open_stable_xlsx_snapshot(
         cand_sha, cand_len = _stream_hash_candidate(
             part_file,
             _copy_chunk_size,
-            expected_dev=part_token.device if part_token else None,
-            expected_ino=part_token.inode if part_token else None,
+            expected_dev=owned_part_token.device if owned_part_token else None,
+            expected_ino=owned_part_token.inode if owned_part_token else None,
             fault_hook=_fault_hook,
             fault_stage="during_candidate_reverify",
             target_path=part_file,
@@ -971,8 +1103,8 @@ def open_stable_xlsx_snapshot(
         # Validate ZIP Central Directory on verified handle
         _validate_zip_container_candidate(
             part_file,
-            part_token.device if part_token else None,
-            part_token.inode if part_token else None,
+            owned_part_token.device if owned_part_token else None,
+            owned_part_token.inode if owned_part_token else None,
         )
 
         if _fault_hook is not None:
@@ -987,21 +1119,22 @@ def open_stable_xlsx_snapshot(
                 raise XlsxSnapshotStorageError(
                     "Candidate file is a symlink or non-regular file"
                 )
+            c_dev, c_ino = _extract_device_and_inode(cand_pre_promo_st)
             if (
                 (
-                    part_token is not None
-                    and part_token.device is not None
-                    and cand_pre_promo_st.st_dev != part_token.device
+                    owned_part_token is not None
+                    and owned_part_token.device is not None
+                    and c_dev != owned_part_token.device
                 )
                 or (
-                    part_token is not None
-                    and part_token.inode is not None
-                    and cand_pre_promo_st.st_ino != part_token.inode
+                    owned_part_token is not None
+                    and owned_part_token.inode is not None
+                    and c_ino != owned_part_token.inode
                 )
                 or (
-                    part_token is not None
-                    and part_token.size is not None
-                    and cand_pre_promo_st.st_size != part_token.size
+                    owned_part_token is not None
+                    and owned_part_token.size is not None
+                    and cand_pre_promo_st.st_size != owned_part_token.size
                 )
             ):
                 raise XlsxSnapshotStorageError(
@@ -1013,7 +1146,30 @@ def open_stable_xlsx_snapshot(
             raise XlsxSnapshotStorageError("Failed to stat candidate file") from exc
 
         # Promote candidate to final with fail-if-exists semantics
-        _promote_candidate_atomic_fail_if_exists(part_file, final_file, is_posix)
+        try:
+            promo_dev, promo_ino = _promote_candidate_atomic_fail_if_exists(
+                part_file, final_file, is_posix
+            )
+            owned_final_token = _ArtifactOwnershipToken(
+                device=promo_dev,
+                inode=promo_ino,
+                size=copied_bytes,
+                expected_sha256=copy_sha256,
+            )
+        except BaseException as promo_exc:
+            if final_file.exists(follow_symlinks=False):
+                try:
+                    f_st = final_file.lstat()
+                    f_dev, f_ino = _extract_device_and_inode(f_st)
+                    owned_final_token = _ArtifactOwnershipToken(
+                        device=f_dev,
+                        inode=f_ino,
+                        size=copied_bytes,
+                        expected_sha256=copy_sha256,
+                    )
+                except OSError:
+                    pass
+            raise promo_exc
 
         if is_posix:
             try:
@@ -1031,14 +1187,16 @@ def open_stable_xlsx_snapshot(
                 promoted_st.st_mode
             ):
                 raise XlsxSnapshotStorageError("Promoted file is invalid or symlink")
+
+            p_dev, p_ino = _extract_device_and_inode(promoted_st)
             if (
-                part_token is not None
-                and part_token.device is not None
-                and promoted_st.st_dev != part_token.device
+                owned_final_token is not None
+                and owned_final_token.device is not None
+                and p_dev != owned_final_token.device
             ) or (
-                part_token is not None
-                and part_token.inode is not None
-                and promoted_st.st_ino != part_token.inode
+                owned_final_token is not None
+                and owned_final_token.inode is not None
+                and p_ino != owned_final_token.inode
             ):
                 raise XlsxSnapshotStorageError(
                     "Promoted file identity does not match candidate"
@@ -1048,19 +1206,20 @@ def open_stable_xlsx_snapshot(
             attested_sha, attested_len = _stream_hash_candidate(
                 final_file,
                 _copy_chunk_size,
-                expected_dev=promoted_st.st_dev,
-                expected_ino=promoted_st.st_ino,
+                expected_dev=p_dev,
+                expected_ino=p_ino,
             )
             if attested_len != copied_bytes or attested_sha != copy_sha256:
                 raise XlsxSnapshotIntegrityError(
                     "Promoted snapshot content does not match verified candidate"
                 )
 
-            final_token = _FileToken(
-                device=promoted_st.st_dev,
-                inode=promoted_st.st_ino,
+            verified_final_token = _VerifiedSnapshotToken(
+                device=p_dev,
+                inode=p_ino,
                 size=promoted_st.st_size,
                 mtime_ns=promoted_st.st_mtime_ns,
+                sha256=copy_sha256,
             )
         except OSError as exc:
             if isinstance(exc, XlsxSnapshotAcquisitionError):
@@ -1103,7 +1262,7 @@ def open_stable_xlsx_snapshot(
         integrity_exc: BaseException | None = None
         cleanup_exc: BaseException | None = None
 
-        if final_token is not None:
+        if verified_final_token is not None:
             try:
                 if _fault_hook is not None:
                     _fault_hook("before_lease_reverify", final_file, None)
@@ -1128,41 +1287,45 @@ def open_stable_xlsx_snapshot(
                         "Leased snapshot is not a regular file"
                     )
 
-                # Cross-platform device and inode checks
-                if final_token.device is not None and lst.st_dev != final_token.device:
-                    raise XlsxSnapshotIntegrityError(
-                        "Leased snapshot file identity was replaced during lease"
-                    )
-                if final_token.inode is not None and lst.st_ino != final_token.inode:
+                lst_dev, lst_ino = _extract_device_and_inode(lst)
+                if (
+                    verified_final_token.device is not None
+                    and lst_dev != verified_final_token.device
+                ) or (
+                    verified_final_token.inode is not None
+                    and lst_ino != verified_final_token.inode
+                ):
                     raise XlsxSnapshotIntegrityError(
                         "Leased snapshot file identity was replaced during lease"
                     )
 
-                # Mtime check (including mtime_ns = 0 as valid timestamp)
-                if (
-                    final_token.mtime_ns is not None
-                    and lst.st_mtime_ns != final_token.mtime_ns
-                ):
+                if lst.st_mtime_ns != verified_final_token.mtime_ns:
                     raise XlsxSnapshotIntegrityError(
                         "Leased snapshot mtime was modified during lease"
                     )
 
-                # Size check
-                if final_token.size is not None and lst.st_size != final_token.size:
+                if lst.st_size != verified_final_token.size:
                     raise XlsxSnapshotIntegrityError(
                         "Leased snapshot byte count was modified during lease"
                     )
 
-                # Hash content verification
-                final_sha, final_len = _stream_hash_leased_snapshot(
-                    final_file,
-                    _copy_chunk_size,
-                    expected_dev=final_token.device,
-                    expected_ino=final_token.inode,
-                )
+                # Dedicated helper maps all I/O / handle errors to IntegrityError
+                try:
+                    final_sha, final_len = _stream_hash_leased_snapshot(
+                        final_file,
+                        _copy_chunk_size,
+                        expected_dev=verified_final_token.device,
+                        expected_ino=verified_final_token.inode,
+                    )
+                except Exception as exc:
+                    raise XlsxSnapshotIntegrityError(
+                        "Leased snapshot handle read/verification failed"
+                    ) from exc
+
                 if (
-                    final_token.size is not None and final_len != final_token.size
-                ) or final_sha != copy_sha256:
+                    final_len != verified_final_token.size
+                    or final_sha != verified_final_token.sha256
+                ):
                     raise XlsxSnapshotIntegrityError(
                         "Leased snapshot content was modified during lease"
                     )
