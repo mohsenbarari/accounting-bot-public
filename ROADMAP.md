@@ -1,8 +1,8 @@
 # نقشه راه سامانه گزارش حسابداری تلگرام
 
-> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-05 پذیرفته و ادغام شده‌اند و G1 باز است
+> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-05 پذیرفته و ادغام شده‌اند، WP-06 صادر شده و G1 باز است
 >
-> نسخه: 0.39
+> نسخه: 0.40
 >
 > آخرین به‌روزرسانی: 2026-09-01
 >
@@ -569,7 +569,7 @@
 
 > وضعیت این زیربخش: ✅ معماری و خانواده فناوری‌های O-52 تا O-56 تأیید شده‌اند. نسخه دقیق بسته‌ها هنگام ساخت Baseline فنی در `uv.lock` قفل می‌شود؛ Spikeها و آزمون‌های ذکرشده همچنان شرط عبور Gate مربوط هستند.
 
-- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد Canonical/Hash منبع O-68 در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md)، قرارداد Snapshot کامل/Change Plan منبع O-69 در [ADR-0007](docs/adr/ADR-0007-full-snapshot-change-plan.md) و قرارداد Reader فقط‌خواندنی XLSX در O-70/[ADR-0008](docs/adr/ADR-0008-streaming-xlsx-source-reader.md) ثبت شده‌اند؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
+- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد Canonical/Hash منبع O-68 در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md)، قرارداد Snapshot کامل/Change Plan منبع O-69 در [ADR-0007](docs/adr/ADR-0007-full-snapshot-change-plan.md)، قرارداد Reader فقط‌خواندنی XLSX در O-70/[ADR-0008](docs/adr/ADR-0008-streaming-xlsx-source-reader.md) و قرارداد Acquisition/پاک‌سازی Snapshot پایدار در O-71/[ADR-0009](docs/adr/ADR-0009-stable-xlsx-snapshot-acquisition.md) ثبت شده‌اند؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
 
 - ✅ ساختار کلان: Monorepo با Modular Monolith برای بخش سرور و یک Agent مستقل ویندوز. هسته Domain و قواعد حسابداری Python خالص و مستقل از FastAPI، Telegram و دیتابیس می‌ماند؛ API/Webhook و Workerها Processهای جدا ولی مصرف‌کننده همان کد دامنه‌اند.
 - ✅ زبان پایه: Python 3.13 برای Agent و سرور، با `pyproject.toml` و Lockfile قطعی. یک Spike روی کپی مجاز اکسل باید پیش از G1 سازگاری COM، بسته‌بندی و نسخه Python را اثبات کند.
@@ -647,6 +647,7 @@
 - 🧪 مانده پول و کالا فقط از `ledger_entries` فعال قابل بازسازی باشد و حذف Projection و Rebuild کامل از Raw همان مانده، relation_id و گزارش را تولید کند.
 - 🧪 Debounce دوثانیه‌ای، دو بررسی پایداری، نادیده‌گرفتن فایل موقت/Conflict، ادغام Saveهای متوالی، یک Follow-up هنگام Save وسط Import و صفر Event برای Hash یکسان در محیط واقعی OneDrive اثبات شوند.
 - 🧪 Import فقط Snapshot ثابت را بخواند، Snapshot پس از موفقیت و شکست پاک شود و تغییر فایل اصلی هنگام Parse نتواند داده نیمه‌کاره یا حذف کاذب بسازد.
+- 🧪 Acquisition نسخه‌دار O-71 روی Linux/Windows با دو مشاهده، تشخیص Replace/Mutation، Hash و اندازه یکسان در بازخوانی منبع/کپی، ارتقای اتمیک، پاک‌سازی بدون حذف بازگشتی و اتصال کامل به Reader اثبات شود؛ شاهد ساختگی جای آزمون Save/OneDrive و فایل واقعی را نمی‌گیرد.
 - 🧪 ماتریس اعتبارسنجی ثابت کند خطای فنی سراسری هیچ Commitی نمی‌سازد، ولی نام/کالای ناشناخته و RS تاریخی چندکاندیدایی Raw و سایر Importها را حفظ و فقط انتشار دامنه متأثر را متوقف می‌کنند؛ Formula/Cached Value خراب با Raw معتبر بی‌اثر باشد.
 - 🧪 مقایسه UUID/Hash برای Insert، Edit، `void`، Sort، تغییر صرفاً فرمولی و Save بدون تغییر دقیقاً رویدادهای مورد انتظار را بسازد و فایل آرشیوی هیچ رویداد عملیاتی ایجاد نکند.
 - 🧪 تزریق خطا در هر مرحله تراکنش SQLite، آینه، Revision، `void`، `change_events`/Outbox و کلیدهای اثر را همگی Rollback کند؛ Retry همان Import هیچ رویداد تکراری نسازد.
@@ -778,6 +779,7 @@
 - ✅ WP-03 قرارداد Canonical نسخه‌دار تاریخ/عدد، `source_hash` و `sheet_snapshot_hash` را طبق O-68/ADR-0006 پیاده کرد؛ Codex پس از بازبینی مستقل، یک دور اصلاح Grammar/TypeTag/Property Test/اسکن، 64 آزمون و CI دو سکویی PR #13 آن را پذیرفت. این شاهد تغییر قطعی منبع و شیت است و خود G1 را نمی‌بندد.
 - ✅ WP-04 قرارداد `source-change-plan.v1` طبق O-69/ADR-0007 را با Snapshot کامل چهار شیت، رجیستری Active/Voided، برنامه قطعی Insert/Edit/`void`/بدون‌تغییر، Revision بعدی و منع انتقال UUID میان شیت‌ها پیاده کرد؛ Codex پس از بازبینی مستقل و سه دور اصلاح سازنده‌ها/کپی دفاعی/ترتیب Raw/آزمون جایگشت و شواهد کارایی، 89 آزمون و CI دو سکویی PR #16 آن را پذیرفت. این شاهد فقط مدل و Planner خالص است؛ Excel/SQLite/Import Commit واقعی را پوشش نمی‌دهد و G1 باز می‌ماند.
 - ✅ WP-05 مرز Reader فقط‌خواندنی `xlsx-source-reader.v1` طبق O-70/ADR-0008 را با Streaming چهار شیت، Header/شناسه از رجیستری، حذف Formula/Cache و محدوده خروجی، Decode دقیق متن/Decimal/Null، فعالیت ردیف، Location مستقل از Hash و خروجی Snapshot معتبر WP-04 پیاده کرد؛ Codex پس از بازبینی مستقل چندمرحله‌ای، 200 آزمون و CI دو سکویی Run `33505486610` آن را در PR #19 پذیرفت. این شاهد فقط روی XLSXهای کاملاً ساختگی است؛ فایل واقعی، Stable Copy، Save/COM، نوشتن UUID، SQLite/Import Commit و G1 را پوشش نمی‌دهد.
+- 🧪 WP-06 برای پیاده‌سازی `xlsx-snapshot-acquisition.v1` طبق O-71/ADR-0009 صادر شد: دو مشاهده پایدار، کپی جریانی به مسیر خصوصی، SHA-256 و بازخوانی مستقل منبع/کپی، ارتقای اتمیک، Lease فقط‌خواندنی برای WP-05 و پاک‌سازی دقیق در موفقیت/شکست. فقط Fixture ساختگی مجاز است؛ Watcher/Debounce واقعی، OneDrive/COM، UUID، فایل واقعی، SQLite/Outbox و G1 خارج از این بسته‌اند.
 - تهیه نسخه پشتیبان کنترل‌شده از اکسل.
 - اجرای کنترل‌شده UUIDv7، Source/Ledger/Sheet SHA-256 و سال مالی پس از دریافت اجازه جداگانه تغییر کپی اکسل.
 - تعریف Whitelist ورودی خام چهار شیت و جداسازی Raw Immutable از Formula/Function/Query/Cached Value اکسل.
@@ -1514,6 +1516,16 @@
 - **شاهد اجرا:** WP-05 در 2026-09-01 پس از بازبینی مستقل چندمرحله‌ای، 200 آزمون موفق و CI Windows/Linux در Run `33505486610` پذیرفته و در PR #19 با Merge Commit `638053a7968110b5d3631b74d1b155da5304cd0a` ادغام شد. CI بنچ‌مارک 15,000 ردیف فعال و 5,000 ردیف Tail را روی Linux در `2.9061s / 58.96 MiB` و روی Windows در `4.6764s / 59.34 MiB` اجرا کرد؛ Header/Relationship، متن/Decimal/Null، فرمول و محدوده خروجی، فعالیت/UUID/Location، SST انتخابی، شکست کامل، Planner/Idempotency و RSS پنجره فراخوانی با Fixture صرفاً ساختگی پوشش داده شدند. این شاهد جایگزین Stable Copy، COM/Save، UUID Writer، SQLite/Import Commit، تطبیق فایل واقعی یا معیار خروج G1 نیست.
 - **تاریخ تصمیم:** 2026-08-31.
 
+### O-71 — Acquisition و پاک‌سازی Snapshot پایدار XLSX
+
+- **وضعیت:** ✅ بسته؛ قرارداد فنی نسخه 1 توسط Codex مدیر پروژه پس از مجوز صریح مالک برای صدور WP-06 تصویب و در ADR-0009 ثبت شد؛ شواهد پیاده‌سازی WP-06 همچنان 🧪 هستند.
+- **موضوع:** جلوگیری از خواندن ترکیبی دو نسل فایل هنگام Save/Replace و تعیین مالکیت روشن برای Hash، فایل موقت و پاک‌سازی پیش از ورود به Reader.
+- **تصمیم:** `xlsx-snapshot-acquisition.v1` در `accounting-local-agent` مسیر دقیق `.xlsx` را پس از Debounce آینده می‌پذیرد، دو مشاهده Size/`mtime_ns`/هویت فایل را با فاصله صریح مقایسه می‌کند، منبع را فقط‌خواندنی و جریانی به `.part` خصوصی کپی و SHA-256 می‌کند، منبع و کپی را مستقل بازخوانی و فقط پس از تطابق اندازه/Hash و سلامت Container به `.xlsx` اتمیک ارتقا می‌دهد. WP-05 فقط همین مسیر Lease را می‌خواند.
+- **چرخه حیات:** Snapshot فقط داخل Context معتبر است؛ در خروج عادی، خطای مصرف‌کننده و شکست Acquisition، فقط Artifactهای دقیق همان Lease بدون حذف بازگشتی پاک می‌شوند. تغییر/حذف Snapshot هنگام مصرف خطای تمامیت است و خطای Cleanup نباید خطای اصلی را پنهان کند. بازیابی Artifact پس از Crash مؤجل است.
+- **خطا و مرز:** تغییر، Replace، دسترسی موقت یا ZIP ناتمام «Source Not Ready» قابل Retry است؛ Policy نامعتبر، Storage، Integrity و Cleanup دلیل تایپ‌شده جدا دارند و پیام پیش‌فرض مسیر مطلق/داده خام را افشا نمی‌کند. این بسته Directory Watch، Debounce دوثانیه‌ای، Coalescing/Follow-up، قاعده واقعی OneDrive/File Release، COM/UUID، سال مالی، SQLite/Outbox یا داده واقعی را اجرا نمی‌کند.
+- **شاهد لازم:** آزمون‌های Race تزریق‌شده در همه مرزهای مشاهده/کپی/بازخوانی، حفظ بایت و Metadata منبع، Streaming محدود، ZIP ناقص، Storage/Promotion/Cleanup، چند Lease هم‌زمان و اتصال Snapshot ساختگی چهارشیتی به WP-05/WP-04؛ Benchmark ترکیبی 15,000 ردیف زیر همان 15 ثانیه/128 MiB در CI Windows/Linux و حفظ 200 آزمون قبلی. معیار فایل واقعی، Save/OneDrive و G1 باز می‌مانند.
+- **تاریخ تصمیم:** 2026-09-01.
+
 ## 22. ریسک‌های اصلی
 
 | ریسک | اثر | اقدام کنترلی پیشنهادی |
@@ -1532,6 +1544,7 @@
 | زوج ناقص RS | گزارش اشتباه برای دو شخص | relation_id و توقف رویداد ناسازگار |
 | RS تاریخی چندکاندیدایی | جفت‌شدن اشتباه و اثر مالی دو شخص | منع تطبیق تصادفی، گروه ابهام و توقف محدود دامنه متأثر |
 | Eventهای متعدد یا فایل نیمه‌نوشته OneDrive | Import ناقص یا تکراری | Debounce، Stability Probe، Hash و یک Follow-up Import |
+| تغییر منبع حین کپی یا باقی‌ماندن Snapshot کنترل‌شده | ترکیب دو نسل فایل، حذف کاذب یا افشای Artifact موقت | Lease نسخه‌دار O-71، بازخوانی مستقل منبع/کپی، ارتقای اتمیک، پاک‌سازی دقیق و بازیابی Crash در بسته بعدی |
 | طبقه‌بندی نادرست خطای Import | رد بی‌دلیل کل فایل یا انتشار مانده مبهم | ماتریس دو سطحی: Rollback خطای فنی سراسری و توقف محدود ابهام نام/کالا/RS تاریخی؛ آزمون Failure Injection |
 | قطعی اینترنت/VPN | تأخیر در Sync و ارسال | Outbox محلی پایدار، Catch-up و Retry امن |
 | پرشدن دیسک در قطعی طولانی | توقف Import یا از دست‌رفتن قابلیت ثبت | بودجه 4 KiB/رویداد، رزرو 2 GiB، هشدار ظرفیت و Backup محلی دوم |
@@ -1585,6 +1598,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.40 | 2026-09-01 | بستن تصمیم فنی O-71 و ثبت ADR-0009 برای Acquisition نسخه‌دار Snapshot ثابت با دو مشاهده، کپی/Hash جریانی، بازخوانی منبع و کپی، ZIP Container، ارتقای اتمیک و Cleanup دقیق؛ صدور WP-06 با Race/Property/Benchmark ترکیبی ساختگی و منع صریح Watcher/OneDrive/COM/UUID/SQLite/فایل واقعی، بدون بستن G1 |
 | 0.39 | 2026-09-01 | ثبت پذیرش شاهددار WP-05 توسط Codex مدیر پروژه پس از بازبینی مستقل چندمرحله‌ای Reader، Raw/SST/Constructor/Property/Lifecycle و ابزارسنجی RSS؛ موفقیت 200 آزمون و CI نهایی Windows/Linux Run `33505486610` با بنچ‌مارک 15,000 ردیف `2.9061s / 58.96 MiB` و `4.6764s / 59.34 MiB`؛ ادغام PR #19 با Commit `638053a`، بدون دسترسی فایل واقعی، تغییر Excel، SQLite/Import Commit یا بستن G1 |
 | 0.38 | 2026-08-31 | بستن O-70 و ثبت ADR-0008 برای Reader فقط‌خواندنی Streaming XLSX با Relationship/Header از رجیستری، متن/Decimal دقیق، تفکیک Formula/Cache و محدوده خروجی فرمول، فعالیت ردیف و Location مستقل از Hash؛ صدور WP-05 با Fixtureهای ZIP/XML کاملاً ساختگی، اتصال به WP-04 و سنجش زمان/RSS، بدون وابستگی تازه، دسترسی Excel واقعی، نوشتن UUID، SQLite یا بستن G1 |
 | 0.37 | 2026-08-31 | ثبت پذیرش شاهددار WP-04 توسط Codex مدیر پروژه پس از سه دور اصلاح: اعتبارسنجی سازنده‌ها و جلوگیری از حذف کاذب، کپی دفاعی عمیق، تطابق دقیق Index/ردیف، شمارنده و Hash سخت‌گیرانه، ترتیب Raw از رجیستری و Property Test با Mappingهای مستقل و مقایسه کامل Plan؛ موفقیت 89 آزمون، بنچ‌مارک مستقل 15,000 ردیف با Build `2.5017s` و Plan `0.2897s` و CI Windows/Linux Run `33360537972`؛ ادغام PR #16 با Commit `ebdbe83`، بدون تغییر قرارداد Hash معتبر، Excel، داده واقعی یا بستن G1 |

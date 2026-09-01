@@ -6,7 +6,7 @@ This public repository is the governed operational source for the Telegram accou
 
 - Phase: 1 — source and data-model foundation
 - G0: approved on 2026-08-30
-- Product implementation: Work Packages 01 through 05 accepted and merged; G1 remains open
+- Product implementation: Work Packages 01 through 05 accepted and merged; Work Package 06 issued; G1 remains open
 - Reference Excel modification: not authorized
 
 Product implementation starts only after the Codex Project Manager records an evidence-backed G0 approval in [ROADMAP.md](ROADMAP.md). G0 is now approved; later work remains bounded by phase Gates and protected-asset rules.
@@ -23,6 +23,8 @@ Product implementation starts only after the Codex Project Manager records an ev
 - [Work Package 04](docs/work-packages/phase-01/WP-04-deterministic-source-change-plan.md) is accepted and merged: it establishes validated, deeply immutable full-source snapshots and deterministic Insert/Edit/Void/Unchanged plans with independent review and cross-platform evidence. It does not yet read Excel or commit database changes.
 - [ADR-0008](docs/adr/ADR-0008-streaming-xlsx-source-reader.md) fixes the read-only XLSX decoding, formula exclusion, row-activity and complete-reader-result boundary.
 - [Work Package 05](docs/work-packages/phase-01/WP-05-streaming-xlsx-source-reader.md) is accepted and merged: it implements the read-only streaming XLSX-to-validated-source boundary with strict formula/cache exclusion, physical row tracking, synthetic ZIP/XML evidence and cross-platform performance checks. Stable-copy acquisition, Excel/COM writes and database commits remain outside this package.
+- [ADR-0009](docs/adr/ADR-0009-stable-xlsx-snapshot-acquisition.md) fixes the two-observation, streaming copy/hash, atomic-promotion, lease-integrity and exact-cleanup boundary for a stable XLSX snapshot.
+- [Work Package 06](docs/work-packages/phase-01/WP-06-stable-xlsx-snapshot-acquisition.md) is issued for Antigravity implementation using generated synthetic files only. Save/OneDrive monitoring, Excel/COM and UUID writes, real workbooks and SQLite/import commits remain outside this package.
 - [accounting-bot-implementer](.agents/skills/accounting-bot-implementer/SKILL.md) governs future Antigravity work packages and handoffs.
 
 The Owner defines the product vision, performs final acceptance testing and reports corrections. Codex acts as Project Manager and independent reviewer, maintaining the Roadmap and deciding work-package acceptance, Gates and merges. Antigravity only implements bounded approved work packages and cannot self-approve.
