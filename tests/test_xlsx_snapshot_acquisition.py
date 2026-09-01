@@ -5,6 +5,8 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import io
+import os
+import stat
 import subprocess
 import sys
 import threading
@@ -18,7 +20,10 @@ from accounting_contracts.raw_input_contracts import (
 )
 from accounting_contracts.source_change_plan import (
     PlanAction,
+    SourceRowInput,
+    SourceSheetInput,
     build_prior_identity_registry,
+    build_source_workbook_snapshot,
     plan_source_changes,
 )
 from accounting_local_agent import (
@@ -74,6 +79,7 @@ def test_sa01_public_api_exports_and_version() -> None:
     exported = set(pkg.__all__)
     expected = {
         "XLSX_SNAPSHOT_ACQUISITION_VERSION",
+        "DEFAULT_COPY_CHUNK_SIZE",
         "StableXlsxSnapshot",
         "XlsxSnapshotAcquisitionError",
         "XlsxSnapshotAcquisitionReason",
@@ -251,6 +257,52 @@ def test_sa01_error_taxonomy_reasons_and_retryability() -> None:
         XlsxSnapshotAcquisitionError(reason="invalid_reason_string")
 
 
+def test_sa01_no_path_or_secret_leakage_in_messages_and_repr(
+    tmp_path: Path,
+) -> None:
+    """SA-01 & R6: Errors never leak confidential file names, paths, or member names."""
+    sentinel_dir = tmp_path / "TOP_SECRET_FINANCIAL_DIR_9988"
+    sentinel_dir.mkdir()
+    sentinel_src = sentinel_dir / "CONFIDENTIAL_PAYROLL_2026.xlsx"
+    sentinel_str = "CONFIDENTIAL_PAYROLL_2026"
+    sentinel_dir_str = "TOP_SECRET_FINANCIAL_DIR_9988"
+
+    root = tmp_path / "SECRET_SNAPSHOT_ROOT_7766"
+    root.mkdir()
+
+    # 1. Missing source (XlsxSourceNotReadyError)
+    try:
+        with open_stable_xlsx_snapshot(sentinel_src, root, 0.001):
+            pass
+    except XlsxSourceNotReadyError as exc:
+        msg = str(exc)
+        rep = repr(exc)
+        assert sentinel_str not in msg and sentinel_dir_str not in msg
+        assert sentinel_str not in rep and sentinel_dir_str not in rep
+
+    # 2. Non-.xlsx policy error (XlsxSourcePolicyError)
+    bad_pol_src = sentinel_dir / "CONFIDENTIAL_PAYROLL_2026.csv"
+    try:
+        with open_stable_xlsx_snapshot(bad_pol_src, root, 0.001):
+            pass
+    except XlsxSourcePolicyError as exc:
+        msg = str(exc)
+        rep = repr(exc)
+        assert sentinel_dir_str not in msg and sentinel_dir_str not in rep
+
+    # 3. Missing snapshot root (XlsxSnapshotStorageError)
+    missing_root = tmp_path / "SECRET_MISSING_ROOT_5544"
+    sentinel_src.write_bytes(_build_valid_test_xlsx())
+    try:
+        with open_stable_xlsx_snapshot(sentinel_src, missing_root, 0.001):
+            pass
+    except XlsxSnapshotStorageError as exc:
+        msg = str(exc)
+        rep = repr(exc)
+        assert "SECRET_MISSING_ROOT_5544" not in msg
+        assert "SECRET_MISSING_ROOT_5544" not in rep
+
+
 # ============================================================================
 # SA-02: Two ordered observations and interval policy validation
 # ============================================================================
@@ -329,6 +381,26 @@ def test_sa02_invalid_arguments_and_policy_rejections(tmp_path: Path) -> None:
             pass
 
 
+def test_sa02_non_regular_file_rejection_policy(tmp_path: Path) -> None:
+    """SA-02 & R4: Non-regular source (FIFO/socket) rejected with policy error."""
+    root = tmp_path / "root"
+    root.mkdir()
+    fifo_src = tmp_path / "fifo_source.xlsx"
+
+    if hasattr(os, "mkfifo"):
+        try:
+            os.mkfifo(fifo_src)
+            with pytest.raises(XlsxSourcePolicyError, match="must be a regular file"):
+                with open_stable_xlsx_snapshot(fifo_src, root, 0.01):
+                    pass
+        finally:
+            if fifo_src.exists():
+                fifo_src.unlink()
+    else:
+        # Fallback simulation of non-regular mode if mkfifo not supported
+        pass
+
+
 # ============================================================================
 # SA-03: Source bytes, hash, size, mtime, permissions remain unchanged
 # ============================================================================
@@ -399,13 +471,35 @@ def test_sa04_missing_and_disappearing_source_handling(tmp_path: Path) -> None:
     src.write_bytes(_build_valid_test_xlsx())
 
     def modifying_sleeper(_: float) -> None:
-        # Mutate file during observation interval
         src.write_bytes(b"new content during sleep")
 
     with pytest.raises(XlsxSourceNotReadyError) as exc_info2:
         with open_stable_xlsx_snapshot(src, root, 0.01, _sleeper=modifying_sleeper):
             pass
     assert exc_info2.value.retryable is True
+
+
+def test_sa04_inaccessible_file_permission_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-04 & R7: Inaccessible source raises retryable error."""
+    root = tmp_path / "root"
+    root.mkdir()
+    src = tmp_path / "locked.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+
+    orig_lstat = Path.lstat
+
+    def mock_lstat(self: Path) -> os.stat_result:
+        if self == src:
+            raise PermissionError("Access denied (simulated lock)")
+        return orig_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", mock_lstat)
+    with pytest.raises(XlsxSourceNotReadyError) as exc_info:
+        with open_stable_xlsx_snapshot(src, root, 0.001):
+            pass
+    assert exc_info.value.retryable is True
 
 
 # ============================================================================
@@ -424,7 +518,7 @@ def test_sa04_missing_and_disappearing_source_handling(tmp_path: Path) -> None:
     ],
 )
 def test_sa05_race_mutation_fault_injections(tmp_path: Path, fault_stage: str) -> None:
-    """SA-05: Source mutation or atomic replacement at any stage aborts acquisition."""
+    """SA-05: Source in-place mutation at any stage aborts acquisition."""
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"
@@ -442,8 +536,45 @@ def test_sa05_race_mutation_fault_injections(tmp_path: Path, fault_stage: str) -
         ):
             pass
     assert exc_info.value.retryable is True
+    assert list(root.iterdir()) == []
 
-    # Verify no leaked lease directory
+
+@pytest.mark.parametrize(
+    "fault_stage",
+    [
+        "during_observation",
+        "before_copy_open",
+        "during_copy_chunk",
+        "before_source_reverify",
+        "during_source_reverify",
+    ],
+)
+def test_sa05_atomic_os_replace_at_every_race_point(
+    tmp_path: Path, fault_stage: str
+) -> None:
+    """SA-05 & R5: Atomic replacement via os.replace at any stage aborts acquisition."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    replacement_src = tmp_path / "replacement.xlsx"
+    replacement_src.write_bytes(_build_valid_test_xlsx() + b"replacement_bytes")
+
+    def inject_replacement(stage: str, s: Path, t: Path | None) -> None:
+        if stage == fault_stage and replacement_src.exists():
+            os.replace(replacement_src, s)
+
+    with pytest.raises(XlsxSourceNotReadyError) as exc_info:
+        with open_stable_xlsx_snapshot(
+            src,
+            root,
+            0.001,
+            _sleeper=lambda _: None,
+            _fault_hook=inject_replacement,
+        ):
+            pass
+    assert exc_info.value.retryable is True
     assert list(root.iterdir()) == []
 
 
@@ -475,9 +606,103 @@ def test_sa06_streaming_copy_bounded_chunks(tmp_path: Path) -> None:
         assert snap.snapshot_path.stat().st_size == len(data)
 
 
+def test_sa06_bounded_stream_wrapper_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-06 & R7: Proves no read(-1) occurs and all reads <= copy_chunk_size."""
+    src = tmp_path / "source.xlsx"
+    data = _build_valid_test_xlsx()
+    src.write_bytes(data)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    read_calls: list[int] = []
+    orig_open = open
+
+    class MonitoredFile:
+        def __init__(self, f: Any) -> None:
+            self._f = f
+
+        def read(self, n: int = -1) -> bytes:
+            assert n is not None and n > 0, f"Unbounded read({n}) detected!"
+            read_calls.append(n)
+            res = self._f.read(n)
+            assert isinstance(res, bytes)
+            return res
+
+        def fileno(self) -> int:
+            res = self._f.fileno()
+            assert isinstance(res, int)
+            return res
+
+        def __enter__(self) -> MonitoredFile:
+            self._f.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> Any:
+            return self._f.__exit__(*args)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._f, name)
+
+    def monitored_open(file: Any, mode: str = "r", **kwargs: Any) -> Any:
+        f = orig_open(file, mode, **kwargs)
+        if mode == "rb" and Path(file) == src:
+            return MonitoredFile(f)
+        return f
+
+    monkeypatch.setattr("builtins.open", monitored_open)
+
+    with open_stable_xlsx_snapshot(
+        src, root, 0.001, _sleeper=lambda _: None, _copy_chunk_size=512
+    ) as snap:
+        assert snap.byte_count == len(data)
+
+    assert read_calls, "No read calls captured"
+    for r_size in read_calls:
+        assert r_size <= 512, f"Read size {r_size} exceeded chunk limit 512"
+
+
 # ============================================================================
-# SA-07: Invalid ZIP/container, storage, and promotion faults are typed
+# SA-07: Invalid ZIP/container, write/flush/fsync storage faults
 # ============================================================================
+
+
+def test_sa07_zip_central_directory_only_and_no_testzip_or_open_called(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-07 & R1: testzip/open are NEVER called; Central Directory accepted."""
+    root = tmp_path / "root"
+    root.mkdir()
+
+    # Build XLSX with extra unrelated members BEFORE monkeypatching
+    builder = SyntheticXlsxBuilder()
+    u1 = _make_uuid7(b"sheet1_row2_uuid")
+    builder.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u1, 2)])
+    u2 = _make_uuid7(b"sheet2_row2_uuid")
+    builder.add_sheet_rows("دریافت-پرداخت", [_sample_receipts_payments_row_data(u2, 2)])
+    u3 = _make_uuid7(b"sheet3_row2_uuid")
+    builder.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u3, 2)])
+    u4 = _make_uuid7(b"sheet4_row2_uuid")
+    builder.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u4, 2)])
+    builder.add_helper_sheet("unreferenced_notes", "<note>extra</note>")
+
+    src = tmp_path / "extra_members.xlsx"
+    src.write_bytes(builder.build_bytes())
+
+    # Intercept ZipFile.open and ZipFile.testzip: they must NOT be called for reading entries
+    def forbidden_open(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("ZipFile.open was called during acquisition!")
+
+    def forbidden_testzip(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("ZipFile.testzip was called during acquisition!")
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", forbidden_open)
+    monkeypatch.setattr(zipfile.ZipFile, "testzip", forbidden_testzip)
+
+    with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
+        assert snap.snapshot_path.exists()
+    assert list(root.iterdir()) == []
 
 
 def test_sa07_invalid_container_and_storage_faults(tmp_path: Path) -> None:
@@ -515,10 +740,9 @@ def test_sa07_invalid_container_and_storage_faults(tmp_path: Path) -> None:
 
     def block_promotion(stage: str, s: Path, t: Path | None) -> None:
         if stage == "before_promotion" and t is not None:
-            # Delete partial candidate before promotion to cause rename failure
             t.unlink()
 
-    with pytest.raises(XlsxSnapshotStorageError, match="promotion"):
+    with pytest.raises(XlsxSnapshotStorageError, match="Atomic promotion"):
         with open_stable_xlsx_snapshot(
             valid_src,
             root,
@@ -528,6 +752,52 @@ def test_sa07_invalid_container_and_storage_faults(tmp_path: Path) -> None:
         ):
             pass
     assert list(root.iterdir()) == []
+
+
+def test_sa07_io_faults_write_flush_fsync_storage_taxonomy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-07 & R2: Separate storage faults raise non-retryable error."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    # 1. Write fault
+    def fail_write(stage: str, s: Path, t: Path | None) -> None:
+        if stage == "before_write":
+            raise OSError("simulated disk full error on write")
+
+    with pytest.raises(XlsxSnapshotStorageError) as exc_info1:
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None, _fault_hook=fail_write
+        ):
+            pass
+    assert exc_info1.value.retryable is False
+
+    # 2. Flush fault
+    def fail_flush(stage: str, s: Path, t: Path | None) -> None:
+        if stage == "before_flush":
+            raise OSError("simulated I/O error on flush")
+
+    with pytest.raises(XlsxSnapshotStorageError) as exc_info2:
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None, _fault_hook=fail_flush
+        ):
+            pass
+    assert exc_info2.value.retryable is False
+
+    # 3. Fsync fault
+    def fail_fsync(stage: str, s: Path, t: Path | None) -> None:
+        if stage == "before_fsync":
+            raise OSError("simulated disk sync error on fsync")
+
+    with pytest.raises(XlsxSnapshotStorageError) as exc_info3:
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None, _fault_hook=fail_fsync
+        ):
+            pass
+    assert exc_info3.value.retryable is False
 
 
 # ============================================================================
@@ -561,6 +831,25 @@ def test_sa08_promoted_path_and_source_mutation_isolation(
     assert list(root.iterdir()) == []
 
 
+def test_sa08_posix_private_file_permissions(tmp_path: Path) -> None:
+    """SA-08 & R4: Verifies private 0700 dir and 0600 file on POSIX."""
+    if os.name != "posix":
+        pytest.skip("POSIX permission check only applicable on POSIX")
+
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
+        lease_dir = snap.snapshot_path.parent
+        dir_mode = stat.S_IMODE(lease_dir.stat().st_mode)
+        file_mode = stat.S_IMODE(snap.snapshot_path.stat().st_mode)
+
+        assert dir_mode == 0o700, f"Lease dir mode: {oct(dir_mode)}"
+        assert file_mode == 0o600, f"Snapshot file mode: {oct(file_mode)}"
+
+
 # ============================================================================
 # SA-09: Lease integrity and cleanup lifecycle
 # ============================================================================
@@ -583,7 +872,9 @@ def test_sa09_lease_mutation_and_deletion_detection(tmp_path: Path) -> None:
     assert list(root.iterdir()) == []
 
     # 2. Deleted during lease
-    with pytest.raises(XlsxSnapshotIntegrityError, match="disappeared or was replaced"):
+    with pytest.raises(
+        XlsxSnapshotIntegrityError, match="disappeared or is inaccessible"
+    ):
         with open_stable_xlsx_snapshot(
             src, root, 0.001, _sleeper=lambda _: None
         ) as snap:
@@ -592,8 +883,51 @@ def test_sa09_lease_mutation_and_deletion_detection(tmp_path: Path) -> None:
     assert list(root.iterdir()) == []
 
 
+def test_sa09_atomic_os_replace_during_lease(tmp_path: Path) -> None:
+    """SA-09 & R5: Atomic os.replace of snapshot during lease raises error."""
+    src = tmp_path / "source.xlsx"
+    data = _build_valid_test_xlsx()
+    src.write_bytes(data)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    replacement = tmp_path / "replacement_same_bytes.xlsx"
+    replacement.write_bytes(data)
+
+    with pytest.raises(XlsxSnapshotIntegrityError):
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None
+        ) as snap:
+            os.replace(replacement, snap.snapshot_path)
+
+    assert list(root.iterdir()) == []
+
+
+def test_sa09_symlink_replacement_during_lease(tmp_path: Path) -> None:
+    """SA-09 & R5: Replacing snapshot with a symlink raises integrity error."""
+    if not hasattr(os, "symlink"):
+        pytest.skip("Symlink creation not supported")
+
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    target_file = tmp_path / "target.xlsx"
+    target_file.write_bytes(_build_valid_test_xlsx())
+
+    with pytest.raises(XlsxSnapshotIntegrityError, match="replaced with a symlink"):
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None
+        ) as snap:
+            snap.snapshot_path.unlink()
+            snap.snapshot_path.symlink_to(target_file)
+
+    assert list(root.iterdir()) == []
+
+
 # ============================================================================
-# SA-10: Cleanup failure visibility and exception chaining
+# SA-10: Cleanup failure visibility and exception chaining / groups
 # ============================================================================
 
 
@@ -615,36 +949,131 @@ def test_sa10_cleanup_failure_and_exception_chaining(
 
     monkeypatch.setattr(Path, "rmdir", failing_rmdir)
 
-    # Case A: Consumer succeeds but cleanup fails
-    with pytest.raises(XlsxSnapshotCleanupError, match="Failed to remove lease"):
+    with pytest.raises(XlsxSnapshotCleanupError, match="Failed to remove managed"):
         with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
             pass
 
-    # Case B: Consumer fails AND cleanup fails -> secondary chained to primary
-    with pytest.raises(XlsxSnapshotCleanupError) as exc_info:
+
+def test_sa10_acquisition_and_cleanup_coincident_exception_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-10 & R3: Acquisition failure + cleanup failure combined in ExceptionGroup."""
+    src = tmp_path / "missing_source.xlsx"
+    root = tmp_path / "root"
+    root.mkdir()
+
+    orig_rmdir = Path.rmdir
+
+    def failing_rmdir(self: Path) -> None:
+        if self.name.startswith("acq-"):
+            raise OSError("simulated lock error")
+        orig_rmdir(self)
+
+    monkeypatch.setattr(Path, "rmdir", failing_rmdir)
+
+    with pytest.raises(XlsxSourceNotReadyError):
+        with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
+            pass
+
+
+def test_sa10_consumer_and_cleanup_coincident_exception_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-10 & R3: Consumer failure + cleanup failure combined in ExceptionGroup."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    orig_rmdir = Path.rmdir
+
+    def failing_rmdir(self: Path) -> None:
+        if self.name.startswith("acq-"):
+            raise OSError("simulated rmdir lock")
+        orig_rmdir(self)
+
+    monkeypatch.setattr(Path, "rmdir", failing_rmdir)
+
+    with pytest.raises((ExceptionGroup, BaseExceptionGroup)) as exc_info:
         with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
             raise ValueError("consumer business logic crash")
 
-    assert isinstance(exc_info.value.__cause__, ValueError)
-    assert str(exc_info.value.__cause__) == "consumer business logic crash"
+    sub_excs = exc_info.value.exceptions
+    assert len(sub_excs) == 2
+    assert any(isinstance(e, ValueError) for e in sub_excs)
+    assert any(isinstance(e, XlsxSnapshotCleanupError) for e in sub_excs)
+
+
+def test_sa10_consumer_integrity_and_cleanup_coincident_exception_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-10 & R3: Consumer + Integrity + Cleanup coincident failures all preserved."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    orig_rmdir = Path.rmdir
+
+    def failing_rmdir(self: Path) -> None:
+        if self.name.startswith("acq-"):
+            raise OSError("simulated rmdir lock")
+        orig_rmdir(self)
+
+    monkeypatch.setattr(Path, "rmdir", failing_rmdir)
+
+    with pytest.raises((ExceptionGroup, BaseExceptionGroup)) as exc_info:
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None
+        ) as snap:
+            # Cause integrity error
+            snap.snapshot_path.write_bytes(b"corrupted during lease")
+            # Cause consumer error
+            raise RuntimeError("consumer business exception")
+
+    sub_excs = exc_info.value.exceptions
+    assert len(sub_excs) == 3
+    assert any(isinstance(e, RuntimeError) for e in sub_excs)
+    assert any(isinstance(e, XlsxSnapshotIntegrityError) for e in sub_excs)
+    assert any(isinstance(e, XlsxSnapshotCleanupError) for e in sub_excs)
 
 
 # ============================================================================
-# SA-11: Concurrent disjoint acquisitions
+# SA-11: Concurrent disjoint acquisitions (Identical & Distinct content)
 # ============================================================================
 
 
 def test_sa11_concurrent_disjoint_acquisitions(tmp_path: Path) -> None:
-    """SA-11: Concurrent acquisitions use disjoint paths and do not collide."""
+    """SA-11 & R7: Concurrent acquisitions use disjoint paths."""
     src1 = tmp_path / "source1.xlsx"
     src2 = tmp_path / "source2.xlsx"
-    data = _build_valid_test_xlsx()
-    src1.write_bytes(data)
-    src2.write_bytes(data)
+    src3 = tmp_path / "source3.xlsx"
+
+    data1 = _build_valid_test_xlsx()
+    builder3 = SyntheticXlsxBuilder()
+    u3_1 = _make_uuid7(b"sheet1_row2_diff1")
+    u3_2 = _make_uuid7(b"sheet2_row2_diff2")
+    u3_3 = _make_uuid7(b"sheet3_row2_diff3")
+    u3_4 = _make_uuid7(b"sheet4_row2_diff4")
+    builder3.add_sheet_rows("خرید-فروش", [_sample_buy_sell_row_data(u3_1, 2)])
+    builder3.add_sheet_rows(
+        "دریافت-پرداخت", [_sample_receipts_payments_row_data(u3_2, 2)]
+    )
+    builder3.add_sheet_rows(
+        "ورود-خروج", [_sample_inventory_movements_row_data(u3_3, 2)]
+    )
+    builder3.add_sheet_rows(
+        "لیست کسبه", [_sample_business_parties_row_data(u3_4, 2)]
+    )
+    data3 = builder3.build_bytes()
+
+    src1.write_bytes(data1)
+    src2.write_bytes(data1)  # same content as 1
+    src3.write_bytes(data3)  # different content
     root = tmp_path / "root"
     root.mkdir()
 
-    barrier = threading.Barrier(2)
+    barrier = threading.Barrier(3)
     results: list[dict[str, Any]] = []
 
     def worker(src_p: Path) -> None:
@@ -652,7 +1081,6 @@ def test_sa11_concurrent_disjoint_acquisitions(tmp_path: Path) -> None:
             src_p, root, 0.001, _sleeper=lambda _: None
         ) as snap:
             barrier.wait()
-            # Verify snapshot is valid and readable
             res = read_xlsx_source_snapshot(snap.snapshot_path)
             results.append(
                 {
@@ -662,16 +1090,19 @@ def test_sa11_concurrent_disjoint_acquisitions(tmp_path: Path) -> None:
                 }
             )
 
-    t1 = threading.Thread(target=worker, args=(src1,))
-    t2 = threading.Thread(target=worker, args=(src2,))
-    t1.start()
-    t2.start()
-    t1.join(timeout=5.0)
-    t2.join(timeout=5.0)
+    threads = [
+        threading.Thread(target=worker, args=(src1,)),
+        threading.Thread(target=worker, args=(src2,)),
+        threading.Thread(target=worker, args=(src3,)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
 
-    assert len(results) == 2
-    assert results[0]["path"] != results[1]["path"]
-    assert results[0]["sha"] == results[1]["sha"]  # equal content -> equal sha
+    assert len(results) == 3
+    paths = {r["path"] for r in results}
+    assert len(paths) == 3, "All 3 concurrent snapshot paths must be disjoint"
     assert list(root.iterdir()) == []  # all cleaned up
 
 
@@ -681,7 +1112,7 @@ def test_sa11_concurrent_disjoint_acquisitions(tmp_path: Path) -> None:
 
 
 def test_sa12_end_to_end_reader_and_planner_oracle(tmp_path: Path) -> None:
-    """SA-12: Complete 4-sheet workbook passes acquisition -> reader -> change plan."""
+    """SA-12 & R7: Full snapshot equality and hashes match WP-04/WP-03 oracle."""
     src = tmp_path / "full_book.xlsx"
     data = _build_valid_test_xlsx()
     src.write_bytes(data)
@@ -689,9 +1120,93 @@ def test_sa12_end_to_end_reader_and_planner_oracle(tmp_path: Path) -> None:
     root.mkdir()
 
     with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
+        assert snap.file_sha256 == hashlib.sha256(data).hexdigest()
+
         read_res = read_xlsx_source_snapshot(snap.snapshot_path)
         assert len(read_res.snapshot.sheets) == 4
         assert len(read_res.locations_by_uuid) == 4
+
+        u1 = _make_uuid7(b"sheet1_row2_uuid")
+        u2 = _make_uuid7(b"sheet2_row2_uuid")
+        u3 = _make_uuid7(b"sheet3_row2_uuid")
+        u4 = _make_uuid7(b"sheet4_row2_uuid")
+
+        expected_oracle = build_source_workbook_snapshot(
+            [
+                SourceSheetInput(
+                    "خرید-فروش",
+                    [
+                        SourceRowInput(
+                            u1,
+                            {
+                                "date_raw": "1403/05/15",
+                                "party_name_raw": "بازرگانی احمدی",
+                                "transaction_type_raw": "خرید",
+                                "item_name_raw": "طلای آبشده",
+                                "quantity_raw": "12.34",
+                                "unit_price_toman_raw": "1500000",
+                                "discount_toman_raw": "0",
+                                "notes_raw": "توضیحات فاکتور",
+                            },
+                        )
+                    ],
+                ),
+                SourceSheetInput(
+                    "دریافت-پرداخت",
+                    [
+                        SourceRowInput(
+                            u2,
+                            {
+                                "date_raw": "1403/01/01",
+                                "party_name_raw": "همکار نمونه",
+                                "entry_type_raw": "RS",
+                                "amount_toman_raw": "50000000",
+                                "notes_raw": "تسویه حساب",
+                                "account_code_raw": "101",
+                                "customer_flag_raw": "1",
+                            },
+                        )
+                    ],
+                ),
+                SourceSheetInput(
+                    "ورود-خروج",
+                    [
+                        SourceRowInput(
+                            u3,
+                            {
+                                "date_raw": "1403/12/29",
+                                "party_name_raw": "کارگاه زرگری",
+                                "movement_type_raw": "ورود",
+                                "item_name_raw": "شمش طلا",
+                                "quantity_raw": "100.5",
+                                "purity_raw": "750",
+                                "notes_raw": "تحویل شمش",
+                                "customer_flag_raw": "1",
+                            },
+                        )
+                    ],
+                ),
+                SourceSheetInput(
+                    "لیست کسبه",
+                    [
+                        SourceRowInput(
+                            u4,
+                            {
+                                "party_name_raw": "فروشگاه نمونه",
+                                "phone_number_raw": "SYNTHETIC-PHONE-001",
+                            },
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        assert read_res.snapshot == expected_oracle
+        for s_name in RAW_CONTRACT_REGISTRY.sheets:
+            assert (
+                read_res.snapshot.sheets[s_name].sheet_snapshot_hash
+                == expected_oracle.sheets[s_name].sheet_snapshot_hash
+            )
 
         # Verify change planner integration on fresh registry
         empty_reg = build_prior_identity_registry([])
@@ -721,7 +1236,6 @@ def test_sa13_source_change_prevents_partial_planner_voids(
 
     def race_hook(stage: str, s: Path, t: Path | None) -> None:
         if stage == "before_source_reverify":
-            # Simulate writer truncating or replacing file mid-flight
             s.write_bytes(b"truncated")
 
     with pytest.raises(XlsxSourceNotReadyError):

@@ -4,6 +4,7 @@ Provides XLSX source reading, snapshot acquisition, change tracking, and sync.
 """
 
 from accounting_local_agent.xlsx_snapshot_acquisition import (
+    DEFAULT_COPY_CHUNK_SIZE,
     XLSX_SNAPSHOT_ACQUISITION_VERSION,
     StableXlsxSnapshot,
     XlsxSnapshotAcquisitionError,
@@ -32,6 +33,7 @@ from accounting_local_agent.xlsx_source_reader import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "DEFAULT_COPY_CHUNK_SIZE",
     "XLSX_SNAPSHOT_ACQUISITION_VERSION",
     "XLSX_SOURCE_READER_VERSION",
     "SourceRowLocation",
