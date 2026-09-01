@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import io
 import json
+import math
+import re
 import subprocess
 import sys
 import threading
 import time
 import uuid
 import zipfile
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -2276,10 +2279,45 @@ def test_xr12_synthetic_15000_row_benchmark(
         )
 
     bench_code = f"""
-import json, sys, threading, time
+import json, math, re, sys, threading, time
 from pathlib import Path
 from accounting_contracts.raw_input_contracts import RAW_CONTRACT_REGISTRY
 from accounting_local_agent.xlsx_source_reader import read_xlsx_source_snapshot
+
+_STRICT_ASCII_POS_INT_REGEX = re.compile(r"^[1-9][0-9]*$")
+
+def _parse_linux_proc_status_vmrss_mib(content: str) -> float:
+    found = False
+    val_mib = 0.0
+    for line in content.splitlines():
+        if line.startswith("VmRSS:"):
+            if found:
+                raise RuntimeError(
+                    "Linux /proc/self/status contains duplicate VmRSS entries"
+                )
+            found = True
+            parts = line.split()
+            if len(parts) != 3:
+                raise RuntimeError(
+                    "Linux /proc/self/status malformed VmRSS token count: "
+                    f"{{line.strip()}}"
+                )
+            if (
+                not parts[1].isascii()
+                or not _STRICT_ASCII_POS_INT_REGEX.fullmatch(parts[1])
+            ):
+                raise RuntimeError(
+                    f"Linux /proc/self/status invalid VmRSS integer: {{parts[1]}}"
+                )
+            if parts[2] != "kB":
+                raise RuntimeError(
+                    f"Linux /proc/self/status invalid VmRSS unit: {{parts[2]}}"
+                )
+            val_kb = int(parts[1])
+            val_mib = val_kb / 1024.0
+    if not found:
+        raise RuntimeError("Linux /proc/self/status missing VmRSS entry")
+    return val_mib
 
 def get_current_process_rss_mib() -> float:
     if sys.platform == "win32":
@@ -2336,81 +2374,122 @@ def get_current_process_rss_mib() -> float:
     elif sys.platform.startswith("linux"):
         try:
             with open("/proc/self/status", encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith("VmRSS:"):
-                        parts = line.split()
-                        if len(parts) >= 2 and parts[1].isdigit():
-                            val_kb = int(parts[1])
-                            val_mib = val_kb / 1024.0
-                            if val_mib > 0.0:
-                                return val_mib
-                            raise RuntimeError(
-                                f"Linux VmRSS non-positive: {{val_kb}}"
-                            )
-                        raise RuntimeError(
-                            f"Linux malformed VmRSS line: {{line.strip()}}"
-                        )
+                return _parse_linux_proc_status_vmrss_mib(f.read())
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to read Linux current RSS: {{exc}}"
+                f"Failed to read Linux current RSS from /proc/self/status: {{exc}}"
             ) from exc
-        raise RuntimeError("Linux /proc/self/status missing VmRSS entry")
     else:
         raise RuntimeError(f"Unsupported benchmark platform: {{sys.platform}}")
 
 class CallWindowRssSampler:
-    def __init__(self, interval_seconds: float = 0.005) -> None:
-        self.interval_seconds = interval_seconds
+    def __init__(
+        self,
+        interval_seconds: float = 0.005,
+        probe_fn = None,
+    ) -> None:
+        if isinstance(interval_seconds, bool) or not isinstance(
+            interval_seconds, (int, float)
+        ):
+            raise ValueError(
+                f"interval_seconds must be a real float, got {{type(interval_seconds)}}"
+            )
+        if (
+            not math.isfinite(interval_seconds)
+            or interval_seconds <= 0.0
+            or interval_seconds > 0.010
+        ):
+            raise ValueError(
+                "interval_seconds must be finite and in range (0.0, 0.010], "
+                f"got {{interval_seconds}}"
+            )
+        self.interval_seconds = float(interval_seconds)
+        self._probe_fn = (
+            probe_fn if probe_fn is not None else get_current_process_rss_mib
+        )
         self._stop_event = threading.Event()
         self._thread = None
         self.samples = []
         self.error = None
         self._lock = threading.Lock()
+        self._state = "INITIAL"
 
     def _sample_loop(self):
         try:
             while not self._stop_event.is_set():
-                val = get_current_process_rss_mib()
+                val = self._probe_fn()
                 with self._lock:
                     self.samples.append(val)
-                time.sleep(self.interval_seconds)
+                self._stop_event.wait(self.interval_seconds)
         except Exception as exc:
-            self.error = exc
+            with self._lock:
+                self.error = exc
 
     def start(self):
-        initial_val = get_current_process_rss_mib()
         with self._lock:
+            if self._state != "INITIAL":
+                raise RuntimeError(
+                    f"Sampler cannot be started in state {{self._state}}; "
+                    "CallWindowRssSampler is one-shot"
+                )
+            self._state = "RUNNING"
+            initial_val = self._probe_fn()
             self.samples.append(initial_val)
         self._stop_event.clear()
-        self.error = None
         self._thread = threading.Thread(target=self._sample_loop, daemon=True)
         self._thread.start()
         return initial_val
 
     def stop_and_get_peak(self):
+        with self._lock:
+            if self._state == "INITIAL":
+                raise RuntimeError("Cannot stop sampler: sampler was never started")
+            if self._state == "STOPPED":
+                raise RuntimeError(
+                    "Cannot stop sampler: sampler already stopped (one-shot)"
+                )
+            self._state = "STOPPED"
+
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
-        final_val = get_current_process_rss_mib()
+            if self._thread.is_alive():
+                raise RuntimeError(
+                    "Sampler worker thread failed to terminate within timeout"
+                )
+
         with self._lock:
+            if self.error is not None:
+                raise RuntimeError(
+                    f"Call-window RSS sampler worker failed: {{self.error}}"
+                ) from self.error
+            final_val = self._probe_fn()
             self.samples.append(final_val)
-        if self.error is not None:
-            raise RuntimeError(
-                f"Call-window RSS sampler failed: {{self.error}}"
-            ) from self.error
-        if not self.samples:
-            raise RuntimeError("Call-window RSS sampler recorded zero samples")
-        baseline = self.samples[0]
-        peak = max(self.samples)
-        return baseline, peak
+            if not self.samples:
+                raise RuntimeError("Call-window RSS sampler recorded zero samples")
+            baseline = self.samples[0]
+            peak = max(self.samples)
+            return baseline, peak
 
 pkg = Path({repr(str(pkg_path))})
 sampler = CallWindowRssSampler(interval_seconds=0.005)
 baseline_current_rss_mib = sampler.start()
-t0 = time.perf_counter()
-res = read_xlsx_source_snapshot(pkg)
-t1 = time.perf_counter()
-baseline_check, call_peak_rss_mib = sampler.stop_and_get_peak()
+reader_exc = None
+try:
+    t0 = time.perf_counter()
+    res = read_xlsx_source_snapshot(pkg)
+    t1 = time.perf_counter()
+except Exception as exc:
+    reader_exc = exc
+    raise
+finally:
+    if reader_exc is None:
+        baseline_check, call_peak_rss_mib = sampler.stop_and_get_peak()
+    else:
+        try:
+            sampler.stop_and_get_peak()
+        except Exception:
+            pass
 
 sheet_hashes = {{
     s_name: res.snapshot.sheets[s_name].sheet_snapshot_hash
@@ -2525,27 +2604,45 @@ def test_r6_windows_memory_probe_structure_and_types() -> None:
     assert counters.cb in (72, 40)
 
 
+_STRICT_ASCII_POS_INT_REGEX = re.compile(r"^[1-9][0-9]*$")
+
+
 def _parse_linux_proc_status_vmrss_mib(content: str) -> float:
-    """Parse VmRSS in MiB from /proc/self/status content (R5-E1/R5-E2 helper)."""
+    """Parse VmRSS in MiB from /proc/self/status content (R5-E1/R5-F3 helper)."""
+    found = False
+    val_mib = 0.0
     for line in content.splitlines():
         if line.startswith("VmRSS:"):
-            parts = line.split()
-            if len(parts) >= 2 and parts[1].isdigit():
-                val_kb = int(parts[1])
-                val_mib = val_kb / 1024.0
-                if val_mib > 0.0:
-                    return val_mib
+            if found:
                 raise RuntimeError(
-                    f"Linux /proc/self/status non-positive VmRSS: {val_kb}"
+                    "Linux /proc/self/status contains duplicate VmRSS entries"
                 )
-            raise RuntimeError(
-                f"Linux /proc/self/status malformed VmRSS line: {line.strip()}"
-            )
-    raise RuntimeError("Linux /proc/self/status missing VmRSS entry")
+            found = True
+            parts = line.split()
+            if len(parts) != 3:
+                raise RuntimeError(
+                    "Linux /proc/self/status malformed VmRSS token count: "
+                    f"{line.strip()}"
+                )
+            if not parts[1].isascii() or not _STRICT_ASCII_POS_INT_REGEX.fullmatch(
+                parts[1]
+            ):
+                raise RuntimeError(
+                    f"Linux /proc/self/status invalid VmRSS integer: {parts[1]}"
+                )
+            if parts[2] != "kB":
+                raise RuntimeError(
+                    f"Linux /proc/self/status invalid VmRSS unit: {parts[2]}"
+                )
+            val_kb = int(parts[1])
+            val_mib = val_kb / 1024.0
+    if not found:
+        raise RuntimeError("Linux /proc/self/status missing VmRSS entry")
+    return val_mib
 
 
 def _get_current_process_rss_mib() -> float:
-    """Read current process absolute RSS in MiB for calling process (R5-E1)."""
+    """Read current process absolute RSS in MiB for calling process (R5-E1/R5-F3)."""
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
@@ -2608,56 +2705,99 @@ def _get_current_process_rss_mib() -> float:
 
 
 class _CallWindowRssSampler:
-    """Thread-safe background sampler for process current RSS (R5-E1)."""
+    """Thread-safe background sampler for process current RSS (R5-E1/R5-F1/R5-F4)."""
 
-    def __init__(self, interval_seconds: float = 0.005) -> None:
-        self.interval_seconds = interval_seconds
+    def __init__(
+        self,
+        interval_seconds: float = 0.005,
+        probe_fn: Callable[[], float] | None = None,
+    ) -> None:
+        if isinstance(interval_seconds, bool) or not isinstance(
+            interval_seconds, (int, float)
+        ):
+            raise ValueError(
+                f"interval_seconds must be a real float, got {type(interval_seconds)}"
+            )
+        if (
+            not math.isfinite(interval_seconds)
+            or interval_seconds <= 0.0
+            or interval_seconds > 0.010
+        ):
+            raise ValueError(
+                "interval_seconds must be finite and in range (0.0, 0.010], "
+                f"got {interval_seconds}"
+            )
+        self.interval_seconds = float(interval_seconds)
+        self._probe_fn = (
+            probe_fn if probe_fn is not None else _get_current_process_rss_mib
+        )
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self.samples: list[float] = []
         self.error: Exception | None = None
         self._lock = threading.Lock()
+        self._state = "INITIAL"
 
     def _sample_loop(self) -> None:
         try:
             while not self._stop_event.is_set():
-                val = _get_current_process_rss_mib()
+                val = self._probe_fn()
                 with self._lock:
                     self.samples.append(val)
-                time.sleep(self.interval_seconds)
+                self._stop_event.wait(self.interval_seconds)
         except Exception as exc:
-            self.error = exc
+            with self._lock:
+                self.error = exc
 
     def start(self) -> float:
-        initial_val = _get_current_process_rss_mib()
         with self._lock:
+            if self._state != "INITIAL":
+                raise RuntimeError(
+                    f"Sampler cannot be started in state {self._state}; "
+                    "CallWindowRssSampler is one-shot"
+                )
+            self._state = "RUNNING"
+            initial_val = self._probe_fn()
             self.samples.append(initial_val)
         self._stop_event.clear()
-        self.error = None
         self._thread = threading.Thread(target=self._sample_loop, daemon=True)
         self._thread.start()
         return initial_val
 
     def stop_and_get_peak(self) -> tuple[float, float]:
+        with self._lock:
+            if self._state == "INITIAL":
+                raise RuntimeError("Cannot stop sampler: sampler was never started")
+            if self._state == "STOPPED":
+                raise RuntimeError(
+                    "Cannot stop sampler: sampler already stopped (one-shot)"
+                )
+            self._state = "STOPPED"
+
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
-        final_val = _get_current_process_rss_mib()
+            if self._thread.is_alive():
+                raise RuntimeError(
+                    "Sampler worker thread failed to terminate within timeout"
+                )
+
         with self._lock:
+            if self.error is not None:
+                raise RuntimeError(
+                    f"Call-window RSS sampler worker failed: {self.error}"
+                ) from self.error
+            final_val = self._probe_fn()
             self.samples.append(final_val)
-        if self.error is not None:
-            raise RuntimeError(
-                f"Call-window RSS sampler failed: {self.error}"
-            ) from self.error
-        if not self.samples:
-            raise RuntimeError("Call-window RSS sampler recorded zero samples")
-        baseline = self.samples[0]
-        peak = max(self.samples)
-        return baseline, peak
+            if not self.samples:
+                raise RuntimeError("Call-window RSS sampler recorded zero samples")
+            baseline = self.samples[0]
+            peak = max(self.samples)
+            return baseline, peak
 
 
 def test_r6_current_process_rss_probe_and_sampler() -> None:
-    """Validate current RSS probe, sampler lifecycle, baseline and peak (R5-E2)."""
+    """Validate current RSS probe, lifecycle, baseline and peak (R5-E2/R5-F1)."""
     current_rss = _get_current_process_rss_mib()
     assert isinstance(current_rss, float)
     assert current_rss > 0.0
@@ -2677,20 +2817,106 @@ def test_r6_current_process_rss_probe_and_sampler() -> None:
     assert peak >= baseline
     assert len(sampler.samples) >= 2
     assert peak > 0.0
+    assert sampler._thread is not None and not sampler._thread.is_alive()
 
 
-def test_r6_current_process_rss_sampler_error_propagation() -> None:
-    """Validate that sampler thread errors propagate and cannot yield 0 (R5-E2)."""
-    sampler = _CallWindowRssSampler(interval_seconds=0.001)
-    sampler.start()
-    # Inject an error into the sampler
-    sampler.error = RuntimeError("Injected probe failure")
-    with pytest.raises(RuntimeError, match="Injected probe failure"):
+def test_r6_current_process_rss_sampler_worker_error_propagation() -> None:
+    """Validate real background worker thread probe error propagation (R5-F2)."""
+    worker_event = threading.Event()
+    calls = [0]
+
+    def failing_probe() -> float:
+        calls[0] += 1
+        if calls[0] == 1:
+            return 25.0  # Baseline on start() succeeds
+        worker_event.set()
+        raise RuntimeError("Simulated worker probe hardware failure")
+
+    sampler = _CallWindowRssSampler(interval_seconds=0.001, probe_fn=failing_probe)
+    baseline = sampler.start()
+    assert baseline == 25.0
+    assert worker_event.wait(timeout=2.0)
+
+    with pytest.raises(
+        RuntimeError, match="Simulated worker probe hardware failure"
+    ) as exc_info:
         sampler.stop_and_get_peak()
+
+    assert exc_info.value.__cause__ is not None
+    assert "Simulated worker probe hardware failure" in str(exc_info.value.__cause__)
+
+
+def test_r6_current_process_rss_sampler_termination_guard() -> None:
+    """Validate that uncooperative worker raises on join timeout (R5-F1)."""
+    started_event = threading.Event()
+    cleanup_event = threading.Event()
+
+    def blocked_probe() -> float:
+        started_event.set()
+        cleanup_event.wait(timeout=2.0)
+        return 30.0
+
+    sampler = _CallWindowRssSampler(interval_seconds=0.001, probe_fn=blocked_probe)
+    sampler.start()
+    assert started_event.wait(timeout=2.0)
+
+    # Mock quick join to verify non-terminated guard
+    assert sampler._thread is not None
+    orig_join = sampler._thread.join
+
+    def quick_join(timeout: float | None = None) -> None:
+        pass
+
+    sampler._thread.join = quick_join  # type: ignore[method-assign]
+
+    try:
+        with pytest.raises(RuntimeError, match="failed to terminate within timeout"):
+            sampler.stop_and_get_peak()
+    finally:
+        cleanup_event.set()
+        orig_join(timeout=2.0)
+
+
+def test_r6_current_process_rss_sampler_lifecycle_and_validation() -> None:
+    """Validate interval validation, one-shot lifecycle and call order (R5-F4)."""
+    # Invalid intervals
+    for invalid_val in [
+        False,
+        True,
+        0.0,
+        -0.005,
+        0.020,
+        float("nan"),
+        float("inf"),
+        "0.005",
+    ]:
+        with pytest.raises((ValueError, TypeError)):
+            _CallWindowRssSampler(interval_seconds=invalid_val)  # type: ignore[arg-type]
+
+    # Standard one-shot lifecycle
+    sampler = _CallWindowRssSampler(interval_seconds=0.002)
+    b = sampler.start()
+    assert b > 0.0
+
+    # Double start rejection
+    with pytest.raises(RuntimeError, match="CallWindowRssSampler is one-shot"):
+        sampler.start()
+
+    base, peak = sampler.stop_and_get_peak()
+    assert peak >= base
+
+    # Double stop rejection
+    with pytest.raises(RuntimeError, match="already stopped"):
+        sampler.stop_and_get_peak()
+
+    # Stop before start rejection
+    s2 = _CallWindowRssSampler(interval_seconds=0.002)
+    with pytest.raises(RuntimeError, match="was never started"):
+        s2.stop_and_get_peak()
 
 
 def test_r6_linux_proc_status_vmrss_parser_rejections() -> None:
-    """Validate Linux /proc/self/status parser success and failure modes (R5-E2)."""
+    """Validate strict Linux /proc/self/status VmRSS grammar (R5-F3)."""
     valid_content = "Name:\tpython\nVmPeak:\t 100000 kB\nVmRSS:\t  51200 kB\n"
     assert abs(_parse_linux_proc_status_vmrss_mib(valid_content) - 50.0) < 1e-6
 
@@ -2698,10 +2924,40 @@ def test_r6_linux_proc_status_vmrss_parser_rejections() -> None:
     with pytest.raises(RuntimeError, match="missing VmRSS entry"):
         _parse_linux_proc_status_vmrss_mib("Name:\tpython\nVmSize:\t 100000 kB\n")
 
-    # Malformed VmRSS (non-digit)
-    with pytest.raises(RuntimeError, match="malformed VmRSS line"):
-        _parse_linux_proc_status_vmrss_mib("VmRSS:\t not_a_number kB\n")
+    # Missing unit
+    with pytest.raises(RuntimeError, match="malformed VmRSS token count"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t 1024\n")
+
+    # Wrong unit (MB, KiB, bytes)
+    with pytest.raises(RuntimeError, match="invalid VmRSS unit"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t 1024 MB\n")
+
+    with pytest.raises(RuntimeError, match="invalid VmRSS unit"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t 1024 KiB\n")
+
+    # Trailing tokens
+    with pytest.raises(RuntimeError, match="malformed VmRSS token count"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t 1024 kB extra\n")
+
+    # Non-ASCII digits
+    with pytest.raises(RuntimeError, match="invalid VmRSS integer"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t ۱۰۲۴ kB\n")
+
+    # Signed integers
+    with pytest.raises(RuntimeError, match="invalid VmRSS integer"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t +1024 kB\n")
+
+    with pytest.raises(RuntimeError, match="invalid VmRSS integer"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t -1024 kB\n")
+
+    # Floating point
+    with pytest.raises(RuntimeError, match="invalid VmRSS integer"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t 1024.5 kB\n")
 
     # Zero VmRSS
-    with pytest.raises(RuntimeError, match="non-positive VmRSS"):
+    with pytest.raises(RuntimeError, match="invalid VmRSS integer"):
         _parse_linux_proc_status_vmrss_mib("VmRSS:\t 0 kB\n")
+
+    # Duplicate VmRSS entries
+    with pytest.raises(RuntimeError, match="duplicate VmRSS entries"):
+        _parse_linux_proc_status_vmrss_mib("VmRSS:\t 1024 kB\nVmRSS:\t 2048 kB\n")
