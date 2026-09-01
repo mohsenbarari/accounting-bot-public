@@ -1859,21 +1859,21 @@ print(
 
 
 # ============================================================================
-# Round 5 Oracles & Regressions (R5-01 to R5-06)
+# Round 6 Oracles & Regressions (R6-01 to R6-05)
 # ============================================================================
 
 
-def test_r5_01_candidate_fstat_failure_fd_lifecycle_and_leak_oracle(
+def test_r6_01_candidate_fstat_transient_failure_no_replacement_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Oracle 1 (R5-02): Candidate fstat failure closes FD and cleans up root."""
+    """Test 1 (R6-04): Candidate fstat fails once, retry cleans root."""
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"
     root.mkdir()
 
     orig_fstat = os.fstat
-    fstat_failed = False
+    fstat_failed_once = False
 
     def get_open_fds() -> set[int]:
         if sys.platform.startswith("linux") and os.path.exists("/proc/self/fd"):
@@ -1883,39 +1883,87 @@ def test_r5_01_candidate_fstat_failure_fd_lifecycle_and_leak_oracle(
     initial_fds = get_open_fds()
 
     def mock_fstat(fd: int) -> os.stat_result:
-        nonlocal fstat_failed
-        if not fstat_failed and fd not in initial_fds:
-            fstat_failed = True
-            raise OSError("Injected candidate fstat hardware error")
+        nonlocal fstat_failed_once
+        if not fstat_failed_once and fd not in initial_fds:
+            fstat_failed_once = True
+            raise OSError("Injected single transient fstat error")
         return orig_fstat(fd)
 
     monkeypatch.setattr(os, "fstat", mock_fstat)
 
-    with pytest.raises(
-        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
-    ) as exc_info:
-        with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
-            pass
-
-    flat = _flatten_exceptions(exc_info.value)
-    storage_excs = [e for e in flat if isinstance(e, XlsxSnapshotStorageError)]
-    assert len(storage_excs) >= 1
-    assert storage_excs[0].retryable is False
+    # Acquisition succeeds through the retry on open descriptor
+    with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
+        assert snap.byte_count == len(_build_valid_test_xlsx())
 
     if initial_fds:
         current_fds = get_open_fds()
         leaked_fds = list(current_fds - initial_fds)
-        # Oracle: FD delta = []
         assert leaked_fds == [], f"Leaked file descriptors found: {leaked_fds}"
 
-    # Oracle: snapshot_root contents = []
     assert list(root.iterdir()) == []
 
 
-def test_r5_02_first_lease_lstat_failure_without_replacement_oracle(
+def test_r6_02_candidate_fstat_failure_with_path_replacement_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Oracle 2 (R5-02 & R5-05): First lease lstat failure cleans up lease dir."""
+    """Test 2 (R6-01): Candidate fstat fails & path swapped; foreign survives."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    foreign_bytes = b"FOREIGN_CANDIDATE_REPLACEMENT_R6"
+    foreign_path: Path | None = None
+
+    orig_fstat = os.fstat
+
+    def get_open_fds() -> set[int]:
+        if sys.platform.startswith("linux") and os.path.exists("/proc/self/fd"):
+            return {int(fd) for fd in os.listdir("/proc/self/fd")}
+        return set()
+
+    initial_fds = get_open_fds()
+
+    def mock_fstat(fd: int) -> os.stat_result:
+        nonlocal foreign_path
+        if fd not in initial_fds:
+            # Overwrite candidate file on disk with foreign replacement
+            for item in root.glob("acq-*/snapshot.part"):
+                item.write_bytes(foreign_bytes)
+                foreign_path = item
+            raise OSError("Persistent candidate fstat error")
+        return orig_fstat(fd)
+
+    monkeypatch.setattr(os, "fstat", mock_fstat)
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Foreign file survives
+        assert foreign_path is not None
+        assert foreign_path.exists()
+        assert foreign_path.read_bytes() == foreign_bytes
+    finally:
+        if foreign_path is not None and foreign_path.exists():
+            foreign_path.unlink()
+            try:
+                foreign_path.parent.rmdir()
+            except OSError:
+                pass
+
+
+def test_r6_03_first_lease_lstat_transient_failure_no_replacement_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test 3 (R6-04): First lease lstat fails once, retry cleans root."""
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"
@@ -1928,76 +1976,67 @@ def test_r5_02_first_lease_lstat_failure_without_replacement_oracle(
         nonlocal failed_once
         if not failed_once and self.parent == root and self.name.startswith("acq-"):
             failed_once = True
-            raise OSError("Simulated early stat failure on lease dir")
+            raise OSError("Transient early stat failure on lease dir")
         return orig_lstat(self)
 
     monkeypatch.setattr(Path, "lstat", mock_lstat)
 
-    with pytest.raises(
-        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
-    ) as exc_info:
-        with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
-            pass
+    with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
+        assert snap.byte_count == len(_build_valid_test_xlsx())
 
-    flat = _flatten_exceptions(exc_info.value)
-    assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
-
-    # Oracle: snapshot_root contents = []
     assert list(root.iterdir()) == []
 
 
-def test_r5_03_early_lease_replacement_foreign_survives_oracle(
-    tmp_path: Path,
+def test_r6_04_first_lease_lstat_failure_with_directory_replacement_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Oracle 3 (R5-01): Foreign lease replacement survives and raises error."""
+    """Test 4 (R6-01): First lease lstat fails & dir replaced; foreign survives."""
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"
     root.mkdir()
 
-    foreign_part_bytes = b"FOREIGN_PRE_EXISTING_PART_DATA_R5"
-    foreign_part_path: Path | None = None
+    foreign_dir_path: Path | None = None
+    orig_lstat = Path.lstat
 
-    def inject_foreign_part(stage: str, s: Path, t: Path | None) -> None:
-        nonlocal foreign_part_path
-        if stage == "before_copy_open" and t is not None:
-            t.write_bytes(foreign_part_bytes)
-            foreign_part_path = t
+    def mock_lstat(self: Path) -> os.stat_result:
+        nonlocal foreign_dir_path
+        if self.parent == root and self.name.startswith("acq-"):
+            # Replace lease dir with external foreign directory containing foreign file
+            foreign_dir_path = self
+            foreign_file = self / "foreign_payload.bin"
+            foreign_file.write_bytes(b"FOREIGN_DIR_CONTENT_R6")
+            raise OSError("Persistent lstat failure on lease dir")
+        return orig_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", mock_lstat)
 
     try:
         with pytest.raises(
             (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
         ) as exc_info:
-            with open_stable_xlsx_snapshot(
-                src,
-                root,
-                0.001,
-                _sleeper=lambda _: None,
-                _fault_hook=inject_foreign_part,
-            ):
+            with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
                 pass
 
         flat = _flatten_exceptions(exc_info.value)
         assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
         assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
 
-        # Oracle: foreign lease survives and CleanupError visible
-        assert foreign_part_path is not None
-        assert foreign_part_path.exists()
-        assert foreign_part_path.read_bytes() == foreign_part_bytes
+        # Foreign directory and file survive
+        assert foreign_dir_path is not None
+        assert foreign_dir_path.exists()
+        assert (foreign_dir_path / "foreign_payload.bin").exists()
     finally:
-        if foreign_part_path is not None and foreign_part_path.exists():
-            foreign_part_path.unlink()
-            try:
-                foreign_part_path.parent.rmdir()
-            except OSError:
-                pass
+        if foreign_dir_path is not None and foreign_dir_path.exists():
+            for f in foreign_dir_path.iterdir():
+                f.unlink()
+            foreign_dir_path.rmdir()
 
 
-def test_r5_04_partial_posix_promotion_cleanup_oracle(
+def test_r6_05_partial_posix_promotion_cleanup_without_replacement_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Oracle 4 (R5-03): Partial POSIX promotion unlinks part and final; root empty."""
+    """Test 5 (R6-02): Link succeeds + unlink fails; root empty."""
     if os.name != "posix":
         pytest.skip("POSIX hard link promotion test only applicable on POSIX")
 
@@ -2011,7 +2050,6 @@ def test_r5_04_partial_posix_promotion_cleanup_oracle(
 
     def failing_unlink(self: Path) -> None:
         nonlocal unlink_failed
-        # Fail the first unlink on snapshot.part during promotion
         if not unlink_failed and self.name == "snapshot.part":
             unlink_failed = True
             raise OSError("Simulated partial promotion part unlink lock")
@@ -2028,76 +2066,101 @@ def test_r5_04_partial_posix_promotion_cleanup_oracle(
     flat = _flatten_exceptions(exc_info.value)
     assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
 
-    # Oracle: no owned leftovers, snapshot_root is empty
+    # All owned items removed, snapshot_root is clean
     assert list(root.iterdir()) == []
 
 
-def test_r5_05_lease_lstat_open_race_taxonomy_oracle(
+def test_r6_06_partial_posix_promotion_with_byte_identical_foreign_final_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test 6 (R6-02): Final replaced with byte-identical foreign file; survives."""
+    if os.name != "posix":
+        pytest.skip("POSIX hard link promotion test only applicable on POSIX")
+
+    src = tmp_path / "source.xlsx"
+    valid_bytes = _build_valid_test_xlsx()
+    src.write_bytes(valid_bytes)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    orig_unlink = Path.unlink
+    unlink_failed = False
+    foreign_final_p: Path | None = None
+
+    def failing_unlink_and_swap_final(self: Path) -> None:
+        nonlocal unlink_failed, foreign_final_p
+        if not unlink_failed and self.name == "snapshot.part":
+            unlink_failed = True
+            final_p = self.parent / "snapshot.xlsx"
+            # Recreate foreign file with identical bytes (new inode)
+            orig_unlink(final_p)
+            final_p.write_bytes(valid_bytes)
+            foreign_final_p = final_p
+            raise OSError("Simulated partial promotion part unlink lock")
+        orig_unlink(self)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink_and_swap_final)
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Foreign byte-identical file MUST survive
+        assert foreign_final_p is not None
+        assert foreign_final_p.exists()
+        assert foreign_final_p.read_bytes() == valid_bytes
+    finally:
+        if foreign_final_p is not None and foreign_final_p.exists():
+            foreign_final_p.unlink()
+            try:
+                foreign_final_p.parent.rmdir()
+            except OSError:
+                pass
+
+
+def test_r6_07_final_replacement_before_final_unlink_oracle(
     tmp_path: Path,
 ) -> None:
-    """Oracle 5 (R5-04): Lease lstat/open race maps to IntegrityError."""
+    """Test 7 (R6-03 & R6-04): Final replaced right before unlink; foreign survives."""
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"
     root.mkdir()
 
-    def race_delete_final(stage: str, s: Path, t: Path | None) -> None:
-        if stage == "before_lease_reverify" and s.exists():
-            # Delete final file right at lease reverification
-            s.unlink()
-
-    with pytest.raises(
-        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotIntegrityError)
-    ) as exc_info:
-        with open_stable_xlsx_snapshot(
-            src, root, 0.001, _sleeper=lambda _: None, _fault_hook=race_delete_final
-        ):
-            pass
-
-    flat = _flatten_exceptions(exc_info.value)
-    # Oracle: IntegrityError present, StorageError not present at top-level
-    assert any(isinstance(e, XlsxSnapshotIntegrityError) for e in flat)
-    assert not any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
-    assert list(root.iterdir()) == []
-
-
-def test_r5_06_inode_reuse_protection_oracle(
-    tmp_path: Path,
-) -> None:
-    """Oracle 6 (R5-01): Inode reuse prevents deleting foreign file; survives."""
-    src = tmp_path / "source.xlsx"
-    src.write_bytes(_build_valid_test_xlsx())
-    root = tmp_path / "root"
-    root.mkdir()
-
-    foreign_bytes = b"FOREIGN_INODE_REUSE_PAYLOAD_R5"
+    foreign_bytes = b"FOREIGN_REPLACEMENT_BEFORE_UNLINK_R6"
     foreign_file_path: Path | None = None
 
-    def inject_inode_reuse_swap(stage: str, s: Path, t: Path | None) -> None:
+    def inject_swap_before_unlink(stage: str, s: Path, t: Path | None) -> None:
         nonlocal foreign_file_path
-        if stage == "before_lease_reverify" and s.exists():
+        if stage == "before_final_unlink" and s.exists():
             s.unlink()
             s.write_bytes(foreign_bytes)
             foreign_file_path = s
 
     try:
         with pytest.raises(
-            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotIntegrityError)
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotCleanupError)
         ) as exc_info:
             with open_stable_xlsx_snapshot(
                 src,
                 root,
                 0.001,
                 _sleeper=lambda _: None,
-                _fault_hook=inject_inode_reuse_swap,
+                _fault_hook=inject_swap_before_unlink,
             ):
                 pass
 
         flat = _flatten_exceptions(exc_info.value)
-        assert any(isinstance(e, XlsxSnapshotIntegrityError) for e in flat)
         assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
 
-        # Oracle: foreign file survives
+        # Foreign replacement survives
         assert foreign_file_path is not None
         assert foreign_file_path.exists()
         assert foreign_file_path.read_bytes() == foreign_bytes
@@ -2110,8 +2173,119 @@ def test_r5_06_inode_reuse_protection_oracle(
                 pass
 
 
-def test_r5_07_real_mtime_zero_integrity_oracle(tmp_path: Path) -> None:
-    """Oracle 7 (R5-05): Candidate mtime_ns = 0 in context verified and detected."""
+def test_r6_08_real_lease_exit_race_between_lstat_and_open_oracle(
+    tmp_path: Path,
+) -> None:
+    """Test 8 (R6-04): Race between lstat and open maps to IntegrityError."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    def race_delete_between_lstat_and_open(stage: str, s: Path, t: Path | None) -> None:
+        if stage == "between_lease_lstat_and_open" and s.exists():
+            s.unlink()
+
+    with pytest.raises(
+        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotIntegrityError)
+    ) as exc_info:
+        with open_stable_xlsx_snapshot(
+            src,
+            root,
+            0.001,
+            _sleeper=lambda _: None,
+            _fault_hook=race_delete_between_lstat_and_open,
+        ):
+            pass
+
+    flat = _flatten_exceptions(exc_info.value)
+    # IntegrityError present, StorageError NOT present as top-level exception
+    assert any(isinstance(e, XlsxSnapshotIntegrityError) for e in flat)
+    assert not any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+    assert list(root.iterdir()) == []
+
+
+def test_r6_09_identity_collision_inode_reuse_proven_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test 9 (R6-04): Inode reuse collision proven; foreign file survives."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    foreign_bytes = b"FOREIGN_INODE_REUSE_PAYLOAD_R6"
+    foreign_file_path: Path | None = None
+    original_ino: int | None = None
+    original_dev: int | None = None
+
+    def inject_inode_reuse(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal foreign_file_path, original_ino, original_dev
+        if stage == "before_lease_reverify" and s.exists():
+            st = s.lstat()
+            original_ino = st.st_ino
+            original_dev = st.st_dev
+            s.unlink()
+            s.write_bytes(foreign_bytes)
+            foreign_file_path = s
+
+    orig_lstat = Path.lstat
+
+    def mock_lstat(self: Path) -> os.stat_result:
+        real_st = orig_lstat(self)
+        # Mock inode collision on foreign file: same inode as original
+        if self.name == "snapshot.xlsx" and original_ino is not None:
+            # Construct a mock stat result preserving dev and ino
+            return os.stat_result(
+                (
+                    real_st.st_mode,
+                    original_ino,  # Collision proven: same inode!
+                    original_dev if original_dev is not None else real_st.st_dev,
+                    real_st.st_nlink,
+                    real_st.st_uid,
+                    real_st.st_gid,
+                    real_st.st_size,
+                    real_st.st_atime,
+                    real_st.st_mtime,
+                    real_st.st_ctime,
+                )
+            )
+        return real_st
+
+    monkeypatch.setattr(Path, "lstat", mock_lstat)
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotIntegrityError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=inject_inode_reuse,
+            ):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotIntegrityError) for e in flat)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Foreign file survives
+        assert foreign_file_path is not None
+        assert foreign_file_path.exists()
+        assert foreign_file_path.read_bytes() == foreign_bytes
+    finally:
+        if foreign_file_path is not None and foreign_file_path.exists():
+            foreign_file_path.unlink()
+            try:
+                foreign_file_path.parent.rmdir()
+            except OSError:
+                pass
+
+
+def test_r6_10_real_mtime_zero_integrity_oracle(tmp_path: Path) -> None:
+    """Test 10 (R6-04): Candidate mtime_ns = 0 in context verified and detected."""
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"
@@ -2137,10 +2311,10 @@ def test_r5_07_real_mtime_zero_integrity_oracle(tmp_path: Path) -> None:
     assert list(root.iterdir()) == []
 
 
-def test_r5_08_real_identity_unavailable_fallback_oracle(
+def test_r6_11_real_identity_unavailable_provider_fallback_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Oracle 8 (R5-05): Provider returns (None, None) and executes cleanly."""
+    """Test 11 (R6-04): Provider returns (None, None) and executes cleanly."""
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"

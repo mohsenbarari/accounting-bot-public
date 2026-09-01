@@ -138,6 +138,21 @@ class XlsxSnapshotStorageError(XlsxSnapshotAcquisitionError):
         )
 
 
+class _PartialPromotionError(XlsxSnapshotStorageError):
+    """Internal exception carrying verified final token when unlink fails after link."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        promoted_device: int | None,
+        promoted_inode: int | None,
+    ) -> None:
+        super().__init__(message)
+        self.promoted_device = promoted_device
+        self.promoted_inode = promoted_inode
+
+
 class XlsxSnapshotIntegrityError(XlsxSnapshotAcquisitionError):
     """Candidate, source, or leased snapshot digest or byte mismatch."""
 
@@ -551,7 +566,10 @@ def _validate_zip_container_candidate(
 
 
 def _promote_candidate_atomic_fail_if_exists(
-    part_file: Path, final_file: Path, is_posix: bool
+    part_file: Path,
+    final_file: Path,
+    is_posix: bool,
+    owned_part_token: _ArtifactOwnershipToken | None,
 ) -> tuple[int | None, int | None]:
     """Promote part_file to final_file with fail-if-exists semantics.
 
@@ -576,18 +594,17 @@ def _promote_candidate_atomic_fail_if_exists(
                 "Hard-link promotion of snapshot candidate failed"
             ) from exc
 
-        # Immediate stat of final_file to capture token even if unlink fails
-        try:
-            fin_st = final_file.lstat()
-            fin_dev, fin_ino = _extract_device_and_inode(fin_st)
-        except OSError:
-            fin_dev, fin_ino = None, None
+        # On hard-link success, final_file has same device and inode as part_file
+        fin_dev = owned_part_token.device if owned_part_token else None
+        fin_ino = owned_part_token.inode if owned_part_token else None
 
         try:
             part_file.unlink()
         except OSError as exc:
-            raise XlsxSnapshotStorageError(
-                "Unlink of partial candidate after promotion failed"
+            raise _PartialPromotionError(
+                "Unlink of partial candidate after promotion failed",
+                promoted_device=fin_dev,
+                promoted_inode=fin_ino,
             ) from exc
 
         return fin_dev, fin_ino
@@ -603,12 +620,8 @@ def _promote_candidate_atomic_fail_if_exists(
                 "Atomic promotion of snapshot candidate failed"
             ) from exc
 
-        try:
-            fin_st = final_file.lstat()
-            fin_dev, fin_ino = _extract_device_and_inode(fin_st)
-        except OSError:
-            fin_dev, fin_ino = None, None
-
+        fin_dev = owned_part_token.device if owned_part_token else None
+        fin_ino = owned_part_token.inode if owned_part_token else None
         return fin_dev, fin_ino
 
 
@@ -736,10 +749,6 @@ def open_stable_xlsx_snapshot(
     final_file = lease_dir / "snapshot.xlsx"
     is_posix = os.name == "posix" or sys.platform != "win32"
 
-    # Explicit lifecycle state & ownership tokens
-    lease_created: bool = False
-    part_created: bool = False
-
     owned_lease_token: _ArtifactOwnershipToken | None = None
     owned_part_token: _ArtifactOwnershipToken | None = None
     owned_final_token: _ArtifactOwnershipToken | None = None
@@ -774,12 +783,10 @@ def open_stable_xlsx_snapshot(
                         )
                     ):
                         part_file.unlink()
-                    elif owned_part_token is None and part_created:
-                        part_file.unlink()
                     else:
                         cleanup_excs.append(
                             XlsxSnapshotCleanupError(
-                                "Candidate file was not created by acquisition"
+                                "Candidate file unproven or replaced"
                             )
                         )
         except OSError as exc:
@@ -816,7 +823,8 @@ def open_stable_xlsx_snapshot(
                             and final_lst.st_size != owned_final_token.size
                         ):
                             can_unlink = False
-                        if can_unlink and owned_final_token.expected_sha256 is not None:
+
+                        if can_unlink:
                             try:
                                 chk_fd = _open_candidate_nofollow(
                                     final_file,
@@ -829,17 +837,53 @@ def open_stable_xlsx_snapshot(
                             if chk_fd >= 0:
                                 try:
                                     with open(chk_fd, "rb", closefd=True) as chk_f:
-                                        chk_hasher = hashlib.sha256()
-                                        while True:
-                                            chk_chunk = chk_f.read(_copy_chunk_size)
-                                            if not chk_chunk:
-                                                break
-                                            chk_hasher.update(chk_chunk)
-                                    if (
-                                        chk_hasher.hexdigest().lower()
-                                        != owned_final_token.expected_sha256
-                                    ):
-                                        can_unlink = False
+                                        if (
+                                            owned_final_token.expected_sha256
+                                            is not None
+                                        ):
+                                            chk_hasher = hashlib.sha256()
+                                            while True:
+                                                chk_chunk = chk_f.read(_copy_chunk_size)
+                                                if not chk_chunk:
+                                                    break
+                                                chk_hasher.update(chk_chunk)
+                                            if (
+                                                chk_hasher.hexdigest().lower()
+                                                != owned_final_token.expected_sha256
+                                            ):
+                                                can_unlink = False
+
+                                        if _fault_hook is not None:
+                                            _fault_hook(
+                                                "before_final_unlink",
+                                                final_file,
+                                                None,
+                                            )
+
+                                        # Re-check path identity before unlink
+                                        pre_unlink_lst = final_file.lstat()
+                                        (
+                                            pu_dev,
+                                            pu_ino,
+                                        ) = _extract_device_and_inode(pre_unlink_lst)
+                                        if (
+                                            stat.S_ISLNK(pre_unlink_lst.st_mode)
+                                            or not stat.S_ISREG(pre_unlink_lst.st_mode)
+                                            or (
+                                                owned_final_token.inode is not None
+                                                and pu_ino != owned_final_token.inode
+                                            )
+                                            or (
+                                                owned_final_token.device is not None
+                                                and pu_dev != owned_final_token.device
+                                            )
+                                            or (
+                                                owned_final_token.size is not None
+                                                and pre_unlink_lst.st_size
+                                                != owned_final_token.size
+                                            )
+                                        ):
+                                            can_unlink = False
                                 except Exception:
                                     can_unlink = False
 
@@ -848,7 +892,7 @@ def open_stable_xlsx_snapshot(
                         else:
                             cleanup_excs.append(
                                 XlsxSnapshotCleanupError(
-                                    "Snapshot file identity or content mismatch"
+                                    "Snapshot file identity or content modified"
                                 )
                             )
                     else:
@@ -886,12 +930,10 @@ def open_stable_xlsx_snapshot(
                         )
                     ):
                         lease_dir.rmdir()
-                    elif owned_lease_token is None and lease_created:
-                        lease_dir.rmdir()
                     else:
                         cleanup_excs.append(
                             XlsxSnapshotCleanupError(
-                                "Lease directory was not created by acquisition"
+                                "Lease directory unproven or replaced"
                             )
                         )
         except OSError as exc:
@@ -910,12 +952,15 @@ def open_stable_xlsx_snapshot(
                     pass
             else:
                 lease_dir.mkdir(parents=False, exist_ok=False)
-            lease_created = True
         except OSError as exc:
             raise XlsxSnapshotStorageError("Failed to create lease directory") from exc
 
         try:
-            lease_dir_st = lease_dir.lstat()
+            try:
+                lease_dir_st = lease_dir.lstat()
+            except OSError:
+                # One-shot retry for transient stat failure
+                lease_dir_st = lease_dir.lstat()
             l_dev, l_ino = _extract_device_and_inode(lease_dir_st)
             owned_lease_token = _ArtifactOwnershipToken(
                 device=l_dev,
@@ -945,7 +990,6 @@ def open_stable_xlsx_snapshot(
 
                 try:
                     dst_fd = os.open(part_file, dst_flags, 0o600)
-                    part_created = True
                 except OSError as exc:
                     raise XlsxSnapshotStorageError(
                         "Failed to create snapshot candidate file"
@@ -954,20 +998,27 @@ def open_stable_xlsx_snapshot(
                 try:
                     try:
                         dst_st = os.fstat(dst_fd)
-                        p_dev, p_ino = _extract_device_and_inode(dst_st)
-                        owned_part_token = _ArtifactOwnershipToken(
-                            device=p_dev,
-                            inode=p_ino,
-                        )
-                        dst_f = open(dst_fd, "wb", closefd=True)
-                    except BaseException as pre_stream_exc:
+                    except OSError:
+                        # One-shot retry on open descriptor for transient failure
+                        dst_st = os.fstat(dst_fd)
+                    p_dev, p_ino = _extract_device_and_inode(dst_st)
+                    owned_part_token = _ArtifactOwnershipToken(
+                        device=p_dev,
+                        inode=p_ino,
+                    )
+                    dst_f = open(dst_fd, "wb", closefd=True)
+                except BaseException as pre_stream_exc:
+                    try:
                         os.close(dst_fd)
-                        if isinstance(pre_stream_exc, XlsxSnapshotAcquisitionError):
-                            raise
-                        raise XlsxSnapshotStorageError(
-                            "Failed to initialize snapshot candidate handle"
-                        ) from pre_stream_exc
+                    except OSError:
+                        pass
+                    if isinstance(pre_stream_exc, XlsxSnapshotAcquisitionError):
+                        raise
+                    raise XlsxSnapshotStorageError(
+                        "Failed to initialize snapshot candidate handle"
+                    ) from pre_stream_exc
 
+                try:
                     with dst_f:
                         while True:
                             if _fault_hook is not None:
@@ -1148,7 +1199,7 @@ def open_stable_xlsx_snapshot(
         # Promote candidate to final with fail-if-exists semantics
         try:
             promo_dev, promo_ino = _promote_candidate_atomic_fail_if_exists(
-                part_file, final_file, is_posix
+                part_file, final_file, is_posix, owned_part_token
             )
             owned_final_token = _ArtifactOwnershipToken(
                 device=promo_dev,
@@ -1156,20 +1207,14 @@ def open_stable_xlsx_snapshot(
                 size=copied_bytes,
                 expected_sha256=copy_sha256,
             )
-        except BaseException as promo_exc:
-            if final_file.exists(follow_symlinks=False):
-                try:
-                    f_st = final_file.lstat()
-                    f_dev, f_ino = _extract_device_and_inode(f_st)
-                    owned_final_token = _ArtifactOwnershipToken(
-                        device=f_dev,
-                        inode=f_ino,
-                        size=copied_bytes,
-                        expected_sha256=copy_sha256,
-                    )
-                except OSError:
-                    pass
-            raise promo_exc
+        except _PartialPromotionError as promo_err:
+            owned_final_token = _ArtifactOwnershipToken(
+                device=promo_err.promoted_device,
+                inode=promo_err.promoted_inode,
+                size=copied_bytes,
+                expected_sha256=copy_sha256,
+            )
+            raise promo_err
 
         if is_posix:
             try:
@@ -1308,6 +1353,9 @@ def open_stable_xlsx_snapshot(
                     raise XlsxSnapshotIntegrityError(
                         "Leased snapshot byte count was modified during lease"
                     )
+
+                if _fault_hook is not None:
+                    _fault_hook("between_lease_lstat_and_open", final_file, None)
 
                 # Dedicated helper maps all I/O / handle errors to IntegrityError
                 try:
