@@ -736,7 +736,7 @@ def test_sa06_bounded_stream_wrapper_verification(
     copy_reads = [r for r in read_calls if r == 512]
     assert len(copy_reads) > 0, "No 512-byte copy chunks captured"
     for r_size in read_calls:
-        # Candidate validation may read EOCD (up to 4096 bytes), but copy reads are <= 512
+        # Candidate validation reads EOCD (up to 4096 bytes), copy reads <= 512
         assert r_size <= 4096, f"Unbounded read({r_size}) detected!"
 
 
