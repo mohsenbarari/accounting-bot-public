@@ -3,7 +3,7 @@
 ## Identity
 
 - Phase: 1 — source and data-model foundation (Phase 1 authorized, Gate G1 is open / in-progress)
-- Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker (Status: REQUEST_CHANGES / R5-C Focused Review Fixes Delivery)
+- Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker (Status: REQUEST_CHANGES / R5-C Final Evidence Delivery)
 - Branch/worktree: antigravity/phase-01-streaming-xlsx-source-reader
 - Commit(s):
   - `5dd5d17` (feat(local_agent): implement streaming XLSX source reader and physical row tracker (WP-05))
@@ -24,6 +24,7 @@
   - `ac523df` (feat(local_agent): harden constructors, expand property/lifecycle tests, and optimize streaming reader (R5-C))
   - `fdaabe2` (docs(handoff): record completed R5-C evidence, benchmark and provenance)
   - `3b1d3af` (fix(local_agent,tests): canonicalize location map ordering, expand property/lifecycle tests, and enforce complete benchmark contracts (R5-C))
+  - `fe7126c` (docs(handoff): update WP-05 handoff evidence, matrix, and test results for R5-C review fixes)
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -33,22 +34,22 @@
 
 Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_agent` using standard library `zipfile` and existing pinned `lxml 6.1.2`, extracting literal raw source inputs from the four approved sheets according to `RAW_CONTRACT_REGISTRY`, strictly excluding formula elements and formula coverage ranges, evaluating row activity from literal inputs, validating Persian and technical headers and UUIDv7 identifiers, and returning an immutable `XlsxSourceReadResult` containing a validated `ValidatedSourceWorkbookSnapshot` (WP-04) alongside an immutable mapping of physical row locations (`SourceRowLocation`).
 
-This focused review-fix turn completes remediation items F1 through F4:
+This delivery finalizes remediation items F1 through F4 and evidence corrections E1 through E3:
 - **F1 / Finding R5-04 (Canonical Location-Map Order in Direct Construction):**
   - In `XlsxSourceReadResult.__post_init__`, after typed validation of all keys/values/invariants, defensively rebuild `locations_by_uuid` in ascending `uuid.bytes` order before wrapping with `MappingProxyType`.
   - Regression coverage in `test_r6_direct_construction_comprehensive_matrix` directly constructs from reverse-inserted mappings, verifies exact iteration order by `uuid.bytes`, tests caller permutations, proves caller mutation cannot alter the result, and retains all typed negative cases.
-- **F2 / Finding R5-05 (Real XR-09 Property Evidence & Faithful Lifecycle Advancement):**
-  - Repaired `test_r6_hypothesis_comprehensive_invariance_property` with 2 distinct active rows in `خرید-فروش` so all generated parameters (`sheet_order`, `reverse_rows`, `reverse_cells`, `string_mode`, `row_offset`) alter actual XLSX bytes and are observable in pre-reader XML. Compares complete snapshots, locations, and change planner output with nontrivial prior registry.
+- **F2 / Finding R5-05 & E3 (Real XR-09 Property Evidence & Faithful Lifecycle Advancement):**
+  - Repaired `test_r6_hypothesis_comprehensive_invariance_property` with 2 distinct active rows in `خرید-فروش` so all generated parameters (`sheet_order`, `reverse_rows`, `reverse_cells`, `string_mode`, `row_offset`) alter actual XLSX bytes. Row order, cell order, and row coordinates are inspected in worksheet XML; SST presence is inspected in `sharedStrings.xml`; sheet order and inline/direct-string modes are verified via snapshot and change plan oracle equality on a nontrivial prior registry. Targeted `test_rb_04_equivalent_representations_and_row_cell_permutation` supplies explicit SST index remapping evidence; existing formula/cache oracle tests supply complementary exclusion evidence.
   - Repaired `test_r6_planner_full_lifecycle_transitions_and_idempotency` so state advancement is semantically correct (preserves prior revision on `UNCHANGED` items, uses `planned_revision` for `INSERT`, `EDIT`/reactivation and `VOID` transitions, retains voided identities, and verifies exact `PlanItem` fields and idempotency).
 - **F3 / Finding R5-06 (Contract-Complete XR-12 Benchmark):**
   - Maintained `< 15.0s` and `< 128.0 MiB` limits and 15,000 active rows scale.
   - Extended synthetic tail to include 5,000 total representative inactive, formula-only (`&lt;f&gt;`), and style/formatting-only (`s="1"`, `s="2"`) rows across all 4 sheets plus 100 unused SST entries, asserted from pre-reader XML.
   - Subprocess returns 4 `sheet_snapshot_hash` values compared against literal, deterministic 64-hex golden digests checked into the test.
-  - Benchmark executes in **10.5785s** with **80.41 MiB** peak RSS on Linux.
-- **F4 (Accurate, Reproducible Handoff Evidence & Portable Scan):**
-  - Synchronized all handoff files with corrected implementation and actual command outputs.
-  - Preserved historical records, including Codex's independent result at `fdaabe2`: 194 passed, benchmark 11.1023s / 81.57 MiB on Linux.
-  - Replaced scratch script with portable failure-on-match `git grep` command distinguishing "no matches" from tool failure.
+  - Benchmark executes in **10.5785s** with **80.41 MiB** peak RSS (implementer run) and **9.1252s** with **79.32 MiB** peak RSS (Codex review run on `fe7126c`) on Linux.
+- **F4 / E1..E3 (Accurate Provenance, Exact Wording & Portable Scans):**
+  - Synchronized all handoff files with corrected implementation, actual command outputs, and historical measurements.
+  - Replaced ineffective status-based scan with a portable `git ls-files` tracked asset scan checking all tracked files case-insensitively for prohibited extensions and propagating tool errors.
+  - Verified portable failure-on-match `git grep` sensitive scan distinguishing matches from tool errors.
 
 ### Review items status
 
@@ -56,9 +57,9 @@ This focused review-fix turn completes remediation items F1 through F4:
 - Finding R5-03 (Cell coordinate validation & bounds): Remediated in R5-A and verified.
 - Finding R5-02 / RB-01..RB-05 (SST index selection, inlineStr, escape semantics, lazy evaluation, regression suite): Remediated in R5-B and verified.
 - Finding R5-04 / F1 (Constructor hardening, matrix tests, canonical location order): Remediated in R5-C and ready for review.
-- Finding R5-05 / F2 (Hypothesis testing, XML evidence, faithful lifecycle transitions, late-failure cleanup): Remediated in R5-C and ready for review.
+- Finding R5-05 / F2, E3 (Hypothesis testing, XML evidence, faithful lifecycle transitions, late-failure cleanup): Remediated in R5-C and ready for review.
 - Finding R5-06 / F3 (Contract-complete benchmark, pre-reader XML assertions, literal golden digests): Remediated in R5-C and ready for review.
-- Finding F4 (Accurate handoff provenance, portable sensitive scan): Remediated in R5-C and ready for review.
+- Finding F4 / E1..E3 (Accurate handoff provenance, portable tracked-asset and sensitive scans): Remediated in R5-C and ready for review.
 
 ### In scope
 
@@ -127,8 +128,8 @@ This focused review-fix turn completes remediation items F1 through F4:
 | `/root/.local/bin/uv run pytest -v tests/test_xlsx_source_reader_raw_contract_regressions.py tests/test_xlsx_source_reader_sst_activity_regressions.py tests/test_xlsx_source_reader.py -k "not test_xr12_synthetic_15000_row_benchmark"` | 0 | Execute three reader/regression test suites excluding XR-12 (104 passed in 2.73s) |
 | `/root/.local/bin/uv run pytest -v` | 0 | Execute full repository test suite including XR-12 benchmark (194 passed in 19.88s) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
-| `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True); prohibited = ['.xlsx', '.xls', '.db', '.sqlite', '.pdf', '.env']; files = [line.strip().split()[-1] for line in res.stdout.splitlines() if line.strip()]; bad = [f for f in files if any(f.endswith(ext) for ext in prohibited)]; sys.exit(1 if bad else 0)"` | 0 | Verify zero forbidden binary/database/secret files tracked in git |
-| `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); sys.exit(0 if res.returncode == 1 else (1 if res.returncode == 0 else res.returncode))"` | 0 | Verify zero sensitive credentials, tokens, private keys, or Iranian mobile phone numbers |
+| `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'ls-files'], capture_output=True, text=True); (print('ERROR: git ls-files failed:\n' + res.stderr) or sys.exit(res.returncode)) if res.returncode != 0 else None; prohibited = ('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'); files = [line.strip() for line in res.stdout.splitlines() if line.strip()]; bad = [f for f in files if f.lower().endswith(prohibited)]; (print('PROHIBITED TRACKED FILES FOUND:\n' + '\n'.join(bad)) or sys.exit(1)) if bad else print('PASS: No prohibited tracked files found (checked ' + str(len(files)) + ' tracked files)')"` | 0 | Verify zero forbidden tracked binary/database/secret files in git |
+| `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); (print('PASS: No sensitive patterns detected (grep exit 1)') or sys.exit(0)) if res.returncode == 1 else ((print('FAIL: Found sensitive patterns:\n' + res.stdout) or sys.exit(1)) if res.returncode == 0 else (print('ERROR: git grep failed:\n' + res.stderr) or sys.exit(res.returncode)))"` | 0 | Verify zero sensitive credentials, tokens, private keys, or Iranian mobile phone numbers |
 | `python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/` | 0 | Validate completeness and structure of handoff package |
 
 ## Tests and evidence

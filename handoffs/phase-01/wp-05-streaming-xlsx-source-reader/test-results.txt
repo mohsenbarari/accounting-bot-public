@@ -1,12 +1,12 @@
 WORK PACKAGE: WP-05: Read-only streaming XLSX source reader and physical row tracker
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-01T09:05:00Z
+RECORDED AT UTC: 2026-09-01T09:20:00Z
 
-# Test Results: WP-05 Streaming XLSX Source Reader (R5-C Focused Review Fixes Delivery)
+# Test Results: WP-05 Streaming XLSX Source Reader (R5-C Final Evidence Delivery)
 
 ## FINAL SUMMARY
 
-- Status: ALL PASS (Linux) / Remediated in R5-C review-fix turn (F1, F2, F3, F4 covering R5-04, R5-05, R5-06 and completed R5-B evidence) / Independent Codex Review Required
+- Status: ALL PASS (Linux) / Remediated in R5-C review-fix turn (F1, F2, F3, F4 covering R5-04, R5-05, R5-06, completed R5-B evidence, and E1..E3 evidence corrections) / Independent Codex Review Required
 - Test suites:
   - Base architecture, contracts & domain tests: 89 passed
   - Reader unit & integration tests (tests/test_xlsx_source_reader.py): 39 passed
@@ -15,7 +15,7 @@ RECORDED AT UTC: 2026-09-01T09:05:00Z
   - Total: 194 passed in 19.88s (zero failures)
 - Linters & Types: Ruff format 0 errors (54 files), Ruff check 0 errors, Mypy strict 0 errors (21 source files)
 - Streaming benchmark (15,000 active rows + 5,000 tail rows): duration 10.5785s, peak RSS 80.41 MiB (limits: < 15.0s, < 128 MiB)
-- Security scans: 0 tracked prohibited binaries/databases, 0 sensitive patterns/credentials (grep exit code 1)
+- Security scans: 0 tracked prohibited binaries/databases (git ls-files scan: 85 tracked files checked), 0 sensitive patterns/credentials (git grep failure-on-match exit code 1)
 - Handoff validator: PASS (Handoff validation passed.)
 
 ---
@@ -36,12 +36,13 @@ RECORDED AT UTC: 2026-09-01T09:05:00Z
 | `b0933ce` | Codex | 190 passed / 1 failed (26.61s) | 17.2589s / 81.39 MiB | Independent Codex review measurement on Linux test environment (benchmark timeout 17.2589s > 15.0s). |
 | `fdaabe2` | Implementer | 194 passed / 21.79s (full run) | 12.3673s / 81.78 MiB | Initial R5-C delivery commit. |
 | `fdaabe2` | Codex | 194 passed / 19.82s | 11.1023s / 81.57 MiB | Independent Codex review measurement on Linux test environment. |
-| Current (`3b1d3af`) | Implementer | 194 passed / 19.88s (full run) | 10.5785s / 80.41 MiB | Focused R5-C review-fix turn: canonical location map ordering (F1), XML-observable Hypothesis property test and faithful planner lifecycle transitions (F2), contract-complete XR-12 benchmark with 5,000 formula/style/inactive tail rows, pre-reader XML assertions and literal golden digests (F3), portable failure-on-match sensitive scan (F4). |
+| `3b1d3af` | Implementer | 194 passed / 19.88s (full run) | 10.5785s / 80.41 MiB | Committed R5-C review-fix turn: canonical location map ordering (F1), XML-observable Hypothesis property test and faithful planner lifecycle transitions (F2), contract-complete XR-12 benchmark with 5,000 formula/style/inactive tail rows, pre-reader XML assertions and literal golden digests (F3), portable failure-on-match sensitive scan (F4). |
+| `fe7126c` | Codex | 194 passed | 9.1252s / 79.32 MiB | Independent Codex review measurement on Linux test environment (15,000 rows). |
 
 *Note on Provenance and RED Baseline:*
 - R5-A historical RED state was not logged separately prior to fix commit `739b0b6` ("ثبت نشده").
 - For commit `4049a6c`, the historical implementer claim of 11 failed / 15 passed in 0.82s was a preliminary test run, whereas Codex independent replay with the 26 tests from `20f8276` on older in-memory code took 0.90s.
-- Benchmark timing variance: The exact cause of timing variance across runs and commits on the Linux environment is unknown ("علت واریانس زمانی در بنچمارک‌ها بین اجراهای مختلف روی محیط لینوکس نامشخص است"). In R5-C, hot streaming loops were significantly optimized (precomputed column maps, fast ASCII coordinate parsing, tag sets, sibling element cleanup without full getroottree recursion, and selective string extraction), achieving a solid safety margin at ~10.58s (< 15.0s) with peak RSS at ~80.41 MiB (< 128 MiB).
+- Benchmark timing variance: The exact cause of timing variance across runs and commits on the Linux environment is unknown ("علت واریانس زمانی در بنچمارک‌ها بین اجراهای مختلف روی محیط لینوکس نامشخص است"). In R5-C, hot streaming loops were significantly optimized (precomputed column maps, fast ASCII coordinate parsing, tag sets, sibling element cleanup without full getroottree recursion, and selective string extraction), achieving a solid safety margin with duration well below the 15.0s limit and memory well below 128 MiB.
 
 ---
 
@@ -154,20 +155,20 @@ Output:
 (no output, clean diff)
 ```
 
-### 9. Prohibited Files Scan
-Command: `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True); prohibited = ['.xlsx', '.xls', '.db', '.sqlite', '.pdf', '.env']; files = [line.strip().split()[-1] for line in res.stdout.splitlines() if line.strip()]; bad = [f for f in files if any(f.endswith(ext) for ext in prohibited)]; sys.exit(1 if bad else 0)"`
+### 9. Portable Tracked Prohibited Files Scan (git ls-files)
+Command: `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'ls-files'], capture_output=True, text=True); (print('ERROR: git ls-files failed:\n' + res.stderr) or sys.exit(res.returncode)) if res.returncode != 0 else None; prohibited = ('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'); files = [line.strip() for line in res.stdout.splitlines() if line.strip()]; bad = [f for f in files if f.lower().endswith(prohibited)]; (print('PROHIBITED TRACKED FILES FOUND:\n' + '\n'.join(bad)) or sys.exit(1)) if bad else print('PASS: No prohibited tracked files found (checked ' + str(len(files)) + ' tracked files)')"`
 Exit code: 0
 Output:
 ```text
-(zero prohibited files found)
+PASS: No prohibited tracked files found (checked 85 tracked files)
 ```
 
-### 10. Portable Failure-on-Match Sensitive Patterns Scan
-Command: `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); sys.exit(0 if res.returncode == 1 else (1 if res.returncode == 0 else res.returncode))"`
+### 10. Portable Failure-on-Match Sensitive Patterns Scan (git grep)
+Command: `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); (print('PASS: No sensitive patterns detected (grep exit 1)') or sys.exit(0)) if res.returncode == 1 else ((print('FAIL: Found sensitive patterns:\n' + res.stdout) or sys.exit(1)) if res.returncode == 0 else (print('ERROR: git grep failed:\n' + res.stderr) or sys.exit(res.returncode)))"`
 Exit code: 0
 Output:
 ```text
-(no sensitive patterns found, grep exit code 1)
+PASS: No sensitive patterns detected (grep exit 1)
 ```
 
 ### 11. Handoff Structure Validation
