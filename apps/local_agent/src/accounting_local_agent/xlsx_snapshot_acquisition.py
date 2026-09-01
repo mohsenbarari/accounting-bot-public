@@ -438,14 +438,14 @@ def _stream_hash_source(
 
     fd = _open_source_nofollow(path)
     try:
-        with open(fd, "rb", closefd=True) as f:
-            _check_fd_observation(f.fileno(), expected_observation)
+        with open(fd, "rb", closefd=True) as src_f:
+            _check_fd_observation(src_f.fileno(), expected_observation)
 
             while True:
                 if fault_hook is not None and fault_stage:
                     fault_hook(fault_stage, path, target_path)
                 try:
-                    chunk = f.read(chunk_size)
+                    chunk = src_f.read(chunk_size)
                 except OSError as exc:
                     raise XlsxSourceNotReadyError("Source file read failed") from exc
                 if not chunk:
@@ -453,7 +453,7 @@ def _stream_hash_source(
                 hasher.update(chunk)
                 total_bytes += len(chunk)
 
-            _check_fd_observation(f.fileno(), expected_observation)
+            _check_fd_observation(src_f.fileno(), expected_observation)
     except XlsxSnapshotAcquisitionError:
         raise
     except (FileNotFoundError, PermissionError) as exc:
@@ -660,7 +660,7 @@ def open_stable_xlsx_snapshot(
 
     Yields an immutable `StableXlsxSnapshot` for the duration of the context.
     On context exit (normal return or exception), verifies lease integrity and cleans
-    up the temporary lease directory.
+    up the temporary lease directory using atomic quarantine.
     """
     if not isinstance(source_path, Path):
         raise XlsxSourcePolicyError("source_path must be a Path instance")
@@ -756,91 +756,122 @@ def open_stable_xlsx_snapshot(
 
     def _cleanup_managed_artifacts() -> list[BaseException]:
         cleanup_excs: list[BaseException] = []
+        files_cleaned_successfully = True
 
-        # 1. Cleanup part_file
+        # 1. Cleanup part_file via Atomic Quarantine
         try:
             if part_file.exists(follow_symlinks=False):
-                part_lst = part_file.lstat()
-                if stat.S_ISLNK(part_lst.st_mode):
+                q_part = lease_dir / f".qpart-{uuid.uuid4().hex}"
+                moved_part = False
+                try:
+                    os.replace(part_file, q_part)
+                    moved_part = True
+                except OSError as exc:
+                    files_cleaned_successfully = False
                     cleanup_excs.append(
-                        XlsxSnapshotCleanupError("Candidate file is a symlink")
-                    )
-                elif not stat.S_ISREG(part_lst.st_mode):
-                    cleanup_excs.append(
-                        XlsxSnapshotCleanupError("Candidate file is not a regular file")
-                    )
-                else:
-                    p_dev, p_ino = _extract_device_and_inode(part_lst)
-                    if (
-                        owned_part_token is not None
-                        and (
-                            owned_part_token.inode is None
-                            or p_ino == owned_part_token.inode
+                        XlsxSnapshotCleanupError(
+                            f"Failed to quarantine candidate file: {exc}"
                         )
-                        and (
-                            owned_part_token.device is None
-                            or p_dev == owned_part_token.device
-                        )
-                    ):
-                        part_file.unlink()
-                    else:
-                        cleanup_excs.append(
-                            XlsxSnapshotCleanupError(
-                                "Candidate file unproven or replaced"
+                    )
+
+                if moved_part:
+                    try:
+                        q_lst = q_part.lstat()
+                        is_owned = False
+                        if not stat.S_ISLNK(q_lst.st_mode) and stat.S_ISREG(
+                            q_lst.st_mode
+                        ):
+                            p_dev, p_ino = _extract_device_and_inode(q_lst)
+                            if (
+                                owned_part_token is not None
+                                and (
+                                    owned_part_token.inode is None
+                                    or p_ino == owned_part_token.inode
+                                )
+                                and (
+                                    owned_part_token.device is None
+                                    or p_dev == owned_part_token.device
+                                )
+                            ):
+                                is_owned = True
+
+                        if is_owned:
+                            if _fault_hook is not None:
+                                _fault_hook("inside_part_unlink", part_file, q_part)
+                            q_part.unlink()
+                        else:
+                            files_cleaned_successfully = False
+                            cleanup_excs.append(
+                                XlsxSnapshotCleanupError(
+                                    "Candidate file unproven or replaced"
+                                )
                             )
-                        )
+                            # Restore foreign file to original path if not occupied
+                            if not part_file.exists(follow_symlinks=False):
+                                try:
+                                    os.replace(q_part, part_file)
+                                except OSError:
+                                    pass
+                    except OSError as exc:
+                        files_cleaned_successfully = False
+                        cleanup_excs.append(exc)
         except OSError as exc:
+            files_cleaned_successfully = False
             cleanup_excs.append(exc)
 
-        # 2. Cleanup final_file
+        # 2. Cleanup final_file via Atomic Quarantine
         try:
             if final_file.exists(follow_symlinks=False):
-                final_lst = final_file.lstat()
-                if stat.S_ISLNK(final_lst.st_mode):
+                q_final = lease_dir / f".qfinal-{uuid.uuid4().hex}"
+                moved_final = False
+                try:
+                    os.replace(final_file, q_final)
+                    moved_final = True
+                except OSError as exc:
+                    files_cleaned_successfully = False
                     cleanup_excs.append(
-                        XlsxSnapshotCleanupError("Snapshot file is a symlink")
-                    )
-                elif not stat.S_ISREG(final_lst.st_mode):
-                    cleanup_excs.append(
-                        XlsxSnapshotCleanupError("Snapshot file is not a regular file")
-                    )
-                else:
-                    f_dev, f_ino = _extract_device_and_inode(final_lst)
-                    if (
-                        owned_final_token is not None
-                        and (
-                            owned_final_token.inode is None
-                            or f_ino == owned_final_token.inode
+                        XlsxSnapshotCleanupError(
+                            f"Failed to quarantine snapshot file: {exc}"
                         )
-                        and (
-                            owned_final_token.device is None
-                            or f_dev == owned_final_token.device
-                        )
-                    ):
-                        can_unlink = True
-                        if (
-                            owned_final_token.size is not None
-                            and final_lst.st_size != owned_final_token.size
+                    )
+
+                if moved_final:
+                    try:
+                        q_lst = q_final.lstat()
+                        is_owned = False
+                        if not stat.S_ISLNK(q_lst.st_mode) and stat.S_ISREG(
+                            q_lst.st_mode
                         ):
-                            can_unlink = False
-
-                        if can_unlink:
-                            try:
-                                chk_fd = _open_candidate_nofollow(
-                                    final_file,
-                                    owned_final_token.device,
-                                    owned_final_token.inode,
+                            f_dev, f_ino = _extract_device_and_inode(q_lst)
+                            if (
+                                owned_final_token is not None
+                                and (
+                                    owned_final_token.inode is None
+                                    or f_ino == owned_final_token.inode
                                 )
-                            except Exception:
-                                chk_fd = -1
+                                and (
+                                    owned_final_token.device is None
+                                    or f_dev == owned_final_token.device
+                                )
+                            ):
+                                is_owned = True
+                                if (
+                                    owned_final_token.size is not None
+                                    and q_lst.st_size != owned_final_token.size
+                                ):
+                                    is_owned = False
 
-                            if chk_fd >= 0:
-                                try:
-                                    with open(chk_fd, "rb", closefd=True) as chk_f:
-                                        if (
-                                            owned_final_token.expected_sha256
-                                            is not None
-                                        ):
+                                if (
+                                    is_owned
+                                    and owned_final_token.expected_sha256 is not None
+                                ):
+                                    try:
+                                        chk_fd = _open_candidate_nofollow(
+                                            q_final,
+                                            owned_final_token.device,
+                                            owned_final_token.inode,
+                                        )
+                                        with open(chk_fd, "rb", closefd=True) as chk_f:
                                             chk_hasher = hashlib.sha256()
                                             while True:
                                                 chk_chunk = chk_f.read(_copy_chunk_size)
@@ -851,98 +882,109 @@ def open_stable_xlsx_snapshot(
                                                 chk_hasher.hexdigest().lower()
                                                 != owned_final_token.expected_sha256
                                             ):
-                                                can_unlink = False
+                                                is_owned = False
+                                    except Exception:
+                                        is_owned = False
 
-                                        if _fault_hook is not None:
-                                            _fault_hook(
-                                                "before_final_unlink",
-                                                final_file,
-                                                None,
-                                            )
-
-                                        # Re-check path identity before unlink
-                                        pre_unlink_lst = final_file.lstat()
-                                        (
-                                            pu_dev,
-                                            pu_ino,
-                                        ) = _extract_device_and_inode(pre_unlink_lst)
-                                        if (
-                                            stat.S_ISLNK(pre_unlink_lst.st_mode)
-                                            or not stat.S_ISREG(pre_unlink_lst.st_mode)
-                                            or (
-                                                owned_final_token.inode is not None
-                                                and pu_ino != owned_final_token.inode
-                                            )
-                                            or (
-                                                owned_final_token.device is not None
-                                                and pu_dev != owned_final_token.device
-                                            )
-                                            or (
-                                                owned_final_token.size is not None
-                                                and pre_unlink_lst.st_size
-                                                != owned_final_token.size
-                                            )
-                                        ):
-                                            can_unlink = False
-                                except Exception:
-                                    can_unlink = False
-
-                        if can_unlink:
-                            final_file.unlink()
+                        if is_owned:
+                            if _fault_hook is not None:
+                                _fault_hook(
+                                    "inside_final_unlink",
+                                    final_file,
+                                    q_final,
+                                )
+                            q_final.unlink()
                         else:
+                            files_cleaned_successfully = False
                             cleanup_excs.append(
                                 XlsxSnapshotCleanupError(
-                                    "Snapshot file identity or content modified"
+                                    "Snapshot file unproven or replaced"
                                 )
                             )
-                    else:
-                        cleanup_excs.append(
-                            XlsxSnapshotCleanupError(
-                                "Snapshot file was not promoted by acquisition"
-                            )
-                        )
+                            # Restore foreign file to original path if not occupied
+                            if not final_file.exists(follow_symlinks=False):
+                                try:
+                                    os.replace(q_final, final_file)
+                                except OSError:
+                                    pass
+                    except OSError as exc:
+                        files_cleaned_successfully = False
+                        cleanup_excs.append(exc)
         except OSError as exc:
+            files_cleaned_successfully = False
             cleanup_excs.append(exc)
 
-        # 3. Cleanup lease_dir
-        try:
-            if lease_dir.exists(follow_symlinks=False):
-                dir_lst = lease_dir.lstat()
-                if stat.S_ISLNK(dir_lst.st_mode):
-                    cleanup_excs.append(
-                        XlsxSnapshotCleanupError("Lease directory is a symlink")
-                    )
-                elif not stat.S_ISDIR(dir_lst.st_mode):
-                    cleanup_excs.append(
-                        XlsxSnapshotCleanupError("Lease directory is not a directory")
-                    )
-                else:
-                    d_dev, d_ino = _extract_device_and_inode(dir_lst)
-                    if (
-                        owned_lease_token is not None
-                        and (
-                            owned_lease_token.inode is None
-                            or d_ino == owned_lease_token.inode
-                        )
-                        and (
-                            owned_lease_token.device is None
-                            or d_dev == owned_lease_token.device
-                        )
-                    ):
-                        lease_dir.rmdir()
-                    else:
+        # 3. Cleanup lease_dir via Atomic Quarantine (if files cleanly unlinked)
+        if files_cleaned_successfully:
+            try:
+                if lease_dir.exists(follow_symlinks=False):
+                    q_dir = root / f".qdir-{uuid.uuid4().hex}"
+                    moved_dir = False
+                    try:
+                        os.replace(lease_dir, q_dir)
+                        moved_dir = True
+                    except OSError as exc:
                         cleanup_excs.append(
                             XlsxSnapshotCleanupError(
-                                "Lease directory unproven or replaced"
+                                f"Failed to quarantine lease directory: {exc}"
                             )
                         )
-        except OSError as exc:
-            cleanup_excs.append(exc)
+
+                    if moved_dir:
+                        try:
+                            q_dir_lst = q_dir.lstat()
+                            is_dir_owned = False
+                            if not stat.S_ISLNK(q_dir_lst.st_mode) and stat.S_ISDIR(
+                                q_dir_lst.st_mode
+                            ):
+                                d_dev, d_ino = _extract_device_and_inode(q_dir_lst)
+                                if (
+                                    owned_lease_token is not None
+                                    and (
+                                        owned_lease_token.inode is None
+                                        or d_ino == owned_lease_token.inode
+                                    )
+                                    and (
+                                        owned_lease_token.device is None
+                                        or d_dev == owned_lease_token.device
+                                    )
+                                ):
+                                    is_dir_owned = True
+
+                            if is_dir_owned:
+                                if _fault_hook is not None:
+                                    _fault_hook("inside_lease_rmdir", lease_dir, q_dir)
+                                try:
+                                    q_dir.rmdir()
+                                except OSError as rmdir_exc:
+                                    cleanup_excs.append(rmdir_exc)
+                                    if not lease_dir.exists(follow_symlinks=False):
+                                        try:
+                                            os.replace(q_dir, lease_dir)
+                                        except OSError:
+                                            pass
+                            else:
+                                cleanup_excs.append(
+                                    XlsxSnapshotCleanupError(
+                                        "Lease directory unproven or replaced"
+                                    )
+                                )
+                                # Restore foreign directory to original path if vacant
+                                if not lease_dir.exists(follow_symlinks=False):
+                                    try:
+                                        os.replace(q_dir, lease_dir)
+                                    except OSError:
+                                        pass
+                        except OSError as exc:
+                            cleanup_excs.append(exc)
+            except OSError as exc:
+                cleanup_excs.append(exc)
 
         return cleanup_excs
 
     try:
-        # Create lease directory and record identity
+        # Create lease directory and record immutable descriptor anchor
+        lease_dir_fd: int = -1
         try:
             if is_posix:
                 lease_dir.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -950,23 +992,70 @@ def open_stable_xlsx_snapshot(
                     os.chmod(lease_dir, 0o700)
                 except OSError:
                     pass
+
+                try:
+                    open_flags = os.O_RDONLY
+                    if hasattr(os, "O_DIRECTORY"):
+                        open_flags |= os.O_DIRECTORY
+                    if hasattr(os, "O_NOFOLLOW"):
+                        open_flags |= os.O_NOFOLLOW
+                    lease_dir_fd = os.open(lease_dir, open_flags)
+                    dir_st = os.fstat(lease_dir_fd)
+                    l_dev, l_ino = _extract_device_and_inode(dir_st)
+                    owned_lease_token = _ArtifactOwnershipToken(
+                        device=l_dev,
+                        inode=l_ino,
+                    )
+                except OSError:
+                    dir_st = lease_dir.lstat()
+                    l_dev, l_ino = _extract_device_and_inode(dir_st)
+                    owned_lease_token = _ArtifactOwnershipToken(
+                        device=l_dev,
+                        inode=l_ino,
+                    )
             else:
                 lease_dir.mkdir(parents=False, exist_ok=False)
+                dir_st = lease_dir.lstat()
+                l_dev, l_ino = _extract_device_and_inode(dir_st)
+                owned_lease_token = _ArtifactOwnershipToken(
+                    device=l_dev,
+                    inode=l_ino,
+                )
         except OSError as exc:
+            if lease_dir_fd >= 0:
+                try:
+                    os.close(lease_dir_fd)
+                except OSError:
+                    pass
             raise XlsxSnapshotStorageError("Failed to create lease directory") from exc
+        finally:
+            if lease_dir_fd >= 0:
+                try:
+                    os.close(lease_dir_fd)
+                except OSError:
+                    pass
 
+        # Post-mkdir verification of path identity against immutable anchor
         try:
             try:
-                lease_dir_st = lease_dir.lstat()
+                check_st = lease_dir.lstat()
             except OSError:
-                # One-shot retry for transient stat failure
-                lease_dir_st = lease_dir.lstat()
-            l_dev, l_ino = _extract_device_and_inode(lease_dir_st)
-            owned_lease_token = _ArtifactOwnershipToken(
-                device=l_dev,
-                inode=l_ino,
-            )
+                # One-shot retry for transient stat failure; must match immutable anchor
+                check_st = lease_dir.lstat()
+
+            c_dev, c_ino = _extract_device_and_inode(check_st)
+            if (
+                owned_lease_token.device is not None
+                and c_dev != owned_lease_token.device
+            ) or (
+                owned_lease_token.inode is not None and c_ino != owned_lease_token.inode
+            ):
+                raise XlsxSnapshotStorageError(
+                    "Lease directory replaced after creation"
+                )
         except OSError as exc:
+            if isinstance(exc, XlsxSnapshotAcquisitionError):
+                raise
             raise XlsxSnapshotStorageError("Failed to stat lease directory") from exc
 
         if _fault_hook is not None:
@@ -999,7 +1088,7 @@ def open_stable_xlsx_snapshot(
                     try:
                         dst_st = os.fstat(dst_fd)
                     except OSError:
-                        # One-shot retry on open descriptor for transient failure
+                        # Handle-based retry on open descriptor for transient failure
                         dst_st = os.fstat(dst_fd)
                     p_dev, p_ino = _extract_device_and_inode(dst_st)
                     owned_part_token = _ArtifactOwnershipToken(
