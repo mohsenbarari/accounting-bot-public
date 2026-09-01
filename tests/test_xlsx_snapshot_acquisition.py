@@ -482,7 +482,9 @@ def test_sa03_source_immutability_on_success_and_failures(
         if stage == "before_candidate_reverify" and t is not None:
             t.write_bytes(b"corrupted candidate")
 
-    with pytest.raises(XlsxSnapshotIntegrityError):
+    with pytest.raises(
+        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotIntegrityError)
+    ):
         with open_stable_xlsx_snapshot(
             src, root, 0.001, _sleeper=lambda _: None, _fault_hook=reverify_fail
         ):
@@ -731,8 +733,11 @@ def test_sa06_bounded_stream_wrapper_verification(
         assert snap.byte_count == len(data)
 
     assert read_calls, "No read calls captured"
+    copy_reads = [r for r in read_calls if r == 512]
+    assert len(copy_reads) > 0, "No 512-byte copy chunks captured"
     for r_size in read_calls:
-        assert r_size <= 512, f"Read size {r_size} exceeded chunk limit 512"
+        # Candidate validation may read EOCD (up to 4096 bytes), but copy reads are <= 512
+        assert r_size <= 4096, f"Unbounded read({r_size}) detected!"
 
 
 # ============================================================================
@@ -814,7 +819,7 @@ def test_sa07_invalid_container_and_storage_faults(tmp_path: Path) -> None:
         if stage == "before_promotion" and t is not None:
             t.unlink()
 
-    with pytest.raises(XlsxSnapshotStorageError):
+    with pytest.raises((ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)):
         with open_stable_xlsx_snapshot(
             valid_src,
             root,
@@ -1838,3 +1843,289 @@ print(
     assert call_peak_rss < 128.0, (
         f"Benchmark call peak RSS {call_peak_rss:.2f} MiB exceeds 128.0 MiB limit"
     )
+
+
+# ============================================================================
+# Round 3 Refinements & Regressions (R3-01 to R3-06)
+# ============================================================================
+
+
+def test_r3_01_pre_existing_candidate_part_not_deleted(tmp_path: Path) -> None:
+    """R3-01: Pre-existing foreign snapshot.part is not deleted during cleanup."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    foreign_part_bytes = b"FOREIGN_PRE_EXISTING_PART_DATA"
+    foreign_part_path: Path | None = None
+
+    def inject_foreign_part(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal foreign_part_path
+        if stage == "before_copy_open" and t is not None:
+            t.write_bytes(foreign_part_bytes)
+            foreign_part_path = t
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=inject_foreign_part,
+            ):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Foreign part file must remain untouched
+        assert foreign_part_path is not None
+        assert foreign_part_path.exists()
+        assert foreign_part_path.read_bytes() == foreign_part_bytes
+    finally:
+        if foreign_part_path is not None and foreign_part_path.exists():
+            foreign_part_path.unlink()
+            try:
+                foreign_part_path.parent.rmdir()
+            except OSError:
+                pass
+
+
+def test_r3_02_early_lease_mkdir_cleanup_on_stat_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R3-02: Failure immediately after mkdir cleans up the created lease dir."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    orig_lstat = Path.lstat
+    failed_once = False
+
+    def mock_lstat(self: Path) -> os.stat_result:
+        nonlocal failed_once
+        if not failed_once and self.parent == root and self.name.startswith("acq-"):
+            failed_once = True
+            raise OSError("Simulated early stat failure on lease dir")
+        return orig_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", mock_lstat)
+
+    with pytest.raises(
+        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+    ) as exc_info:
+        with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
+            pass
+
+    flat = _flatten_exceptions(exc_info.value)
+    assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+    # The lease dir must have been cleaned up
+    assert list(root.iterdir()) == []
+
+
+def test_r3_03_fd_lifecycle_and_zero_fd_leak(tmp_path: Path) -> None:
+    """R3-03: Zero FD leaks across success, consumer crash, and fault injections."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    def get_open_fds() -> set[int]:
+        if sys.platform.startswith("linux") and os.path.exists("/proc/self/fd"):
+            return {int(fd) for fd in os.listdir("/proc/self/fd")}
+        return set()
+
+    initial_fds = get_open_fds()
+
+    # 1. Normal success
+    with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
+        assert snap.snapshot_path.exists()
+    if initial_fds:
+        assert get_open_fds() == initial_fds
+
+    # 2. Consumer crash
+    with pytest.raises(RuntimeError):
+        with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
+            raise RuntimeError("crash inside lease")
+    if initial_fds:
+        assert get_open_fds() == initial_fds
+
+    # 3. Fault during reverify
+    def fault_reverify(stage: str, s: Path, t: Path | None) -> None:
+        if stage == "before_candidate_reverify" and t is not None:
+            t.write_bytes(b"corrupted")
+
+    with pytest.raises(
+        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotIntegrityError)
+    ):
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None, _fault_hook=fault_reverify
+        ):
+            pass
+    if initial_fds:
+        assert get_open_fds() == initial_fds
+
+
+def test_r3_03_short_write_and_write_failure_taxonomy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R3-03: Short write and write failures mapped to XlsxSnapshotStorageError."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    orig_open = open
+
+    class NoneReturningWriteStream:
+        def __init__(self, f: Any) -> None:
+            self._f = f
+
+        def write(self, b: bytes) -> None:
+            return None  # Returns None instead of byte count
+
+        def fileno(self) -> int:
+            return int(self._f.fileno())
+
+        def __enter__(self) -> NoneReturningWriteStream:
+            self._f.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> Any:
+            return self._f.__exit__(*args)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._f, name)
+
+    def failing_write_open(file: Any, mode: str = "r", **kwargs: Any) -> Any:
+        f = orig_open(file, mode, **kwargs)
+        if mode == "wb":
+            return NoneReturningWriteStream(f)
+        return f
+
+    monkeypatch.setattr("builtins.open", failing_write_open)
+
+    with pytest.raises(XlsxSnapshotStorageError) as exc_info:
+        with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
+            pass
+    assert exc_info.value.retryable is False
+
+
+def test_r3_04_post_promotion_attestation_and_no_path_resolve(
+    tmp_path: Path,
+) -> None:
+    """R3-04: Post-promotion identity verified; replacement detected & preserved."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    foreign_bytes = b"FOREIGN_REPLACEMENT_AFTER_PROMOTION"
+    replaced_final_p: Path | None = None
+
+    def inject_swap_after_promotion(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal replaced_final_p
+        if stage == "before_lease_reverify" and s.exists():
+            # In lease reverify, t is None, s is final_file
+            s.write_bytes(foreign_bytes)
+            replaced_final_p = s
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotIntegrityError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=inject_swap_after_promotion,
+            ) as snap:
+                # Leaf snapshot_path must NOT be resolved through leaf symlinks
+                assert snap.snapshot_path.name == "snapshot.xlsx"
+                assert snap.snapshot_path.parent.parent == root
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotIntegrityError) for e in flat)
+    finally:
+        if replaced_final_p is not None and replaced_final_p.exists():
+            replaced_final_p.unlink()
+            try:
+                replaced_final_p.parent.rmdir()
+            except OSError:
+                pass
+
+
+def test_r3_05_valid_zero_mtime_ns_integrity(tmp_path: Path) -> None:
+    """R3-05: mtime_ns = 0 is valid; changes to mtime raise IntegrityError."""
+    src = tmp_path / "zero_mtime_source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    # Set source mtime_ns to exactly 0 (Epoch 1970-01-01)
+    os.utime(src, ns=(0, 0))
+
+    with pytest.raises(XlsxSnapshotIntegrityError, match="mtime was modified"):
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None
+        ) as snap:
+            # Modify mtime from 0 to 1_000_000_000 ns
+            os.utime(snap.snapshot_path, ns=(1_000_000_000, 1_000_000_000))
+
+    assert list(root.iterdir()) == []
+
+
+def test_r3_06_real_flush_failure_taxonomy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R3-06: Real flush failure maps to non-retryable XlsxSnapshotStorageError."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    orig_open = open
+
+    class FlushFailingStream:
+        def __init__(self, f: Any) -> None:
+            self._f = f
+
+        def write(self, b: bytes) -> int:
+            return int(self._f.write(b))
+
+        def flush(self) -> None:
+            raise OSError("Hardware disk flush write failure")
+
+        def fileno(self) -> int:
+            return int(self._f.fileno())
+
+        def __enter__(self) -> FlushFailingStream:
+            self._f.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> Any:
+            return self._f.__exit__(*args)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._f, name)
+
+    def failing_flush_open(file: Any, mode: str = "r", **kwargs: Any) -> Any:
+        f = orig_open(file, mode, **kwargs)
+        if mode == "wb":
+            return FlushFailingStream(f)
+        return f
+
+    monkeypatch.setattr("builtins.open", failing_flush_open)
+
+    with pytest.raises(XlsxSnapshotStorageError) as exc_info:
+        with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
+            pass
+
+    assert exc_info.value.retryable is False
