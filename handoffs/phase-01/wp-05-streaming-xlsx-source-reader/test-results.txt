@@ -1,26 +1,26 @@
 WORK PACKAGE: WP-05: Read-only streaming XLSX source reader and physical row tracker
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-01T10:05:00Z
+RECORDED AT UTC: 2026-09-01T10:25:00Z
 
-# Test Results: WP-05 Streaming XLSX Source Reader (R5-D CI Remediation Delivery)
+# Test Results: WP-05 Streaming XLSX Source Reader (R5-E Call-Window RSS Correction Delivery)
 
 ## FINAL SUMMARY
 
-- Status: ALL PASS (Linux) / Remediated in R5-D CI remediation turn (R5-D1, R5-D2, R5-D3 addressing CI-01 and CI-02 from PR #19) / Independent Codex CI Review Required
+- Status: ALL PASS (Linux) / Remediated in R5-E Call-Window RSS measurement turn (R5-E1..R5-E4) / Independent Codex CI Review Required on PR #19
 - Test suites:
   - Base architecture, contracts & domain tests: 89 passed
-  - Reader unit & integration tests (tests/test_xlsx_source_reader.py): 40 passed (includes new Windows probe structure test)
+  - Reader unit, integration, and sampler tests (tests/test_xlsx_source_reader.py): 43 passed (includes 4 Windows WinAPI probe and call-window RSS sampler tests)
   - Raw contract regressions (tests/test_xlsx_source_reader_raw_contract_regressions.py): 7 passed
   - SST activity regressions (tests/test_xlsx_source_reader_sst_activity_regressions.py): 59 passed
-  - Total: 195 passed in 17.65s (zero failures)
+  - Total: 198 passed in 18.73s (zero failures)
 - Linters & Types: Ruff format 0 errors (54 files), Ruff check 0 errors, Mypy strict 0 errors (21 source files)
-- Streaming benchmark (15,000 active rows + 5,000 tail rows, CPython 3.13.15 Linux):
-  - 3 Isolated Subprocess Benchmark Runs:
-    - Run 1: duration 9.3404s, baseline RSS 73.72 MiB, absolute peak RSS 73.72 MiB
-    - Run 2: duration 9.9390s, baseline RSS 73.48 MiB, absolute peak RSS 73.48 MiB
-    - Run 3: duration 9.2100s, baseline RSS 75.91 MiB, absolute peak RSS 75.91 MiB
-  - Full suite benchmark execution: duration 9.5945s, baseline RSS 80.29 MiB, absolute peak RSS 80.29 MiB
-  - Limits: duration < 15.0s, absolute peak RSS < 128.0 MiB
+- Call-Window Streaming Benchmark (15,000 active rows + 5,000 tail rows, CPython 3.13.15 Linux):
+  - 3 Isolated Subprocess Benchmark Runs (Call-Window RSS Sampler @ 5ms interval):
+    - Run 1: duration 10.4372s, baseline current RSS 27.29 MiB, call peak RSS 58.95 MiB
+    - Run 2: duration 10.3431s, baseline current RSS 27.28 MiB, call peak RSS 58.57 MiB
+    - Run 3: duration 10.3898s, baseline current RSS 27.30 MiB, call peak RSS 58.86 MiB
+  - Full suite benchmark execution: duration 10.2885s, baseline current RSS 27.22 MiB, call peak RSS 58.85 MiB
+  - Limits: duration < 15.0s, call peak RSS < 128.0 MiB
 - Security scans: 0 tracked prohibited binaries/databases (git ls-files scan: 85 tracked files checked), 0 sensitive patterns/credentials (git grep failure-on-match exit code 1)
 - Handoff validator: PASS (Handoff validation passed.)
 
@@ -44,13 +44,14 @@ RECORDED AT UTC: 2026-09-01T10:05:00Z
 | `fdaabe2` | Codex | 194 passed / 19.82s | 11.1023s / 81.57 MiB | Independent Codex review measurement on Linux test environment. |
 | `3b1d3af` | Implementer | 194 passed / 19.88s (full run) | 10.5785s / 80.41 MiB | Committed R5-C review-fix turn. |
 | `fe7126c` | Codex | 194 passed | 9.1252s / 79.32 MiB | Independent Codex review measurement on Linux test environment (15,000 rows). |
-| `9d8f677` | GitHub CI (PR #19 run `33492617454`) | Linux: 1 failed (265.91 MiB > 128 MiB), Windows: 1 failed (RuntimeError GetProcessMemoryInfo) | 3.0276s / 265.91 MiB (Linux CI) | GitHub Actions CI run on PR #19 discovering CI-01 (Linux RSS exceed) and CI-02 (Windows WinAPI probe invalid at runtime). |
-| `c4a8292` | Implementer (R5-D) | 195 passed / 17.65s (full run) | Run 1: 9.3404s / 73.72 MiB, Run 2: 9.9390s / 73.48 MiB, Run 3: 9.2100s / 75.91 MiB (Full suite: 9.5945s / 80.29 MiB) | R5-D remediation: streaming intermediate memory cleanup in Pass 1 and Pass 2, single-pass doctype check, typed WinAPI memory probe with ctypes.c_uint32/wintypes.HANDLE/use_last_error=True, baseline RSS diagnostic reporting, and dedicated Windows memory probe structure test. |
+| `9d8f677` | GitHub CI (PR #19 run `33492617454`) | Linux: 1 failed (265.91 MiB > 128 MiB), Windows: 1 failed (GetProcessMemoryInfo) | 3.0276s / 265.91 MiB (Linux CI) | First GitHub Actions CI run on PR #19 discovering CI-01 (Linux ru_maxrss lifetime high-water) and CI-02 (Windows WinAPI probe untyped). |
+| `c4a8292` | GitHub CI (PR #19 run `33496419728`) | Windows: 195 passed in 14.21s (SUCCESS); Linux: 1 failed (265.81 MiB pre-call / 265.81 MiB post-call) | Windows: 4.5091s / 26.70M pre / 57.40M post; Linux: 3.2069s / 265.81M pre / 265.81M post | Second GitHub Actions CI run on PR #19: Windows R5-D2 accepted (SUCCESS); Linux failed because process-lifetime ru_maxrss was contaminated by a 265.81 MiB high-water mark reached prior to the reader call. |
+| `02f7acd` | Implementer (R5-E) | 198 passed / 18.73s (full run) | Run 1: 10.44s / baseline 27.29M / peak 58.95M; Run 2: 10.34s / baseline 27.28M / peak 58.57M; Run 3: 10.39s / baseline 27.30M / peak 58.86M (Full suite: 10.29s / baseline 27.22M / peak 58.85M) | R5-E remediation: call-window current absolute RSS sampling via CallWindowRssSampler (@ 5ms interval) reading current VmRSS (/proc/self/status on Linux) and WorkingSetSize (WinAPI on Windows), baseline current RSS reporting, error propagation, and 4 dedicated probe/sampler tests. |
 
-*Note on Provenance and RED Baseline:*
-- R5-A historical RED state was not logged separately prior to fix commit `739b0b6` ("ثبت نشده").
-- For commit `4049a6c`, the historical implementer claim of 11 failed / 15 passed in 0.82s was a preliminary test run, whereas Codex independent replay with the 26 tests from `20f8276` on older in-memory code took 0.90s.
-- Benchmark timing and memory provenance: On GitHub Actions runner (PR #19 run 33492617454), Linux benchmark executed in 3.0276s but reported 265.91 MiB peak RSS due to intermediate pass retention across passes and multi-core allocator arena sizing, while Windows failed due to untyped ctypes signatures. In R5-D, intermediate pass memory dictionaries are explicitly cleared, preceding sibling XML nodes unlinked immediately upon row completion, root elements cleared after worksheet iterparse, and Windows WinAPI bindings explicitly typed with `ctypes.c_uint32`, `wintypes.HANDLE`, and `use_last_error=True`.
+*Note on Provenance and Metric Scoping:*
+- In CI run `33496419728`, Windows R5-D2 passed independently (195 passed in 14.21s, working set 26.70 MiB pre-call to 57.40 MiB post-call).
+- In CI run `33496419728`, Linux reported 265.81 MiB both before and after the reader call under `resource.getrusage(RUSAGE_SELF).ru_maxrss`. `ru_maxrss` measures the process-lifetime maximum resident set size rather than the current RSS during the reader call. Equal pre-call and post-call measurements proved the high-water value was reached before `t0`, during process startup/import, and was not caused by reader memory retention.
+- In R5-E, the benchmark instrumentation was corrected to measure absolute current process RSS strictly during the reader invocation window (`CallWindowRssSampler`), measuring `baseline_current_rss_mib` immediately before the call, sampling at 5ms intervals throughout the call, taking a final sample immediately after, and reporting `call_peak_rss_mib` (maximum sampled absolute current RSS during the call).
 
 ---
 
@@ -97,33 +98,8 @@ pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*'
 Success: no issues found in 21 source files
 ```
 
-### 6. Focused Benchmark 3-Run Repetition under CPython 3.13.15
-Command: `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_xr12_synthetic_15000_row_benchmark" -s -vv`
-Exit code: 0
-
-- **Run 1 Output:**
-```text
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 9.3404s | baseline_rss_mib: 73.72 MiB | peak_rss_mib: 73.72 MiB | rows: 15000 | platform: linux
-PASSED
-1 passed, 39 deselected in 10.91s
-```
-
-- **Run 2 Output:**
-```text
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 9.9390s | baseline_rss_mib: 73.48 MiB | peak_rss_mib: 73.48 MiB | rows: 15000 | platform: linux
-PASSED
-1 passed, 39 deselected in 11.53s
-```
-
-- **Run 3 Output:**
-```text
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 9.2100s | baseline_rss_mib: 75.91 MiB | peak_rss_mib: 75.91 MiB | rows: 15000 | platform: linux
-PASSED
-1 passed, 39 deselected in 10.68s
-```
-
-### 7. Focused Windows WinAPI Memory Probe Structure Test
-Command: `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_r6_windows_memory_probe_structure_and_types" -v`
+### 6. Focused Sampler and WinAPI Probe Unit Tests
+Command: `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_r6_windows_memory_probe_structure_and_types or test_r6_current_process_rss_probe_and_sampler or test_r6_current_process_rss_sampler_error_propagation or test_r6_linux_proc_status_vmrss_parser_rejections" -v`
 Exit code: 0
 Output:
 ```text
@@ -133,14 +109,42 @@ rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 40 items / 39 deselected / 1 selected
+collected 43 items / 39 deselected / 4 selected
 
-tests/test_xlsx_source_reader.py .                  [100%]
+tests/test_xlsx_source_reader.py::test_r6_windows_memory_probe_structure_and_types PASSED [ 25%]
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_probe_and_sampler PASSED [ 50%]
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_error_propagation PASSED [ 75%]
+tests/test_xlsx_source_reader.py::test_r6_linux_proc_status_vmrss_parser_rejections PASSED [100%]
 
-============ 1 passed, 39 deselected in 0.72s =============
+============ 4 passed, 39 deselected in 0.74s =============
 ```
 
-### 8. Full Repository Quality Suite (195 Tests)
+### 7. Focused Benchmark 3-Run Repetition under CPython 3.13.15
+Command: `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_xr12_synthetic_15000_row_benchmark" -s -vv`
+Exit code: 0
+
+- **Run 1 Output:**
+```text
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.4372s | baseline_current_rss_mib: 27.29 MiB | call_peak_rss_mib: 58.95 MiB | rows: 15000 | platform: linux
+PASSED
+1 passed, 42 deselected in 11.90s
+```
+
+- **Run 2 Output:**
+```text
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.3431s | baseline_current_rss_mib: 27.28 MiB | call_peak_rss_mib: 58.57 MiB | rows: 15000 | platform: linux
+PASSED
+1 passed, 42 deselected in 11.83s
+```
+
+- **Run 3 Output:**
+```text
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.3898s | baseline_current_rss_mib: 27.30 MiB | call_peak_rss_mib: 58.86 MiB | rows: 15000 | platform: linux
+PASSED
+1 passed, 42 deselected in 11.84s
+```
+
+### 8. Full Repository Quality Suite (198 Tests)
 Command: `/root/.local/bin/uv run pytest -v`
 Exit code: 0
 Output:
@@ -152,26 +156,26 @@ configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 195 items
+collected 198 items
 
 tests/test_architecture_guard.py ..............      [  7%]
 tests/test_canonical_date.py ..........              [ 12%]
 tests/test_canonical_hashing.py ..................   [ 21%]
-tests/test_imports.py .......                        [ 25%]
+tests/test_imports.py .......                        [ 24%]
 tests/test_raw_input_contracts.py ...............    [ 32%]
-tests/test_source_change_plan.py ................... [ 42%]
-......                                               [ 45%]
-tests/test_xlsx_source_reader.py ................... [ 55%]
+tests/test_source_change_plan.py ................... [ 41%]
+......                                               [ 44%]
+tests/test_xlsx_source_reader.py ................... [ 54%]
 ...................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 9.5945s | baseline_rss_mib: 80.29 MiB | peak_rss_mib: 80.29 MiB | rows: 15000 | platform: linux
-..                                [ 66%]
-tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 66%]
-......                                               [ 69%]
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.2885s | baseline_current_rss_mib: 27.22 MiB | call_peak_rss_mib: 58.85 MiB | rows: 15000 | platform: linux
+.....                             [ 66%]
+tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 67%]
+......                                               [ 70%]
 tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 70%]
 .................................................... [ 96%]
 ......                                               [100%]
 
-=================== 195 passed in 17.65s ===================
+=================== 198 passed in 18.73s ===================
 ```
 
 ### 9. Git Diff Cleanliness Check
