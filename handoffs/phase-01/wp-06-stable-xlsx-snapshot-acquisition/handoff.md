@@ -18,6 +18,8 @@
   - `1280493` — `docs(handoff): finalize exact commit list in handoff package`
   - `d3afceb` — `fix(local_agent): address Codex review round 3 R3-01 to R3-06`
   - `34d26e0` — `docs(handoff): update WP-06 handoff with Codex review round 3 evidence`
+  - `49c2727` — `docs(handoff): finalize exact commit list for round 3 handoff`
+  - `19248db` — `style(tests): format test_sa06 comment under 88 chars`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
