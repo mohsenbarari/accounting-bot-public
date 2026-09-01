@@ -2125,5 +2125,3 @@ def test_r4_05_identity_unavailable_fallback(
         assert snap.byte_count == len(_build_valid_test_xlsx())
 
     assert list(root.iterdir()) == []
-
-
