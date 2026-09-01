@@ -22,7 +22,7 @@
   - `19248db` — `style(tests): format test_sa06 comment under 88 chars`
   - `66fa211` — `docs(handoff): synchronize full commit list in handoff package`
   - `b75f7c4` — `fix(local_agent): address Codex review round 4 R4-01 to R4-06`
-  - `(pending)` — `docs(handoff): update WP-06 handoff with Codex review round 4 evidence`
+  - `8130234` — `docs(handoff): update WP-06 handoff with Codex review round 4 evidence`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
