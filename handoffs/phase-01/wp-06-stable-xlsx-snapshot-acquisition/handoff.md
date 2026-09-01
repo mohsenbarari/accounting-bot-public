@@ -27,7 +27,7 @@
   - `064e9fb` — `style(tests): format tests/test_xlsx_snapshot_acquisition.py with ruff`
   - `f25fc32` — `docs(handoff): synchronize full commit list in handoff package`
   - `36774fc` — `fix(local_agent): address Codex review round 5 R5-01 to R5-06`
-  - `(pending)` — `docs(handoff): update WP-06 handoff with Codex review round 5 evidence`
+  - `8a6b75d` — `docs(handoff): update WP-06 handoff with Codex review round 5 evidence`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
