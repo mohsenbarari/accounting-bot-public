@@ -14,7 +14,7 @@
   - `2547d14` — `docs(handoff): update WP-06 handoff with Codex review R1-R7 evidence`
   - `d6358d9` — `style(tests): format snapshot acquisition tests to 88 char limit`
   - `3f33c16` — `fix(local_agent): address Codex review round 2 R2-01 to R2-07`
-  - `(pending)` — `docs(handoff): update WP-06 handoff with Codex review round 2 evidence`
+  - `7923ab5` — `docs(handoff): update WP-06 handoff with Codex review round 2 evidence`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
