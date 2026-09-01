@@ -7,6 +7,7 @@ Implements the bounded adapter that converts a caller-supplied, exact operationa
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import dataclasses
 import enum
 import hashlib
@@ -276,6 +277,66 @@ def _extract_device_and_inode(
 ) -> tuple[int | None, int | None]:
     """Extract platform device and inode identifiers, or (None, None) if unavailable."""
     return st.st_dev, st.st_ino
+
+
+def _atomic_move_no_replace(src: Path, dst: Path, is_posix: bool) -> None:
+    """Atomic move with fail-if-exists semantics on both POSIX and Windows."""
+    if dst.exists(follow_symlinks=False):
+        raise FileExistsError("Quarantine destination already exists")
+
+    try:
+        st = src.lstat()
+    except OSError as exc:
+        raise OSError("Source file or directory does not exist") from exc
+
+    if is_posix and not stat.S_ISDIR(st.st_mode) and hasattr(os, "link"):
+        try:
+            os.link(src, dst)
+        except (FileExistsError, OSError) as exc:
+            if getattr(exc, "errno", None) == 17:  # EEXIST
+                raise FileExistsError("Quarantine destination already exists") from exc
+            raise
+        try:
+            src.unlink()
+        except OSError as exc:
+            try:
+                dst.unlink()
+            except OSError:
+                pass
+            raise OSError("Failed to remove source after link") from exc
+        return
+
+    if sys.platform.startswith("linux"):
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            if hasattr(libc, "renameat2"):
+                at_fdcwd = -100
+                rename_noreplace = 1
+                ret = libc.renameat2(
+                    at_fdcwd,
+                    os.fsencode(str(src)),
+                    at_fdcwd,
+                    os.fsencode(str(dst)),
+                    rename_noreplace,
+                )
+                if ret != 0:
+                    err = ctypes.get_errno()
+                    if err == 17:  # EEXIST
+                        raise FileExistsError("Quarantine destination already exists")
+                    raise OSError(err, os.strerror(err))
+                return
+        except (AttributeError, OSError) as exc:
+            if isinstance(exc, FileExistsError):
+                raise
+
+    try:
+        os.rename(src, dst)
+    except FileExistsError:
+        raise
+    except OSError as exc:
+        if getattr(exc, "errno", None) == 17:  # EEXIST
+            raise FileExistsError("Quarantine destination already exists") from exc
+        raise
 
 
 def _get_path_observation(path: Path) -> _FileToken:
@@ -594,7 +655,6 @@ def _promote_candidate_atomic_fail_if_exists(
                 "Hard-link promotion of snapshot candidate failed"
             ) from exc
 
-        # On hard-link success, final_file has same device and inode as part_file
         fin_dev = owned_part_token.device if owned_part_token else None
         fin_ino = owned_part_token.inode if owned_part_token else None
 
@@ -758,21 +818,21 @@ def open_stable_xlsx_snapshot(
         cleanup_excs: list[BaseException] = []
         files_cleaned_successfully = True
 
-        # 1. Cleanup part_file via Atomic Quarantine
+        # 1. Cleanup part_file via Atomic Quarantine (fail-if-exists)
         try:
             if part_file.exists(follow_symlinks=False):
                 q_part = lease_dir / f".qpart-{uuid.uuid4().hex}"
                 moved_part = False
                 try:
-                    os.replace(part_file, q_part)
+                    _atomic_move_no_replace(part_file, q_part, is_posix)
                     moved_part = True
                 except OSError as exc:
                     files_cleaned_successfully = False
-                    cleanup_excs.append(
-                        XlsxSnapshotCleanupError(
-                            f"Failed to quarantine candidate file: {exc}"
-                        )
+                    cln_err = XlsxSnapshotCleanupError(
+                        "Failed to quarantine candidate file"
                     )
+                    cln_err.__cause__ = exc
+                    cleanup_excs.append(cln_err)
 
                 if moved_part:
                     try:
@@ -806,12 +866,11 @@ def open_stable_xlsx_snapshot(
                                     "Candidate file unproven or replaced"
                                 )
                             )
-                            # Restore foreign file to original path if not occupied
-                            if not part_file.exists(follow_symlinks=False):
-                                try:
-                                    os.replace(q_part, part_file)
-                                except OSError:
-                                    pass
+                            # Restore foreign file to original path if vacant
+                            try:
+                                _atomic_move_no_replace(q_part, part_file, is_posix)
+                            except OSError:
+                                pass
                     except OSError as exc:
                         files_cleaned_successfully = False
                         cleanup_excs.append(exc)
@@ -819,21 +878,21 @@ def open_stable_xlsx_snapshot(
             files_cleaned_successfully = False
             cleanup_excs.append(exc)
 
-        # 2. Cleanup final_file via Atomic Quarantine
+        # 2. Cleanup final_file via Atomic Quarantine (fail-if-exists)
         try:
             if final_file.exists(follow_symlinks=False):
                 q_final = lease_dir / f".qfinal-{uuid.uuid4().hex}"
                 moved_final = False
                 try:
-                    os.replace(final_file, q_final)
+                    _atomic_move_no_replace(final_file, q_final, is_posix)
                     moved_final = True
                 except OSError as exc:
                     files_cleaned_successfully = False
-                    cleanup_excs.append(
-                        XlsxSnapshotCleanupError(
-                            f"Failed to quarantine snapshot file: {exc}"
-                        )
+                    cln_err = XlsxSnapshotCleanupError(
+                        "Failed to quarantine snapshot file"
                     )
+                    cln_err.__cause__ = exc
+                    cleanup_excs.append(cln_err)
 
                 if moved_final:
                     try:
@@ -901,12 +960,11 @@ def open_stable_xlsx_snapshot(
                                     "Snapshot file unproven or replaced"
                                 )
                             )
-                            # Restore foreign file to original path if not occupied
-                            if not final_file.exists(follow_symlinks=False):
-                                try:
-                                    os.replace(q_final, final_file)
-                                except OSError:
-                                    pass
+                            # Restore foreign file to original path if vacant
+                            try:
+                                _atomic_move_no_replace(q_final, final_file, is_posix)
+                            except OSError:
+                                pass
                     except OSError as exc:
                         files_cleaned_successfully = False
                         cleanup_excs.append(exc)
@@ -921,14 +979,14 @@ def open_stable_xlsx_snapshot(
                     q_dir = root / f".qdir-{uuid.uuid4().hex}"
                     moved_dir = False
                     try:
-                        os.replace(lease_dir, q_dir)
+                        _atomic_move_no_replace(lease_dir, q_dir, is_posix)
                         moved_dir = True
                     except OSError as exc:
-                        cleanup_excs.append(
-                            XlsxSnapshotCleanupError(
-                                f"Failed to quarantine lease directory: {exc}"
-                            )
+                        cln_err = XlsxSnapshotCleanupError(
+                            "Failed to quarantine lease directory"
                         )
+                        cln_err.__cause__ = exc
+                        cleanup_excs.append(cln_err)
 
                     if moved_dir:
                         try:
@@ -958,11 +1016,13 @@ def open_stable_xlsx_snapshot(
                                     q_dir.rmdir()
                                 except OSError as rmdir_exc:
                                     cleanup_excs.append(rmdir_exc)
-                                    if not lease_dir.exists(follow_symlinks=False):
-                                        try:
-                                            os.replace(q_dir, lease_dir)
-                                        except OSError:
-                                            pass
+                                    # Restore directory to original path if vacant
+                                    try:
+                                        _atomic_move_no_replace(
+                                            q_dir, lease_dir, is_posix
+                                        )
+                                    except OSError:
+                                        pass
                             else:
                                 cleanup_excs.append(
                                     XlsxSnapshotCleanupError(
@@ -970,11 +1030,10 @@ def open_stable_xlsx_snapshot(
                                     )
                                 )
                                 # Restore foreign directory to original path if vacant
-                                if not lease_dir.exists(follow_symlinks=False):
-                                    try:
-                                        os.replace(q_dir, lease_dir)
-                                    except OSError:
-                                        pass
+                                try:
+                                    _atomic_move_no_replace(q_dir, lease_dir, is_posix)
+                                except OSError:
+                                    pass
                         except OSError as exc:
                             cleanup_excs.append(exc)
             except OSError as exc:
@@ -983,7 +1042,7 @@ def open_stable_xlsx_snapshot(
         return cleanup_excs
 
     try:
-        # Create lease directory and record immutable descriptor anchor
+        # Create lease directory and record immutable descriptor anchor (fail-closed)
         lease_dir_fd: int = -1
         try:
             if is_posix:
@@ -992,41 +1051,44 @@ def open_stable_xlsx_snapshot(
                     os.chmod(lease_dir, 0o700)
                 except OSError:
                     pass
-
-                try:
-                    open_flags = os.O_RDONLY
-                    if hasattr(os, "O_DIRECTORY"):
-                        open_flags |= os.O_DIRECTORY
-                    if hasattr(os, "O_NOFOLLOW"):
-                        open_flags |= os.O_NOFOLLOW
-                    lease_dir_fd = os.open(lease_dir, open_flags)
-                    dir_st = os.fstat(lease_dir_fd)
-                    l_dev, l_ino = _extract_device_and_inode(dir_st)
-                    owned_lease_token = _ArtifactOwnershipToken(
-                        device=l_dev,
-                        inode=l_ino,
-                    )
-                except OSError:
-                    dir_st = lease_dir.lstat()
-                    l_dev, l_ino = _extract_device_and_inode(dir_st)
-                    owned_lease_token = _ArtifactOwnershipToken(
-                        device=l_dev,
-                        inode=l_ino,
-                    )
             else:
                 lease_dir.mkdir(parents=False, exist_ok=False)
-                dir_st = lease_dir.lstat()
+
+            if _fault_hook is not None:
+                _fault_hook("after_mkdir_before_anchor", lease_dir, None)
+
+            # Establish immutable descriptor anchor immediately after mkdir
+            open_flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                open_flags |= os.O_DIRECTORY
+            if hasattr(os, "O_NOFOLLOW"):
+                open_flags |= os.O_NOFOLLOW
+            if hasattr(os, "O_BINARY"):
+                open_flags |= os.O_BINARY
+
+            try:
+                lease_dir_fd = os.open(lease_dir, open_flags)
+                if _fault_hook is not None:
+                    _fault_hook("after_anchor_open_before_fstat", lease_dir, None)
+                dir_st = os.fstat(lease_dir_fd)
                 l_dev, l_ino = _extract_device_and_inode(dir_st)
                 owned_lease_token = _ArtifactOwnershipToken(
                     device=l_dev,
                     inode=l_ino,
                 )
+            except OSError as exc:
+                raise XlsxSnapshotStorageError(
+                    "Failed to establish lease directory anchor"
+                ) from exc
         except OSError as exc:
             if lease_dir_fd >= 0:
                 try:
                     os.close(lease_dir_fd)
                 except OSError:
                     pass
+                lease_dir_fd = -1
+            if isinstance(exc, XlsxSnapshotAcquisitionError):
+                raise
             raise XlsxSnapshotStorageError("Failed to create lease directory") from exc
         finally:
             if lease_dir_fd >= 0:
