@@ -23,6 +23,8 @@
   - `66fa211` — `docs(handoff): synchronize full commit list in handoff package`
   - `b75f7c4` — `fix(local_agent): address Codex review round 4 R4-01 to R4-06`
   - `8130234` — `docs(handoff): update WP-06 handoff with Codex review round 4 evidence`
+  - `a5bd904` — `docs(handoff): finalize exact commit list for round 4 handoff`
+  - `064e9fb` — `style(tests): format tests/test_xlsx_snapshot_acquisition.py with ruff`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
