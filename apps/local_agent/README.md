@@ -4,7 +4,15 @@ Windows interactive user-session agent for monitoring Excel `.xlsx` saves, strea
 
 ## Architecture and boundaries
 
-- **Read-Only XLSX Source Reader (`xlsx_source_reader.py`):**
+- **Stable XLSX Snapshot Acquisition (`xlsx_snapshot_acquisition.py` — WP-06 / ADR-0009):**
+  - Public version: `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
+  - Public API: `open_stable_xlsx_snapshot(source_path, snapshot_root, observation_interval_seconds) -> Iterator[StableXlsxSnapshot]`
+  - Converts an exact caller-supplied `.xlsx` path into an immutable, verified temporary snapshot lease.
+  - Takes two ordered observations separated by the interval, streams a bounded-memory copy calculating SHA-256 and byte count, independently reverifies the source and copy, checks the ZIP container marker, and promotes candidate `.part` to `.xlsx` atomically.
+  - Post-lease verification checks digest and length on context exit before deterministic cleanup of managed artifacts.
+  - Typed error taxonomy: `XlsxSourceNotReadyError` (retryable), `XlsxSourcePolicyError`, `XlsxSnapshotStorageError`, `XlsxSnapshotIntegrityError`, `XlsxSnapshotCleanupError`.
+
+- **Read-Only XLSX Source Reader (`xlsx_source_reader.py` — WP-05 / ADR-0008):**
   - Public version: `XLSX_SOURCE_READER_VERSION = "xlsx-source-reader.v1"`
   - Public API: `read_xlsx_source_snapshot(path: Path | str) -> XlsxSourceReadResult`
   - Reuses authoritative contracts from `accounting_contracts` without duplicating registry or hashing rules.
@@ -59,7 +67,8 @@ uv sync --frozen --all-packages --all-groups
 uv run ruff format --check .
 uv run ruff check .
 uv run mypy .
+uv run mypy --platform win32 .
 uv run pytest -v
 git diff --check origin/main...HEAD
-python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/
+python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/
 ```
