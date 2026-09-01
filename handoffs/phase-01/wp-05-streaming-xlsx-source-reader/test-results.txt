@@ -1,49 +1,95 @@
-WORK PACKAGE: WP-05
-PHASE: 1
-RECORDED AT UTC: 2026-08-31T19:45:00Z
+WORK PACKAGE: WP-05: Read-only streaming XLSX source reader and physical row tracker
+PHASE: 1 — source and data-model foundation
+RECORDED AT UTC: 2026-09-01T05:08:00Z
 
-HISTORICAL RED PHASE STATUS:
-R5-A (Raw preservation & coordinates): ثبت نشده (not recorded at time of execution)
-R5-B (Initial R5-02 finding on 8fab170d): RECORDED (10 failed, 4 passed on Cases 1-10)
-R5-B (Findings RB-01..RB-05 on 4049a6c4c05a56ab39fe95f330348c9556e05365): RECORDED
-Initial RED run on baseline 4049a6c4:
-=================== test session starts ====================
-collected 26 items
-tests/test_xlsx_source_reader_sst_activity_regressions.py FFF.FFFFFFF........... [100%]
-==================== FAILURES ==============================
-11 failed, 15 passed in 0.82s
-(Failed on RB-01 inlineStr container extraction, RB-02 escaped whitespace treated as active, RB-03 premature 5000-digit evaluation, and missing consumer coordinates on SST decode failures)
+# Test Results: WP-05 Streaming XLSX Source Reader (R5-B Evidence Completion & Docs Repair)
 
-COMMAND: /root/.local/bin/uv lock --check
-EXIT CODE: 0
-OUTPUT:
+## FINAL SUMMARY
+
+- Status: ALL PASS (Linux) / Remediated in R5-B (RB-01 through RB-05) / Independent Codex Review Required
+- Test suites:
+  - Base architecture, contracts & domain tests: 89 passed
+  - Reader unit & integration tests (tests/test_xlsx_source_reader.py): 38 passed
+  - Raw contract regressions (tests/test_xlsx_source_reader_raw_contract_regressions.py): 7 passed
+  - SST activity regressions (tests/test_xlsx_source_reader_sst_activity_regressions.py): 57 passed
+  - Total: 191 passed in 23.30s (zero failures)
+- Linters & Types: Ruff format 0 errors (54 files), Ruff check 0 errors, Mypy strict 0 errors (21 source files)
+- Streaming benchmark (15,000 active rows + 5,000 tail rows): duration 14.9199s, peak RSS 79.89 MiB (limits: &lt; 15.0s, &lt; 128 MiB)
+- Security scans: 0 tracked prohibited binaries/databases, 0 sensitive patterns/credentials (grep exit code 1)
+- Handoff validator: PASS (Handoff validation passed.)
+
+---
+
+## Historical Benchmark and Delivery Measurement Records
+
+| Commit | Reporter | Test Count & Duration | Streaming Benchmark (15k rows) | Provenance & Notes |
+|---|---|---|---|---|
+| `8fab170` | Implementer | 133 passed / 1 failed (exit 1) | 15.6123s / 79.79 MiB | Initial R5-A delivery report (historical RED on unneeded SST decode). |
+| `8fab170` | Codex | 134 passed / 20.99s | 13.5857s / 81.63 MiB | Independent Codex review measurement on Linux test environment. |
+| `4049a6c` | Implementer | 148 passed / 21.11s | 13.4706s / 82.81 MiB (Reader: 13.4233s / 70.79 MiB) | R5-B initial delivery report. |
+| `4049a6c` | Codex | 148 passed / 20.89s | 13.5612s / 81.73 MiB | Independent Codex review measurement on Linux test environment. |
+| `20f8276` | Implementer | 160 passed / 21.42s | 14.0026s / 82.30 MiB | Intermediate RB-01..03 remediation report (log section requested repair). |
+| `20f8276` | Codex | 160 passed / 22.52s | 14.8600s / 79.22 MiB | Independent Codex review measurement on Linux test environment. |
+| `fd13b70` | Implementer | 164 passed / 22.65s (test `8b57e62`) | 14.8752s / 79.59 MiB | R5-B delivery report for 30 standalone SST regression tests. |
+| `fd13b70` | Codex | 164 passed / 22.69s | 14.9987s / 79.54 MiB | Independent Codex review measurement on Linux test environment. |
+| Current (`ce21abc`) | Implementer | 191 passed / 23.30s (full run) | 14.9199s / 79.89 MiB | Full single run on current delivery with 57 SST regressions. |
+
+*Note on Provenance and RED Baseline:*
+- R5-A historical RED state was not logged separately prior to fix commit `739b0b6` ("ثبت نشده").
+- For commit `4049a6c`, the historical implementer claim of 11 failed / 15 passed in 0.82s was a preliminary test run, whereas Codex independent replay with the 26 tests from `20f8276` on older in-memory code took 0.90s.
+- Product reader code has remained fixed at blob `de5ea1e90c85a4787ea1463beaa022276135f16d` across `20f8276`, `fd13b70`, and current HEAD.
+
+---
+
+## Verbatim Command Executions and Outputs
+
+### 1. Lockfile Check
+Command: `/root/.local/bin/uv lock --check`
+Exit code: 0
+Output:
+```text
 Resolved 88 packages in 3ms
+```
 
-COMMAND: /root/.local/bin/uv sync --frozen --all-packages --all-groups
-EXIT CODE: 0
-OUTPUT:
+### 2. Frozen Dependency Sync
+Command: `/root/.local/bin/uv sync --frozen --all-packages --all-groups`
+Exit code: 0
+Output:
+```text
 Checked 81 packages in 4ms
+```
 
-COMMAND: /root/.local/bin/uv run ruff format --check .
-EXIT CODE: 0
-OUTPUT:
+### 3. Ruff Format Check
+Command: `/root/.local/bin/uv run ruff format --check .`
+Exit code: 0
+Output:
+```text
 54 files already formatted
+```
 
-COMMAND: /root/.local/bin/uv run ruff check .
-EXIT CODE: 0
-OUTPUT:
+### 4. Ruff Lint Check
+Command: `/root/.local/bin/uv run ruff check .`
+Exit code: 0
+Output:
+```text
 All checks passed!
+```
 
-COMMAND: /root/.local/bin/uv run mypy .
-EXIT CODE: 0
-OUTPUT:
+### 5. Strict Mypy Static Type Checking
+Command: `/root/.local/bin/uv run mypy .`
+Exit code: 0
+Output:
+```text
 pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
 Success: no issues found in 21 source files
+```
 
-COMMAND: /root/.local/bin/uv run pytest tests/test_xlsx_source_reader_sst_activity_regressions.py -vv
-EXIT CODE: 0
-OUTPUT:
-================== test session starts ==================
+### 6. SST Activity Regressions Test Suite (57 Tests)
+Command: `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader_sst_activity_regressions.py -vv`
+Exit code: 0
+Output:
+```text
+============================= test session starts ==============================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- /srv/accounting-bot/workspace/.venv/bin/python
 cachedir: .pytest_cache
 hypothesis profile 'default'
@@ -51,45 +97,75 @@ rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 30 items
+collected 57 items
 
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_inlinestr_activity_with_sst_id_and_date_across_all_four_sheets PASSED [  3%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_inlinestr_zeros_persian_and_ascii_count_as_activity PASSED [  6%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitional PASSED [ 10%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x0020_] PASSED [ 13%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x0009_] PASSED [ 16%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x000D_] PASSED [ 20%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x00A0_] PASSED [ 23%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_single_pass_escaped_literal_is_active PASSED [ 26%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_nul_control_char_is_active_and_preserved PASSED [ 30%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_oversized_sst_index_on_inactive_row_is_safely_ignored PASSED [ 33%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_oversized_sst_index_on_active_row_fails_with_cell_error PASSED [ 36%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_active_row_corrupt_sst_has_exact_consumer_coordinates PASSED [ 40%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_malformed_activity_controls_and_error_coordinates PASSED [ 43%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_equivalent_representations_and_row_cell_permutation PASSED [ 46%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_stream_passes_and_selective_sst_decoding_bounds[1] PASSED [ 50%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_stream_passes_and_selective_sst_decoding_bounds[200] PASSED [ 53%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_01_inactive_inlinestr_empty_with_corrupt_id_sst PASSED [ 56%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_02_inactive_inlinestr_whitespace_with_corrupt_id_sst PASSED [ 60%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_03_inactive_str_whitespace_with_corrupt_id_sst PASSED [ 63%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_04_inactive_sst_empty_with_corrupt_id_sst PASSED [ 66%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_05_inactive_sst_whitespace_with_corrupt_id_sst PASSED [ 70%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_06_inactive_covered_literal_with_corrupt_id_sst PASSED [ 73%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_07_inactive_unsupported_leaf_in_date PASSED [ 76%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_08_inactive_unsupported_leaf_in_id PASSED [ 80%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_09_covered_formula_cache_on_active_row PASSED [ 83%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_10_activity_with_xml_comment_and_sst_id PASSED [ 86%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_paired_control_corrupt_sst_in_active_row_fails PASSED [ 90%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_shared_sst_entry_between_inactive_and_active_consumers PASSED [ 93%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_invalid_sst_index_in_activity_column_raises_typed_error PASSED [ 96%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_inlinestr_activity_with_sst_id_and_date_across_all_four_sheets PASSED [  1%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_inlinestr_zeros_persian_and_ascii_count_as_activity PASSED [  3%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitional[False] PASSED [  5%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitional[True] PASSED [  7%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain] PASSED [  8%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain_dp] PASSED [ 10%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain_vk] PASSED [ 12%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain_lk] PASSED [ 14%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs_bf] PASSED [ 15%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs_dp] PASSED [ 17%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs_vk] PASSED [ 19%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs_lk] PASSED [ 21%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail_bf] PASSED [ 22%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail_dp] PASSED [ 24%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail_vk] PASSED [ 26%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail_lk] PASSED [ 28%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero_bf] PASSED [ 29%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero_dp] PASSED [ 31%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero_vk] PASSED [ 33%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero_lk] PASSED [ 35%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero_bf] PASSED [ 36%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero_dp] PASSED [ 38%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero_vk] PASSED [ 40%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero_lk] PASSED [ 42%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x0020_] PASSED [ 43%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x0009_] PASSED [ 45%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x000D_] PASSED [ 47%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x00A0_] PASSED [ 49%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_single_pass_escaped_literal_is_active PASSED [ 50%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_nul_control_char_is_active_and_preserved PASSED [ 52%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_oversized_sst_index_on_inactive_row_is_safely_ignored PASSED [ 54%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_oversized_sst_index_on_active_row_fails_with_cell_error PASSED [ 56%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_active_row_corrupt_sst_has_exact_consumer_coordinates PASSED [ 57%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_malformed_activity_controls_and_error_coordinates[inline_unknown_leaf] PASSED [ 59%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_malformed_activity_controls_and_error_coordinates[direct_unknown_leaf] PASSED [ 61%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[abc] PASSED [ 63%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[-1] PASSED [ 64%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[01] PASSED [ 66%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[1.5] PASSED [ 68%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_equivalent_representations_and_row_cell_permutation PASSED [ 70%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_read_only_integrity_and_cleanup_on_failure PASSED [ 71%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_stream_passes_and_selective_sst_decoding_bounds[1] PASSED [ 73%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_stream_passes_and_selective_sst_decoding_bounds[200] PASSED [ 75%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_01_inactive_inlinestr_empty_with_corrupt_id_sst PASSED [ 77%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_02_inactive_inlinestr_whitespace_with_corrupt_id_sst PASSED [ 78%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_03_inactive_str_whitespace_with_corrupt_id_sst PASSED [ 80%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_04_inactive_sst_empty_with_corrupt_id_sst PASSED [ 82%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_05_inactive_sst_whitespace_with_corrupt_id_sst PASSED [ 84%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_06_inactive_covered_literal_with_corrupt_id_sst PASSED [ 85%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_07_inactive_unsupported_leaf_in_date PASSED [ 87%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_08_inactive_unsupported_leaf_in_id PASSED [ 89%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_09_covered_formula_cache_on_active_row PASSED [ 91%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_10_activity_with_xml_comment_and_sst_id PASSED [ 92%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_paired_control_corrupt_sst_in_active_row_fails PASSED [ 94%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_shared_sst_entry_between_inactive_and_active_consumers PASSED [ 96%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_invalid_sst_index_in_activity_column_raises_typed_error PASSED [ 98%]
 tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_activity_and_sst_across_all_four_sheets PASSED [100%]
 
-================== 30 passed in 0.88s ===================
+============================= 57 passed in 1.18s ==============================
+```
 
-COMMAND: /root/.local/bin/uv run pytest tests/test_xlsx_source_reader_raw_contract_regressions.py -v
-EXIT CODE: 0
-OUTPUT:
-================== test session starts ==================
+### 7. Raw Contract Regressions Test Suite (7 Tests)
+Command: `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader_raw_contract_regressions.py -v`
+Exit code: 0
+Output:
+```text
+============================= test session starts ==============================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
@@ -105,82 +181,72 @@ tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_coordinate
 tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_negative_and_blank_activity_cases PASSED [ 85%]
 tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_independent_oracle_all_four_sheets PASSED [100%]
 
-=================== 7 passed in 0.58s ===================
+============================== 7 passed in 0.74s ===============================
+```
 
-COMMAND: /root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -v
-EXIT CODE: 0
-OUTPUT:
-================== test session starts ==================
-platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
-rootdir: /srv/accounting-bot/workspace
-configfile: pyproject.toml
-plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
-asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 38 items
-
-tests/test_xlsx_source_reader.py ................... [ 50%]
-..................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 14.8752s | peak_rss_mib: 79.59 MiB | rows: 15000 | platform: linux
-.                                  [100%]
-
-=================== 38 passed in 15.68s ===================
-
-COMMAND: /root/.local/bin/uv run pytest -v
-EXIT CODE: 0
-OUTPUT:
-================== test session starts ==================
+### 8. Full Repository Quality Suite and Streaming Benchmark (191 Tests)
+Command: `/root/.local/bin/uv run pytest -v`
+Exit code: 0
+Output:
+```text
+============================= test session starts ==============================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 164 items
+collected 191 items
 
-tests/test_architecture_guard.py ..............   [  8%]
-tests/test_canonical_date.py ..........           [ 14%]
-tests/test_canonical_hashing.py ................. [ 25%]
-.                                                 [ 25%]
-tests/test_imports.py .......                     [ 29%]
-tests/test_raw_input_contracts.py ............... [ 39%]
-                                                  [ 39%]
-tests/test_source_change_plan.py ................ [ 48%]
-.........                                         [ 54%]
-tests/test_xlsx_source_reader.py ................ [ 64%]
-.....................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 14.8752s | peak_rss_mib: 79.59 MiB | rows: 15000 | platform: linux
-.                            [ 77%]
-tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 78%]
-......                                            [ 81%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 82%]
-.............................                     [100%]
+tests/test_architecture_guard.py ..............                          [  7%]
+tests/test_canonical_date.py ..........                                  [ 12%]
+tests/test_canonical_hashing.py ..................                       [ 21%]
+tests/test_imports.py .......                                            [ 25%]
+tests/test_raw_input_contracts.py ...............                        [ 33%]
+tests/test_source_change_plan.py ..................                      [ 42%]
+.......                                                                  [ 46%]
+tests/test_xlsx_source_reader.py ..................                      [ 56%]
+...................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 14.9199s | peak_rss_mib: 79.89 MiB | rows: 15000 | platform: linux
+.                                                                        [ 66%]
+tests/test_xlsx_source_reader_raw_contract_regressions.py .              [ 67%]
+......                                                                   [ 70%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py .              [ 70%]
+...................................................                      [ 97%]
+.....                                                                    [100%]
 
-================= 164 passed in 22.65s ==================
+============================= 191 passed in 23.30s =============================
+```
 
-COMMAND: git diff --check origin/main...HEAD
-EXIT CODE: 0
-OUTPUT:
-(clean diff with 0 whitespace errors)
+### 9. Git Diff Cleanliness Check
+Command: `git diff --check origin/main...HEAD`
+Exit code: 0
+Output:
+```text
+(no output, clean diff)
+```
 
-COMMAND: python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"
-EXIT CODE: 0
-OUTPUT:
-(zero forbidden binary/database/secret files)
+### 10. Prohibited Files Scan
+Command: `python3 -c "import subprocess, sys; out = subprocess.check_output(['git', 'ls-files'], text=True); matches = [line for line in out.splitlines() if line.endswith(('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'))]; sys.exit(1 if matches else 0)"`
+Exit code: 0
+Output:
+```text
+(zero prohibited files found)
+```
 
-COMMAND: git --no-pager grep -n -I -i -E '(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})' -- ':!ROADMAP.md' ':!docs/adr/*' ':!.agents/*' ':!handoffs/*' ':!uv.lock'; echo "EXIT:$?"
-EXIT CODE: 0
-OUTPUT:
-EXIT:1
+### 11. Sensitive Patterns Scan
+Command: `python3 /root/.gemini/antigravity-ide/brain/f01b0a03-6f9b-4719-9c90-6eb87b114127/scratch/run_sensitive_scan.py`
+Exit code: 0
+Output:
+```text
+GREP_EXIT: 1
+SUCCESS: Zero sensitive patterns found.
+```
 
-COMMAND: python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/
-EXIT CODE: 0
-OUTPUT:
+### 12. Handoff Structure Validation
+Command: `python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/`
+Exit code: 0
+Output:
+```text
 Handoff validation passed.
-
-FINAL SUMMARY:
-- 164 out of 164 automated tests passed (100% green).
-- Static analysis (ruff format, ruff check, mypy) passed with zero errors.
-- Whitespace and git diff hygiene checks passed.
-- Sensitive credentials and forbidden binary assets scans passed with zero findings.
-- R5-B standalone regressions (30 tests) verified for findings RB-01 through RB-05.
-- Work Package WP-05 remains in status REQUEST_CHANGES pending independent Codex review.
+```
