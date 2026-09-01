@@ -109,6 +109,10 @@ _TAG_R = tuple(f"{{{ns}}}r" for ns in _VALID_SPREADSHEETML_NAMESPACES)
 
 _TAG_T_SET = set(_TAG_T)
 _TAG_R_SET = set(_TAG_R)
+_TAG_V_SET = set(_TAG_V)
+_TAG_IS_SET = set(_TAG_IS)
+_TAG_F_SET = set(_TAG_F)
+_TAG_EXTLST_SET = {f"{{{ns}}}extLst" for ns in _VALID_SPREADSHEETML_NAMESPACES}
 _TAG_IGNORE_IS = {
     f"{{{ns}}}{name}"
     for ns in _VALID_SPREADSHEETML_NAMESPACES
@@ -264,10 +268,15 @@ class SourceRowLocation:
     physical_row_number: int
 
     def __post_init__(self) -> None:
-        if self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets:
+        if (
+            not isinstance(self.sheet_name, str)
+            or self.sheet_name not in RAW_CONTRACT_REGISTRY.sheets
+        ):
             raise XlsxStructureError(
                 REASON_STRUCTURE_UNKNOWN_LOCATION_SHEET,
-                sheet_name=self.sheet_name,
+                sheet_name=self.sheet_name
+                if isinstance(self.sheet_name, str)
+                else None,
             )
         if (
             isinstance(self.physical_row_number, bool)
@@ -291,7 +300,10 @@ class XlsxSourceReadResult:
     """Immutable result of read_xlsx_source_snapshot."""
 
     snapshot: ValidatedSourceWorkbookSnapshot
-    locations_by_uuid: MappingProxyType[uuid.UUID, SourceRowLocation]
+    locations_by_uuid: (
+        MappingProxyType[uuid.UUID, SourceRowLocation]
+        | Mapping[uuid.UUID, SourceRowLocation]
+    )
     version: str = XLSX_SOURCE_READER_VERSION
 
     def __post_init__(self) -> None:
@@ -304,23 +316,26 @@ class XlsxSourceReadResult:
         ):
             raise XlsxStructureError(REASON_STRUCTURE_INVALID_VERSION)
 
-        if isinstance(self.locations_by_uuid, (Mapping, MappingProxyType)):
-            object.__setattr__(
-                self,
-                "locations_by_uuid",
-                MappingProxyType(dict(self.locations_by_uuid)),
-            )
-        else:
+        if not isinstance(self.locations_by_uuid, (Mapping, MappingProxyType)):
             raise XlsxStructureError(REASON_STRUCTURE_INVALID_SNAPSHOT_TYPE)
 
+        try:
+            copied_locations = dict(self.locations_by_uuid)
+        except Exception as e:
+            raise XlsxStructureError(REASON_STRUCTURE_INVALID_SNAPSHOT_TYPE) from e
+
+        for k in copied_locations:
+            if not isinstance(k, uuid.UUID):
+                raise XlsxStructureError(REASON_STRUCTURE_LOCATION_IDENTITY_MISMATCH)
+
         snapshot_uuids = set(self.snapshot.all_rows_by_id.keys())
-        location_uuids = set(self.locations_by_uuid.keys())
+        location_uuids = set(copied_locations.keys())
 
         if snapshot_uuids != location_uuids:
             raise XlsxStructureError(REASON_STRUCTURE_LOCATION_IDENTITY_MISMATCH)
 
         seen_locations: set[tuple[str, int]] = set()
-        for u, loc in self.locations_by_uuid.items():
+        for u, loc in copied_locations.items():
             if not isinstance(loc, SourceRowLocation):
                 raise XlsxStructureError(REASON_STRUCTURE_INVALID_SNAPSHOT_TYPE)
 
@@ -339,6 +354,12 @@ class XlsxSourceReadResult:
                     physical_row_number=loc.physical_row_number,
                 )
             seen_locations.add(loc_key)
+
+        object.__setattr__(
+            self,
+            "locations_by_uuid",
+            MappingProxyType(copied_locations),
+        )
 
 
 def _get_secure_xml_parser() -> etree.XMLParser:
@@ -512,12 +533,28 @@ def _cached_parse_canonical_jalali_date(date_str: str) -> Any:
     return parse_canonical_jalali_date(date_str)
 
 
-@lru_cache(maxsize=16384)
+_PRECOMPUTED_COLUMNS: dict[str, int] = {}
+for _c1 in range(26):
+    _l1 = chr(ord("A") + _c1)
+    _PRECOMPUTED_COLUMNS[_l1] = _c1 + 1
+for _c1 in range(26):
+    _l1 = chr(ord("A") + _c1)
+    for _c2 in range(26):
+        _l2 = chr(ord("A") + _c2)
+        _PRECOMPUTED_COLUMNS[f"{_l1}{_l2}"] = (_c1 + 1) * 26 + (_c2 + 1)
+for _c1 in range(26):
+    _l1 = chr(ord("A") + _c1)
+    for _c2 in range(26):
+        _l2 = chr(ord("A") + _c2)
+        for _c3 in range(26):
+            _l3 = chr(ord("A") + _c3)
+            _col_num = (_c1 + 1) * 676 + (_c2 + 1) * 26 + (_c3 + 1)
+            if _col_num <= MAX_EXCEL_COLUMN_INDEX:
+                _PRECOMPUTED_COLUMNS[f"{_l1}{_l2}{_l3}"] = _col_num
+
+
 def _parse_col_and_num(col_letter: str) -> int:
-    col_num = 0
-    for char in col_letter:
-        col_num = col_num * 26 + (ord(char) - ord("A") + 1)
-    return col_num
+    return _PRECOMPUTED_COLUMNS.get(col_letter, 0)
 
 
 _CELL_REF_PARSER_REGEX = re.compile(r"^([A-Z]{1,3})([1-9][0-9]*)$")
@@ -525,13 +562,37 @@ _CELL_REF_PARSER_REGEX = re.compile(r"^([A-Z]{1,3})([1-9][0-9]*)$")
 
 def _parse_cell_ref(ref: str) -> tuple[str, int, int]:
     """Parse cell coordinate reference strictly using fullmatch regex (R5, A-03)."""
+    ref_len = len(ref)
+    if 2 <= ref_len <= 10:
+        i = 0
+        while i < ref_len and "A" <= ref[i] <= "Z":
+            i += 1
+        if 1 <= i <= 3 and i < ref_len and "1" <= ref[i] <= "9":
+            digits_ok = True
+            for j in range(i + 1, ref_len):
+                if not ("0" <= ref[j] <= "9"):
+                    digits_ok = False
+                    break
+            if digits_ok:
+                col_letter = ref[:i]
+                col_num = _PRECOMPUTED_COLUMNS.get(col_letter)
+                if col_num is not None:
+                    row_num = int(ref[i:])
+                    if row_num <= MAX_PHYSICAL_ROW:
+                        return col_letter, col_num, row_num
+                    raise XlsxStructureError(
+                        REASON_STRUCTURE_ROW_OUT_OF_BOUNDS,
+                        cell_ref=ref,
+                        physical_row_number=row_num,
+                    )
+
     m = _CELL_REF_PARSER_REGEX.fullmatch(ref)
     if m is None:
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
 
     col_letter = m.group(1)
-    col_num = _parse_col_and_num(col_letter)
-    if not (1 <= col_num <= MAX_EXCEL_COLUMN_INDEX):
+    col_num = _PRECOMPUTED_COLUMNS.get(col_letter)
+    if col_num is None or not (1 <= col_num <= MAX_EXCEL_COLUMN_INDEX):
         raise XlsxStructureError(REASON_STRUCTURE_INVALID_CELL_REF, cell_ref=ref)
 
     row_num = int(m.group(2))
@@ -763,17 +824,16 @@ def _discover_sheet_metadata_and_needed_sst(
     with zf.open(worksheet_path, "r") as stream:
         try:
             context = _secure_iterparse(stream, events=("end",))
-            root_checked = False
+            root_element: etree._Element | None = None
             for _, elem in context:
-                tree = elem.getroottree()
-                if not root_checked:
-                    root_checked = True
+                if root_element is None:
+                    tree = elem.getroottree()
                     if tree is not None and tree.docinfo.doctype:
                         raise XlsxStructureError(
                             REASON_STRUCTURE_MALFORMED_XML, sheet_name=sheet_name
                         )
-                    root = tree.getroot() if tree is not None else None
-                    if root is None or root.tag not in _TAG_WORKSHEET:
+                    root_element = tree.getroot() if tree is not None else None
+                    if root_element is None or root_element.tag not in _TAG_WORKSHEET:
                         raise XlsxStructureError(
                             REASON_STRUCTURE_INVALID_ROOT, sheet_name=sheet_name
                         )
@@ -785,24 +845,32 @@ def _discover_sheet_metadata_and_needed_sst(
                         or parent.tag not in _TAG_SHEET_DATA
                         or parent.getparent() is None
                         or parent.getparent().tag not in _TAG_WORKSHEET
-                        or parent.getparent() != elem.getroottree().getroot()
+                        or parent.getparent() is not root_element
                     ):
                         elem.clear()
-                        while elem.getprevious() is not None:
-                            del elem.getparent()[0]
+                        if parent is not None:
+                            while len(parent) > 0 and parent[0] is not elem:
+                                del parent[0]
                         continue
 
                     row_r = elem.get("r")
                     if not row_r or not _ROW_NUM_STRICT_REGEX.fullmatch(row_r):
                         elem.clear()
-                        while elem.getprevious() is not None:
-                            del elem.getparent()[0]
+                        if parent is not None:
+                            while len(parent) > 0 and parent[0] is not elem:
+                                del parent[0]
                         continue
 
                     physical_row_num = int(row_r)
                     row_cells: list[
                         tuple[int, str, str, str, str, XlsxCellError | None]
                     ] = []
+                    has_row_sst = False
+                    if has_sst and physical_row_num >= 2:
+                        for c_chk in elem:
+                            if c_chk.get("t") == "s":
+                                has_row_sst = True
+                                break
 
                     for c_elem in elem:
                         if c_elem.tag not in _TAG_C:
@@ -852,148 +920,175 @@ def _discover_sheet_metadata_and_needed_sst(
                                         raw_covered_by_col[c] = []
                                     raw_covered_by_col[c].append((min_r, max_r))
 
-                        if f_elem is None:
+                        if f_elem is None and (physical_row_num == 1 or has_row_sst):
                             cell_ref = c_elem.get("r")
                             if cell_ref:
-                                m = _CELL_REF_PARSER_REGEX.fullmatch(cell_ref)
-                                if m is not None:
-                                    col_let = m.group(1)
-                                    col_num = _parse_col_and_num(col_let)
-                                    if 1 <= col_num <= MAX_EXCEL_COLUMN_INDEX:
+                                col_let = ""
+                                col_num = 0
+                                c_row = -1
+                                ref_len = len(cell_ref)
+                                if 2 <= ref_len <= 10:
+                                    i = 0
+                                    while i < ref_len and "A" <= cell_ref[i] <= "Z":
+                                        i += 1
+                                    if (
+                                        1 <= i <= 3
+                                        and i < ref_len
+                                        and "1" <= cell_ref[i] <= "9"
+                                    ):
+                                        digits_ok = True
+                                        for j in range(i + 1, ref_len):
+                                            if not ("0" <= cell_ref[j] <= "9"):
+                                                digits_ok = False
+                                                break
+                                        if digits_ok:
+                                            col_let = cell_ref[:i]
+                                            col_num = _PRECOMPUTED_COLUMNS.get(
+                                                col_let, 0
+                                            )
+                                            c_row = int(cell_ref[i:])
+                                if not col_let:
+                                    m = _CELL_REF_PARSER_REGEX.fullmatch(cell_ref)
+                                    if m is not None:
+                                        col_let = m.group(1)
+                                        col_num = _PRECOMPUTED_COLUMNS.get(col_let, 0)
                                         c_row = int(m.group(2))
-                                        if c_row == physical_row_num:
-                                            c_t = (c_elem.get("t") or "").strip()
-                                            val_str = ""
-                                            exc: XlsxCellError | None = None
 
-                                            if c_t == "inlineStr":
-                                                is_el = (
-                                                    c_elem.find("{*}is")
-                                                    if has_children
-                                                    else None
-                                                )
-                                                if is_el is not None:
-                                                    try:
-                                                        val_str = (
-                                                            _extract_text_from_si_or_is(
-                                                                is_el,
-                                                                sheet_name=sheet_name,
-                                                                cell_ref=cell_ref,
-                                                                physical_row_number=(
-                                                                    physical_row_num
-                                                                ),
-                                                            )
-                                                        )
-                                                    except XlsxCellError as e:
-                                                        exc = e
-                                            elif c_t == "str":
-                                                v_el = (
-                                                    c_elem.find("{*}v")
-                                                    if has_children
-                                                    else None
-                                                )
-                                                if v_el is not None:
-                                                    try:
-                                                        v_raw = (
-                                                            _extract_t_or_v_leaf_text(
-                                                                v_el,
-                                                                sheet_name=sheet_name,
-                                                                cell_ref=cell_ref,
-                                                                physical_row_number=(
-                                                                    physical_row_num
-                                                                ),
-                                                            )
-                                                        )
-                                                        val_str = _decode_ooxml_escapes(
-                                                            v_raw,
+                                if (
+                                    1 <= col_num <= MAX_EXCEL_COLUMN_INDEX
+                                    and c_row == physical_row_num
+                                ):
+                                    is_candidate = (
+                                        col_let in req_headers
+                                        if physical_row_num == 1
+                                        else (
+                                            col_let in retained_cols
+                                            or col_let in activity_cols_set
+                                        )
+                                    )
+                                    if is_candidate:
+                                        c_t = (c_elem.get("t") or "").strip()
+                                        val_str = ""
+                                        exc: XlsxCellError | None = None
+
+                                        if c_t == "inlineStr":
+                                            is_el = (
+                                                c_elem.find("{*}is")
+                                                if has_children
+                                                else None
+                                            )
+                                            if is_el is not None:
+                                                try:
+                                                    val_str = (
+                                                        _extract_text_from_si_or_is(
+                                                            is_el,
                                                             sheet_name=sheet_name,
                                                             cell_ref=cell_ref,
-                                                            physical_row_number=physical_row_num,
+                                                            physical_row_number=(
+                                                                physical_row_num
+                                                            ),
                                                         )
-                                                    except XlsxCellError as e:
-                                                        exc = e
-                                            elif c_t == "s":
-                                                v_el = (
-                                                    c_elem.find("{*}v")
-                                                    if has_children
-                                                    else None
-                                                )
-                                                if v_el is not None:
-                                                    try:
-                                                        val_str = (
-                                                            _extract_t_or_v_leaf_text(
-                                                                v_el,
-                                                                sheet_name=sheet_name,
-                                                                cell_ref=cell_ref,
-                                                                physical_row_number=(
-                                                                    physical_row_num
-                                                                ),
-                                                            )
-                                                        )
-                                                    except XlsxCellError as e:
-                                                        exc = e
-                                                else:
-                                                    exc = XlsxCellError(
-                                                        REASON_CELL_INVALID_SST_INDEX,
+                                                    )
+                                                except XlsxCellError as e:
+                                                    exc = e
+                                        elif c_t == "str":
+                                            v_el = (
+                                                c_elem.find("{*}v")
+                                                if has_children
+                                                else None
+                                            )
+                                            if v_el is not None:
+                                                try:
+                                                    v_raw = _extract_t_or_v_leaf_text(
+                                                        v_el,
+                                                        sheet_name=sheet_name,
+                                                        cell_ref=cell_ref,
+                                                        physical_row_number=(
+                                                            physical_row_num
+                                                        ),
+                                                    )
+                                                    val_str = _decode_ooxml_escapes(
+                                                        v_raw,
                                                         sheet_name=sheet_name,
                                                         cell_ref=cell_ref,
                                                         physical_row_number=physical_row_num,
                                                     )
-                                            elif c_t in ("", "n"):
-                                                v_el = (
-                                                    c_elem.find("{*}v")
-                                                    if has_children
-                                                    else None
-                                                )
-                                                if v_el is not None:
-                                                    try:
-                                                        val_str = (
-                                                            _extract_t_or_v_leaf_text(
-                                                                v_el,
-                                                                sheet_name=sheet_name,
-                                                                cell_ref=cell_ref,
-                                                                physical_row_number=(
-                                                                    physical_row_num
-                                                                ),
-                                                            )
-                                                        )
-                                                    except XlsxCellError as e:
-                                                        exc = e
-
-                                            if physical_row_num == 1:
-                                                if col_let in req_headers:
-                                                    candidate_header_cells.append(
-                                                        (
-                                                            col_num,
-                                                            col_let,
-                                                            cell_ref,
-                                                            c_t,
-                                                            val_str,
-                                                            exc,
-                                                        )
+                                                except XlsxCellError as e:
+                                                    exc = e
+                                        elif c_t == "s":
+                                            v_el = (
+                                                c_elem.find("{*}v")
+                                                if has_children
+                                                else None
+                                            )
+                                            if v_el is not None:
+                                                try:
+                                                    val_str = _extract_t_or_v_leaf_text(
+                                                        v_el,
+                                                        sheet_name=sheet_name,
+                                                        cell_ref=cell_ref,
+                                                        physical_row_number=(
+                                                            physical_row_num
+                                                        ),
                                                     )
+                                                except XlsxCellError as e:
+                                                    exc = e
                                             else:
-                                                if (
-                                                    col_let in retained_cols
-                                                    or col_let in activity_cols_set
-                                                ):
-                                                    row_cells.append(
-                                                        (
-                                                            col_num,
-                                                            col_let,
-                                                            cell_ref,
-                                                            c_t,
-                                                            val_str,
-                                                            exc,
-                                                        )
+                                                exc = XlsxCellError(
+                                                    REASON_CELL_INVALID_SST_INDEX,
+                                                    sheet_name=sheet_name,
+                                                    cell_ref=cell_ref,
+                                                    physical_row_number=physical_row_num,
+                                                )
+                                        elif c_t in ("", "n"):
+                                            v_el = (
+                                                c_elem.find("{*}v")
+                                                if has_children
+                                                else None
+                                            )
+                                            if v_el is not None:
+                                                try:
+                                                    val_str = _extract_t_or_v_leaf_text(
+                                                        v_el,
+                                                        sheet_name=sheet_name,
+                                                        cell_ref=cell_ref,
+                                                        physical_row_number=(
+                                                            physical_row_num
+                                                        ),
                                                     )
+                                                except XlsxCellError as e:
+                                                    exc = e
+
+                                        if physical_row_num == 1:
+                                            candidate_header_cells.append(
+                                                (
+                                                    col_num,
+                                                    col_let,
+                                                    cell_ref,
+                                                    c_t,
+                                                    val_str,
+                                                    exc,
+                                                )
+                                            )
+                                        else:
+                                            row_cells.append(
+                                                (
+                                                    col_num,
+                                                    col_let,
+                                                    cell_ref,
+                                                    c_t,
+                                                    val_str,
+                                                    exc,
+                                                )
+                                            )
 
                     if physical_row_num >= 2 and row_cells:
                         candidate_data_rows.append((physical_row_num, row_cells))
 
                     elem.clear()
-                    while elem.getprevious() is not None:
-                        del elem.getparent()[0]
+                    if parent is not None:
+                        while len(parent) > 0 and parent[0] is not elem:
+                            del parent[0]
         except XlsxSourceReadError:
             raise
         except Exception as e:
@@ -1218,6 +1313,8 @@ def _decode_cell_literal_value(
     cell_ref = c_elem.get("r") or f"{col_letter}{physical_row_num}"
 
     # Verify that cell children are structurally valid and not conflicting (R1, R4-01)
+    v_elem: etree._Element | None = None
+    is_elem: etree._Element | None = None
     v_count = 0
     is_count = 0
     f_count = 0
@@ -1225,30 +1322,30 @@ def _decode_cell_literal_value(
         tag = ch.tag
         if not isinstance(tag, str):
             continue
-        if tag.startswith("{"):
-            idx = tag.find("}")
-            ns = tag[1:idx]
-            local = tag[idx + 1 :]
-        else:
-            ns = _NS_SPREADSHEETML_TRANS
-            local = tag
-
-        if ns not in _VALID_SPREADSHEETML_NAMESPACES:
-            raise XlsxStructureError(
-                REASON_STRUCTURE_INVALID_SHEET_HIERARCHY,
-                sheet_name=sheet_name,
-                cell_ref=cell_ref,
-                physical_row_number=physical_row_num,
-            )
-        if local == "v":
+        if tag in _TAG_V_SET:
             v_count += 1
-        elif local == "is":
+            v_elem = ch
+        elif tag in _TAG_IS_SET:
             is_count += 1
-        elif local == "f":
+            is_elem = ch
+        elif tag in _TAG_F_SET:
             f_count += 1
-        elif local == "extLst":
+        elif tag in _TAG_EXTLST_SET:
             pass
         else:
+            if tag.startswith("{"):
+                idx = tag.find("}")
+                ns = tag[1:idx]
+            else:
+                ns = _NS_SPREADSHEETML_TRANS
+
+            if ns not in _VALID_SPREADSHEETML_NAMESPACES:
+                raise XlsxStructureError(
+                    REASON_STRUCTURE_INVALID_SHEET_HIERARCHY,
+                    sheet_name=sheet_name,
+                    cell_ref=cell_ref,
+                    physical_row_number=physical_row_num,
+                )
             raise XlsxCellError(
                 REASON_CELL_UNKNOWN_TYPE,
                 sheet_name=sheet_name,
@@ -1299,7 +1396,6 @@ def _decode_cell_literal_value(
 
     # 1. Shared string (t="s")
     if cell_type == "s":
-        v_elem = c_elem.find("{*}v")
         if v_elem is None:
             raise XlsxCellError(
                 REASON_CELL_INVALID_SST_INDEX,
@@ -1332,7 +1428,6 @@ def _decode_cell_literal_value(
 
     # 2. Inline string (t="inlineStr")
     if cell_type == "inlineStr":
-        is_elem = c_elem.find("{*}is")
         if is_elem is None:
             return None
         return _extract_text_from_si_or_is(
@@ -1344,7 +1439,6 @@ def _decode_cell_literal_value(
 
     # 3. Direct string (t="str")
     if cell_type == "str":
-        v_elem = c_elem.find("{*}v")
         if v_elem is None:
             return None
         raw_val = _extract_t_or_v_leaf_text(
@@ -1361,7 +1455,6 @@ def _decode_cell_literal_value(
         )
 
     # 4. Numeric XML (t="n" or omitted)
-    v_elem = c_elem.find("{*}v")
     if v_elem is None:
         return None
     raw_num_str = _extract_t_or_v_leaf_text(
@@ -1490,18 +1583,16 @@ def _read_sheet_snapshot_and_locations(
     with zf.open(worksheet_path, "r") as stream:
         try:
             context = _secure_iterparse(stream, events=("end",))
-            doctype_checked = False
-
+            root_element: etree._Element | None = None
             for _, elem in context:
-                tree = elem.getroottree()
-                if not doctype_checked:
-                    doctype_checked = True
+                if root_element is None:
+                    tree = elem.getroottree()
                     if tree is not None and tree.docinfo.doctype:
                         raise XlsxStructureError(
                             REASON_STRUCTURE_MALFORMED_XML, sheet_name=sheet_name
                         )
-                    root = tree.getroot() if tree is not None else None
-                    if root is None or root.tag not in _TAG_WORKSHEET:
+                    root_element = tree.getroot() if tree is not None else None
+                    if root_element is None or root_element.tag not in _TAG_WORKSHEET:
                         raise XlsxStructureError(
                             REASON_STRUCTURE_INVALID_ROOT, sheet_name=sheet_name
                         )
@@ -1529,20 +1620,22 @@ def _read_sheet_snapshot_and_locations(
                 if elem.tag in _TAG_ROW:
                     if parent is None or parent.tag not in _TAG_SHEET_DATA:
                         elem.clear()
-                        while elem.getprevious() is not None:
-                            del elem.getparent()[0]
+                        if parent is not None:
+                            while parent and parent[0] is not elem:
+                                del parent[0]
                         continue
 
                     grandparent = parent.getparent()
                     if (
                         grandparent is None
                         or grandparent.tag not in _TAG_WORKSHEET
-                        or grandparent != elem.getroottree().getroot()
+                        or grandparent is not root_element
                     ):
                         # Nested in extension (e.g. extLst/ext/worksheet) -> ignore
                         elem.clear()
-                        while elem.getprevious() is not None:
-                            del elem.getparent()[0]
+                        if parent is not None:
+                            while len(parent) > 0 and parent[0] is not elem:
+                                del parent[0]
                         continue
 
                     row_r = elem.get("r")
@@ -1813,8 +1906,9 @@ def _read_sheet_snapshot_and_locations(
                             )
 
                     elem.clear()
-                    while elem.getprevious() is not None:
-                        del elem.getparent()[0]
+                    if parent is not None:
+                        while len(parent) > 0 and parent[0] is not elem:
+                            del parent[0]
         except XlsxSourceReadError:
             raise
         except Exception as e:

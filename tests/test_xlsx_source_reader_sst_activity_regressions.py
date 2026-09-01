@@ -43,10 +43,12 @@ from accounting_local_agent.xlsx_source_reader import (
     XlsxCellError,
     read_xlsx_source_snapshot,
 )
+from lxml import etree  # type: ignore[import-untyped]
 from test_xlsx_source_reader import (
     SyntheticXlsxBuilder,
     _make_uuid7,
     _sample_business_parties_row_data,
+    _sample_buy_sell_row_data,
     _sample_inventory_movements_row_data,
     _sample_receipts_payments_row_data,
 )
@@ -567,14 +569,18 @@ def test_rb_01_four_sheets_five_activity_modes_matrix(
     builder = SyntheticXlsxBuilder()
     builder.shared_strings = [str(u_target), "1403/05/15"]
 
-    # Retrieve column letters and roles from RAW_CONTRACT_REGISTRY
     sheet_contract = RAW_CONTRACT_REGISTRY.sheets[sheet_name]
     id_col_letter = sheet_contract.stable_id_column.column_letter
 
-    # The sole activity column for all 4 sheets is party_name_raw
-    act_col_letter = (
-        "C" if sheet_name in ("خرید-فروش", "دریافت-پرداخت", "ورود-خروج") else "B"
+    raw_col_by_letter = {c.column_letter: c for c in sheet_contract.raw_columns}
+    act_col_letter = sheet_contract.activity_columns[0]
+    act_col_field_name = raw_col_by_letter[act_col_letter].field_name
+
+    date_col = next(
+        (c for c in sheet_contract.raw_columns if c.field_name == "date_raw"),
+        None,
     )
+    date_col_letter = date_col.column_letter if date_col is not None else None
 
     row_data: dict[str, Any] = {
         "__row_num__": 2,
@@ -582,9 +588,8 @@ def test_rb_01_four_sheets_five_activity_modes_matrix(
         id_col_letter: {"t": "s", "v": "0"},
         act_col_letter: {"t": "inlineStr", "raw_inner": raw_inner_xml},
     }
-    has_date = any(col.field_name == "date_raw" for col in sheet_contract.raw_columns)
-    if has_date:
-        row_data["B"] = {"t": "s", "v": "1"}
+    if date_col_letter is not None:
+        row_data[date_col_letter] = {"t": "s", "v": "1"}
 
     # Build workbook with all 4 sheets present (3 empty sheets, 1 target sheet)
     for s_name in RAW_CONTRACT_REGISTRY.sheets:
@@ -602,8 +607,8 @@ def test_rb_01_four_sheets_five_activity_modes_matrix(
     expected_source_values: dict[str, Any] = {
         col.field_name: None for col in sheet_contract.raw_columns
     }
-    expected_source_values["party_name_raw"] = expected_val
-    if has_date:
+    expected_source_values[act_col_field_name] = expected_val
+    if date_col_letter is not None:
         expected_source_values["date_raw"] = "1403/05/15"
 
     exp_target_row = SourceRowInput(
@@ -1013,6 +1018,72 @@ def test_rb_03_invalid_sst_index_grammar_fails_with_coordinates(
     assert exc.value.physical_row_number == 2
 
 
+def test_rb_03_missing_sst_v_element_on_active_row_fails_and_inactive_row_ignored(
+    tmp_path: Path,
+) -> None:
+    """RB-03: Missing <v> in active SST fails; inactive row missing <v> is ignored."""
+    u_bf = _make_uuid7(b"0000000000000001")
+    u_dp = _make_uuid7(b"0000000000000002")
+    u_vk = _make_uuid7(b"0000000000000003")
+    u_lk = _make_uuid7(b"0000000000000004")
+
+    # 1. Active row where C2 has t="s" but no <v> element -> XlsxCellError
+    builder1 = SyntheticXlsxBuilder()
+    builder1.shared_strings = ["valid_string"]
+    row_active_missing_v = {
+        "__row_num__": 2,
+        "A": "2",
+        "B": "1403/05/15",
+        "C": {"t": "s", "raw_inner": ""},  # <c r="C2" t="s"/> without <v>
+        "Z": str(u_bf),
+    }
+    builder1.add_sheet_rows("خرید-فروش", [row_active_missing_v])
+    builder1.add_sheet_rows(
+        "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
+    )
+    builder1.add_sheet_rows(
+        "ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)]
+    )
+    builder1.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p1 = tmp_path / "missing_v_active.xlsx"
+    p1.write_bytes(builder1.build_bytes())
+
+    with pytest.raises(XlsxCellError) as exc1:
+        read_xlsx_source_snapshot(p1)
+    assert exc1.value.reason == REASON_CELL_INVALID_SST_INDEX
+    assert exc1.value.sheet_name == "خرید-فروش"
+    assert exc1.value.cell_ref == "C2"
+    assert exc1.value.physical_row_number == 2
+
+    # 2. Inactive tail row where Z3 has t="s" but no <v> element -> ignored cleanly
+    builder2 = SyntheticXlsxBuilder()
+    builder2.shared_strings = ["valid_string"]
+    row_inactive_missing_v = {
+        "__row_num__": 3,
+        "A": "3",
+        "B": "",
+        "C": "",
+        "Z": {"t": "s", "raw_inner": ""},  # Inactive row missing <v> on Z -> ignored
+    }
+    builder2.add_sheet_rows(
+        "خرید-فروش",
+        [_sample_buy_sell_row_data(u_bf, 2), row_inactive_missing_v],
+    )
+    builder2.add_sheet_rows(
+        "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
+    )
+    builder2.add_sheet_rows(
+        "ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)]
+    )
+    builder2.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
+    p2 = tmp_path / "missing_v_inactive.xlsx"
+    p2.write_bytes(builder2.build_bytes())
+
+    res2 = read_xlsx_source_snapshot(p2)
+    assert res2.snapshot.sheets["خرید-فروش"].row_count == 1
+    assert res2.snapshot.sheets["خرید-فروش"].rows[0].canonical_uuid == str(u_bf).lower()
+
+
 # ==============================================================================
 # RB-04: Equivalence, row/cell permutations, stream pass bounds & failure cleanup
 # ==============================================================================
@@ -1021,42 +1092,62 @@ def test_rb_03_invalid_sst_index_grammar_fails_with_coordinates(
 def test_rb_04_equivalent_representations_and_row_cell_permutation(
     tmp_path: Path,
 ) -> None:
-    """RB-04: Inline/direct/SST and permutations yield Oracle match."""
-    u_bf1 = _make_uuid7(b"0000000000000001")
-    u_bf2 = _make_uuid7(b"0000000000000002")
+    """RB-04: Test invariance under row/cell permutations and SST index remapping."""
+    u_bf_1 = _make_uuid7(b"0000000000000001")
+    u_bf_2 = _make_uuid7(b"0000000000000002")
     u_dp = _make_uuid7(b"0000000000000003")
     u_vk = _make_uuid7(b"0000000000000004")
     u_lk = _make_uuid7(b"0000000000000005")
 
-    # Workbook A: Standard layout, row 2 then row 3, inline and direct strings
+    # Workbook A: canonical ascending row order, inline strings and normal SST
     builder_a = SyntheticXlsxBuilder()
-    builder_a.shared_strings = [str(u_bf1), str(u_bf2)]
-
-    rows_bf_a = [
-        {
-            "__row_num__": 2,
-            "A": "2",
-            "B": "1403/05/15",
-            "C": "بازرگانی الف",
-            "D": "خرید",
-            "E": "طلای ۱۸ عیار",
-            "F": {"t": "", "v": "10.000"},
-            "G": {"t": "", "v": "1000.00"},
-            "Z": {"t": "s", "v": "0"},
-        },
-        {
-            "__row_num__": 3,
-            "A": "3",
-            "B": "1403/05/16",
-            "C": {"t": "str", "v": "بازرگانی ب"},
-            "D": "فروش",
-            "E": "طلای ۱۸ عیار",
-            "F": {"t": "", "v": "5.000"},
-            "G": {"t": "", "v": "2000.00"},
-            "Z": {"t": "s", "v": "1"},
-        },
+    builder_a.shared_strings = [
+        "1403/05/15",
+        "بازرگانی احمدی",
+        "خرید",
+        "طلای آبشده",
+        "12.34",
+        "1500000",
+        "0",
+        "فاکتور ۱",
+        str(u_bf_1),
+        "1403/05/16",
+        "فروشگاه زرین",
+        "فروش",
+        "سکه بهار آزادی",
+        "5",
+        "45000000",
+        "0",
+        "فاکتور ۲",
+        str(u_bf_2),
     ]
-    builder_a.add_sheet_rows("خرید-فروش", rows_bf_a)
+    row10_a = {
+        "__row_num__": 10,
+        "A": "10",
+        "B": {"t": "s", "v": "0"},
+        "C": {"t": "s", "v": "1"},
+        "D": {"t": "s", "v": "2"},
+        "E": {"t": "s", "v": "3"},
+        "F": {"t": "s", "v": "4"},
+        "G": {"t": "s", "v": "5"},
+        "H": {"t": "s", "v": "6"},
+        "J": {"t": "s", "v": "7"},
+        "Z": {"t": "s", "v": "8"},
+    }
+    row20_a = {
+        "__row_num__": 20,
+        "A": "20",
+        "B": {"t": "s", "v": "9"},
+        "C": {"t": "s", "v": "10"},
+        "D": {"t": "s", "v": "11"},
+        "E": {"t": "s", "v": "12"},
+        "F": {"t": "s", "v": "13"},
+        "G": {"t": "s", "v": "14"},
+        "H": {"t": "s", "v": "15"},
+        "J": {"t": "s", "v": "16"},
+        "Z": {"t": "s", "v": "17"},
+    }
+    builder_a.add_sheet_rows("خرید-فروش", [row10_a, row20_a])
     builder_a.add_sheet_rows(
         "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
     )
@@ -1064,53 +1155,65 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
         "ورود-خروج", [_sample_inventory_movements_row_data(u_vk, 2)]
     )
     builder_a.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_lk, 2)])
-
     pkg_a = tmp_path / "perm_a.xlsx"
     pkg_a.write_bytes(builder_a.build_bytes())
 
-    # Workbook B: Reordered XML row elements (row 20 before row 10),
-    # column elements reordered (Z before A), and SST strings remapped
+    # Workbook B: Inverted row order in XML (row 20 before row 10),
+    # inverted cell column order (Z before A), and completely remapped SST indices
     builder_b = SyntheticXlsxBuilder()
-    builder_b.shared_strings = [
-        "بازرگانی ب",  # SST 0
-        "فروش",  # SST 1
-        "بازرگانی الف",  # SST 2
-        "خرید",  # SST 3
-        "طلای ۱۸ عیار",  # SST 4
-        str(u_bf1),  # SST 5
-        str(u_bf2),  # SST 6
-        "1403/05/15",  # SST 7
-        "1403/05/16",  # SST 8
+    # SST in reversed order with dummy strings interleaved
+    sst_b = [
+        "DUMMY_UNUSED_0",
+        str(u_bf_2),  # 1 (was 17 in A)
+        "فاکتور ۲",  # 2 (was 16 in A)
+        "0",  # 3 (was 6 and 15 in A)
+        "45000000",  # 4 (was 14 in A)
+        "5",  # 5 (was 13 in A)
+        "سکه بهار آزادی",  # 6 (was 12 in A)
+        "فروش",  # 7 (was 11 in A)
+        "فروشگاه زرین",  # 8 (was 10 in A)
+        "1403/05/16",  # 9 (was 9 in A)
+        str(u_bf_1),  # 10 (was 8 in A)
+        "فاکتور ۱",  # 11 (was 7 in A)
+        "1500000",  # 12 (was 5 in A)
+        "12.34",  # 13 (was 4 in A)
+        "طلای آبشده",  # 14 (was 3 in A)
+        "خرید",  # 15 (was 2 in A)
+        "بازرگانی احمدی",  # 16 (was 1 in A)
+        "1403/05/15",  # 17 (was 0 in A)
+        "DUMMY_UNUSED_1",
     ]
+    builder_b.shared_strings = sst_b
 
-    # Order rows in XML: row 20 (u_bf2) placed BEFORE row 10 (u_bf1)
-    rows_bf_b = [
-        # Physical row 20: corresponds to u_bf2
-        {
-            "__row_num__": 20,
-            "Z": {"t": "s", "v": "6"},
-            "G": {"t": "", "v": "2000.00"},
-            "F": {"t": "", "v": "5.000"},
-            "E": {"t": "s", "v": "4"},
-            "D": {"t": "s", "v": "1"},
-            "C": {"t": "s", "v": "0"},
-            "B": {"t": "s", "v": "8"},
-            "A": "3",
-        },
-        # Physical row 10: corresponds to u_bf1
-        {
-            "__row_num__": 10,
-            "Z": {"t": "s", "v": "5"},
-            "G": {"t": "", "v": "1000.00"},
-            "F": {"t": "", "v": "10.000"},
-            "E": {"t": "s", "v": "4"},
-            "D": {"t": "s", "v": "3"},
-            "C": {"t": "s", "v": "2"},
-            "B": {"t": "s", "v": "7"},
-            "A": "2",
-        },
-    ]
-    builder_b.add_sheet_rows("خرید-فروش", rows_bf_b)
+    # Cells in reverse column order: Z, J, H, G, F, E, D, C, B, A
+    row20_b = {
+        "__row_num__": 20,
+        "Z": {"t": "s", "v": "1"},
+        "J": {"t": "s", "v": "2"},
+        "H": {"t": "s", "v": "3"},
+        "G": {"t": "s", "v": "4"},
+        "F": {"t": "s", "v": "5"},
+        "E": {"t": "s", "v": "6"},
+        "D": {"t": "s", "v": "7"},
+        "C": {"t": "s", "v": "8"},
+        "B": {"t": "s", "v": "9"},
+        "A": "20",
+    }
+    row10_b = {
+        "__row_num__": 10,
+        "Z": {"t": "s", "v": "10"},
+        "J": {"t": "s", "v": "11"},
+        "H": {"t": "s", "v": "3"},
+        "G": {"t": "s", "v": "12"},
+        "F": {"t": "s", "v": "13"},
+        "E": {"t": "s", "v": "14"},
+        "D": {"t": "s", "v": "15"},
+        "C": {"t": "s", "v": "16"},
+        "B": {"t": "s", "v": "17"},
+        "A": "10",
+    }
+    # Add row 20 BEFORE row 10 in sheetData
+    builder_b.add_sheet_rows("خرید-فروش", [row20_b, row10_b])
     builder_b.add_sheet_rows(
         "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_dp, 2)]
     )
@@ -1123,7 +1226,7 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
     pkg_b_bytes = builder_b.build_bytes()
     pkg_b.write_bytes(pkg_b_bytes)
 
-    # Assert XML structure of pkg_b has inverted row order and column order
+    # Assert XML of pkg_b has inverted row order, col order and exact SST remapping
     with zipfile.ZipFile(pkg_b, "r") as zf_check:
         sheet1_xml = zf_check.read("xl/worksheets/sheet1.xml").decode("utf-8")
         pos_r20 = sheet1_xml.find('<row r="20"')
@@ -1138,6 +1241,21 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
         assert pos_z20 < pos_a20, (
             "Column Z20 must appear before A20 in XML for permutation test"
         )
+
+        sst_tree = etree.fromstring(
+            zf_check.read("xl/sharedStrings.xml"),
+            parser=xlsx_source_reader._get_secure_xml_parser(),
+        )
+        si_elements = [
+            elem for elem in sst_tree if elem.tag in xlsx_source_reader._TAG_SI
+        ]
+        assert len(si_elements) == len(sst_b)
+        for idx, si_el in enumerate(si_elements):
+            text_extracted = xlsx_source_reader._extract_text_from_si_or_is(
+                si_el,
+                sheet_name="[sharedStrings.xml]",
+            )
+            assert text_extracted == sst_b[idx]
 
     # Verify read-only archive integrity before and after read
     stat_before = pkg_a.stat()
@@ -1160,29 +1278,29 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
 
     # Build independent Expected snapshot
     exp_bf1 = SourceRowInput(
-        stable_id=u_bf1,
+        stable_id=u_bf_1,
         source_values={
             "date_raw": "1403/05/15",
-            "party_name_raw": "بازرگانی الف",
+            "party_name_raw": "بازرگانی احمدی",
             "transaction_type_raw": "خرید",
-            "item_name_raw": "طلای ۱۸ عیار",
-            "quantity_raw": Decimal("10.000"),
-            "unit_price_toman_raw": Decimal("1000.00"),
-            "discount_toman_raw": None,
-            "notes_raw": None,
+            "item_name_raw": "طلای آبشده",
+            "quantity_raw": "12.34",
+            "unit_price_toman_raw": "1500000",
+            "discount_toman_raw": "0",
+            "notes_raw": "فاکتور ۱",
         },
     )
     exp_bf2 = SourceRowInput(
-        stable_id=u_bf2,
+        stable_id=u_bf_2,
         source_values={
             "date_raw": "1403/05/16",
-            "party_name_raw": "بازرگانی ب",
+            "party_name_raw": "فروشگاه زرین",
             "transaction_type_raw": "فروش",
-            "item_name_raw": "طلای ۱۸ عیار",
-            "quantity_raw": Decimal("5.000"),
-            "unit_price_toman_raw": Decimal("2000.00"),
-            "discount_toman_raw": None,
-            "notes_raw": None,
+            "item_name_raw": "سکه بهار آزادی",
+            "quantity_raw": "5",
+            "unit_price_toman_raw": "45000000",
+            "discount_toman_raw": "0",
+            "notes_raw": "فاکتور ۲",
         },
     )
     exp_dp, exp_vk, exp_lk = _make_sample_expected_rows_3_sheets(u_dp, u_vk, u_lk)
@@ -1195,8 +1313,8 @@ def test_rb_04_equivalent_representations_and_row_cell_permutation(
         ]
     )
 
-    exp_loc_a = {u_bf1: 2, u_bf2: 3, u_dp: 2, u_vk: 2, u_lk: 2}
-    exp_loc_b = {u_bf1: 10, u_bf2: 20, u_dp: 2, u_vk: 2, u_lk: 2}
+    exp_loc_a = {u_bf_1: 10, u_bf_2: 20, u_dp: 2, u_vk: 2, u_lk: 2}
+    exp_loc_b = {u_bf_1: 10, u_bf_2: 20, u_dp: 2, u_vk: 2, u_lk: 2}
 
     # In expected snapshot, rows are sorted deterministically by stable_id
     assert res_a.snapshot == res_b.snapshot
@@ -1266,6 +1384,62 @@ def test_rb_04_read_only_integrity_and_cleanup_on_failure(
     pkg.rename(renamed_pkg)
     assert renamed_pkg.is_file()
     renamed_pkg.unlink()
+
+
+def test_rb_04_raw_text_numeric_appearance_leading_zeros_and_spaces(
+    tmp_path: Path,
+) -> None:
+    """RB-04: Raw text with leading zeros and whitespace preserves exact str."""
+    u_lk = _make_uuid7(b"0000000000000001")
+    builder = SyntheticXlsxBuilder()
+    synthetic_numeric_text = " 000123 "
+
+    row_data = {
+        "__row_num__": 2,
+        "A": "2",
+        "B": "کاسب نمونه",
+        "C": {
+            "t": "inlineStr",
+            "raw_inner": f"<is><t>{synthetic_numeric_text}</t></is>",
+        },
+        "D": str(u_lk),
+    }
+    builder.add_sheet_rows("لیست کسبه", [row_data])
+    builder.add_sheet_rows("خرید-فروش", [])
+    builder.add_sheet_rows("دریافت-پرداخت", [])
+    builder.add_sheet_rows("ورود-خروج", [])
+
+    pkg = tmp_path / "leading_zeros_spaces.xlsx"
+    pkg.write_bytes(builder.build_bytes())
+
+    res = read_xlsx_source_snapshot(pkg)
+    lk_row = res.snapshot.sheets["لیست کسبه"].rows[0]
+
+    # Assert exact type, value, codepoints and hash
+    actual_val = lk_row.raw_values["phone_number_raw"]
+    assert isinstance(actual_val, str)
+    assert type(actual_val) is str
+    assert actual_val == " 000123 "
+    assert actual_val.startswith(" ") and actual_val.endswith(" ")
+    assert actual_val[1:4] == "000"
+
+    # Verify independent Oracle snapshot and WP-03 hash matching
+    exp_lk = SourceRowInput(
+        stable_id=u_lk,
+        source_values={
+            "party_name_raw": "کاسب نمونه",
+            "phone_number_raw": " 000123 ",
+        },
+    )
+    exp_snapshot = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[]),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=[]),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=[exp_lk]),
+        ]
+    )
+    _assert_snapshot_and_locations(res, exp_snapshot, {u_lk: 2})
 
 
 @pytest.mark.parametrize("active_n", [1, 200])
