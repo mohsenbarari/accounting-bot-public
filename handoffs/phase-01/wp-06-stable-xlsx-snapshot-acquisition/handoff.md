@@ -30,7 +30,7 @@
   - `8a6b75d` — `docs(handoff): update WP-06 handoff with Codex review round 5 evidence`
   - `987d404` — `docs(handoff): finalize exact commit list for round 5 handoff`
   - `d3de83e` — `fix(local_agent): address Codex review round 6 R6-01 to R6-05`
-  - `(pending)` — `docs(handoff): update WP-06 handoff with Codex review round 6 evidence`
+  - `6e09c9d` — `docs(handoff): update WP-06 handoff with Codex review round 6 evidence`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
