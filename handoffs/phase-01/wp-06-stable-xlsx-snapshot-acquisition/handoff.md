@@ -34,16 +34,19 @@
   - `3030ecc` — `docs(handoff): finalize exact commit list for round 6 handoff`
   - `ef3c1b7` — `fix(local_agent): address Codex review round 7 R7-01 to R7-05`
   - `09b0299` — `docs(handoff): update WP-06 handoff with Codex review round 7 evidence`
+  - `d10492b` — `docs(handoff): finalize exact commit list for round 7 handoff`
+  - `a935c08` — `fix(local_agent,tests): address Codex review round 8 R8-01 to R8-04`
+  - `(pending)` — `docs(handoff): update WP-06 handoff with Codex review round 8 evidence`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
 
 Delivers bounded, atomic XLSX snapshot acquisition, exclusive leased consumer access, post-lease integrity verification, and namespace-safe cleanup lifecycle under ADR-0009 and WP-06.
-Addresses all Round 7 Codex review remediation directives (R7-01 to R7-05):
-1. **R7-01 (Object-Anchored Ownership):** Directory ownership token is captured immediately upon creation via descriptor anchor / initial stat; retries on path stat are validated against this immutable anchor, preventing adoption of foreign directories.
-2. **R7-02 (Namespace-Safe Atomic Quarantine Cleanup):** Replaced TOCTOU check-then-delete patterns with atomic quarantine rename followed by handle verification and unlinking; unproven artifacts are safely preserved or restored, never deleted via wildcards or recursive rm.
-3. **R7-03 & R7-04 (Four Blocking Race Tests & Rigorous Oracles):** Implemented all 4 blocking race tests and refined oracles to use real unlinks and simulated identity collision naming.
-4. **R7-05 (Technical Integrity):** Preserved two-platform POSIX and Windows support using Python standard library without external dependencies.
+Addresses all Round 8 Codex review remediation directives (R8-01 to R8-04):
+1. **R8-01 (Fail-Closed Descriptor/Handle Anchor):** Completely removed `lstat` fallback on anchor establishment; failures immediately reject snapshot yielding and report typed storage errors while preserving displaced owned and foreign directories.
+2. **R8-02 (Atomic No-Replace Quarantine & Restore):** Replaced direct `os.replace` with `_atomic_move_no_replace` implementing kernel-level fail-if-exists semantics across platforms, guaranteeing that foreign artifacts at quarantine or restore destinations are never overwritten.
+3. **R8-03 (Safe Typed Error Messages):** Eliminated all raw exception string interpolations and path leaks from `XlsxSnapshot*Error` messages; raw exceptions are preserved solely through structured exception chaining (`__cause__`).
+4. **R8-04 (Independent Regression Oracles):** Verified all 9 explicit boolean invariants.
 
 ## Roadmap traceability
 
@@ -54,8 +57,8 @@ Addresses all Round 7 Codex review remediation directives (R7-01 to R7-05):
 ## Changed files
 
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported `DEFAULT_COPY_CHUNK_SIZE`, `XLSX_SNAPSHOT_ACQUISITION_VERSION`, `StableXlsxSnapshot`, error taxonomy classes, and `open_stable_xlsx_snapshot`.
-- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Implemented versioned context manager with Round 7 review fixes (R7-01 to R7-05).
-- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 56 tests covering SA-01 to SA-14 and all 13 Round 7 oracles.
+- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Implemented versioned context manager with Round 8 review fixes (R8-01 to R8-04).
+- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 59 tests covering SA-01 to SA-14 and all 16 regression oracles.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/acceptance-matrix.md`: Detailed requirement acceptance matrix.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/test-results.txt`: Verbatim command outputs, 3-run benchmark logs, and quality scan records.
@@ -70,16 +73,16 @@ Addresses all Round 7 Codex review remediation directives (R7-01 to R7-05):
 2. `uv run ruff check .` (Exit 0, all checks passed)
 3. `uv run mypy .` (Exit 0, 23 source files checked)
 4. `uv run mypy --platform win32 .` (Exit 0, 23 source files checked)
-5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 56 passed in 13.38s)
-6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 10.75s, 10.27s, 10.27s duration; 59.20 MiB, 58.97 MiB, 59.18 MiB peak RSS)
-7. `uv run pytest -v` (Exit 0, 256 passed in 33.83s)
+5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 59 passed in 13.55s)
+6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 10.47s, 10.77s, 10.69s duration; 59.31 MiB, 59.33 MiB, 59.32 MiB peak RSS)
+7. `uv run pytest -v` (Exit 0, 259 passed in 33.22s)
 8. `git ls-files` check (Exit 0, 92 tracked files, 0 prohibited files)
 9. `git grep` sensitive patterns check (Exit 1 failure-on-match -> Exit 0 clean)
 
 ## Tests and evidence
 
-- Full repository suite: 256 tests passing cleanly (zero failures).
-- SA-01 to SA-14 coverage: 56 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
+- Full repository suite: 259 tests passing cleanly (zero failures).
+- SA-01 to SA-14 coverage: 59 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
 - Verbatim execution logs and metrics recorded in `test-results.txt`.
 
 ## Assumptions and open items

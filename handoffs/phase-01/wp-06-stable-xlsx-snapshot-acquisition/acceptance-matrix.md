@@ -7,11 +7,11 @@
 - **Component Version:** `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
 - **Baseline Commit:** `bc085acd8852e2293fdfcb786a7694fe96e93407`
 - **Current Branch:** `antigravity/phase-01-stable-xlsx-snapshot-acquisition`
-- **Remediation Scope:** Codex Round 7 Review Remediation (R7-01 to R7-05)
+- **Remediation Scope:** Codex Round 8 Review Remediation (R8-01 to R8-04)
 
 ---
 
-## Detailed Requirement Verification (SA-01 to SA-14 & R7-01 to R7-05)
+## Detailed Requirement Verification (SA-01 to SA-14 & R8-01 to R8-04)
 
 | Item ID | Requirement / Scope | Status | Verification & Evidence |
 | :--- | :--- | :--- | :--- |
@@ -32,21 +32,20 @@
 
 ---
 
-## Round 7 Refinements & Verified Deterministic Oracles (R7-01 to R7-05)
+## Round 8 Refinements & Verified Deterministic Oracles (R8-01 to R8-04)
 
-1. **Test 1 — First Lease lstat Race with Displaced Owned and Foreign Dir (R7-03):** After mkdir, moving owned dir to displaced path and creating foreign empty dir at original name prevents adoption, rejects snapshot delivery (`XlsxSnapshotStorageError`), preserves both foreign dir and displaced owned dir, and reports visible `XlsxSnapshotCleanupError`. Verified in `test_r7_01_first_lease_lstat_race_displaced_owned_and_foreign_oracle`.
-2. **Test 2 — Final Replacement Inside Unlink Operation (R7-03):** Replacing final file with foreign file during unlink operation preserves foreign file on disk and reports visible `XlsxSnapshotCleanupError`. Verified in `test_r7_02_final_unlink_race_with_foreign_replacement_oracle`.
-3. **Test 3 — Part Replacement Inside Unlink Operation in Failure Path (R7-03):** Replacing part file with foreign file during unlink in copy failure path preserves foreign file on disk. Verified in `test_r7_03_part_unlink_race_with_foreign_replacement_oracle`.
-4. **Test 4 — Lease Directory Replacement Inside rmdir Operation (R7-03):** Replacing lease dir with foreign directory during rmdir operation preserves foreign directory on disk. Verified in `test_r7_04_lease_rmdir_race_with_foreign_replacement_oracle`.
-5. **Test 5 — Candidate fstat Transient Failure Recovery (R7-03):** Single transient `os.fstat(dst_fd)` failure recovers on handle retry without leaking FDs (`FD delta = []`) and cleans up root (`snapshot_root contents = []`). Verified in `test_r7_05_candidate_fstat_transient_failure_no_replacement_oracle`.
-6. **Test 6 — Candidate fstat Failure with Path Replacement (R7-03 & R7-04):** Persistent `fstat` failure with real path replacement preserves foreign candidate file on disk and reports visible `XlsxSnapshotCleanupError`. Verified in `test_r7_06_candidate_fstat_failure_with_path_replacement_oracle`.
-7. **Test 7 — First Lease lstat Transient Failure Recovery (R7-03):** Single transient `lease_dir.lstat()` failure recovers on retry via anchor verification and cleans up directory (`snapshot_root contents = []`). Verified in `test_r7_07_first_lease_lstat_transient_failure_no_replacement_oracle`.
-8. **Test 8 — Partial POSIX Promotion Cleanup without Replacement (R7-03):** When `os.link(part, final)` succeeds and `part.unlink()` fails, cleanup removes both `part` and `final` using token carried in structured exception (`snapshot_root contents = []`). Verified in `test_r7_08_partial_posix_promotion_cleanup_without_replacement_oracle`.
-9. **Test 9 — Partial POSIX Promotion with Byte-Identical Foreign Final (R7-03):** Replacing `final` after partial promotion with a byte-identical foreign file preserves the foreign file on disk (ownership token is never constructed from post-failure lstat) and reports `XlsxSnapshotCleanupError`. Verified in `test_r7_09_partial_posix_promotion_with_byte_identical_foreign_final_oracle`.
-10. **Test 10 — Real Lease Exit Race Between lstat and Open (R7-03):** Deleting final file precisely at `between_lease_lstat_and_open` maps to `XlsxSnapshotIntegrityError` without top-level `XlsxSnapshotStorageError` and cleans up root. Verified in `test_r7_10_real_lease_exit_race_between_lstat_and_open_oracle`.
-11. **Test 11 — Simulated Identity Collision Protection (R7-04):** Simulated identity collision with conservative verification on handle preserves foreign file and reports `XlsxSnapshotCleanupError`. Verified in `test_r7_11_simulated_identity_collision_protection_oracle`.
-12. **Test 12 — Candidate mtime_ns = 0 in Context (R7-03):** Candidate with real `mtime_ns = 0` verified in context (`snap.snapshot_path.stat().st_mtime_ns == 0`) and subsequent mutations raise `XlsxSnapshotIntegrityError`. Verified in `test_r7_12_real_mtime_zero_integrity_oracle`.
-13. **Test 13 — Real Identity Unavailable Provider Fallback (R7-03):** Provider returning `(None, None)` executes all operations cleanly and removes artifacts on normal completion. Verified in `test_r7_13_real_identity_unavailable_provider_fallback_oracle`.
+1. **R8-01: Fail-Closed Descriptor/Handle Anchor (`test_r8_01`, `test_r8_02`):**
+   - Fallback constructing ownership from `lease_dir.lstat()` upon `os.open`/`os.fstat` failure completely removed.
+   - If descriptor/handle anchor cannot be established, snapshot is never yielded (`ANCHOR_FAILURE_YIELDED = False`), `XlsxSnapshotStorageError` is raised, displaced owned dir is preserved (`ANCHOR_DISPLACED_OWNED_SURVIVED = True`), foreign dir is untouched and preserved (`ANCHOR_FOREIGN_SURVIVED = True`), and no write occurs into foreign directory.
+2. **R8-02: Atomic No-Replace Quarantine and Restore (`test_r8_03` to `test_r8_06`):**
+   - Replaced direct `os.replace` with `_atomic_move_no_replace` helper implementing kernel-level fail-if-exists semantics (`os.link` on POSIX, `renameat2(RENAME_NOREPLACE)` on Linux, `os.rename` on Windows).
+   - Pre-existing foreign files at target `qpart` or `qfinal` destinations are NEVER overwritten (`QPART_FOREIGN_OVERWRITTEN = False`, `QFINAL_FOREIGN_OVERWRITTEN = False`).
+   - Pre-existing foreign directories at target `qdir` destination are NEVER overwritten (`QDIR_FOREIGN_OVERWRITTEN = False`).
+   - Foreign files created at original path during restore are NEVER overwritten (`RESTORE_FOREIGN_OVERWRITTEN = False`).
+3. **R8-03: Safe Typed Error Messages (`test_r8_07`):**
+   - Static typed error strings without path leakage (`TYPED_ERROR_ABSOLUTE_PATH_LEAK = False`).
+   - No raw `OSError` or exception strings interpolated in `str(e)` or `repr(e)` (`TYPED_ERROR_RAW_OSERROR_INTERPOLATED = False`).
+   - Underlying raw exceptions chained strictly via `__cause__` / `from exc`.
 
 ---
 
