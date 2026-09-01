@@ -11,31 +11,35 @@
   - `84d6cfa` — `feat(local_agent): implement stable XLSX snapshot acquisition and cleanup (WP-06)`
   - `6b87a51` — `docs(handoff): add WP-06 stable XLSX snapshot acquisition handoff package`
   - `d47a56e` — `fix(local_agent): address Codex review R1-R7 on snapshot acquisition`
+  - `2547d14` — `docs(handoff): update WP-06 handoff with Codex review R1-R7 evidence`
+  - `d6358d9` — `style(tests): format snapshot acquisition tests to 88 char limit`
+  - `3f33c16` — `fix(local_agent): address Codex review round 2 R2-01 to R2-07`
+  - `(pending)` — `docs(handoff): update WP-06 handoff with Codex review round 2 evidence`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
 
 Delivers bounded, atomic XLSX snapshot acquisition, exclusive leased consumer access, post-lease integrity verification, and cleanup lifecycle under ADR-0009 and WP-06.
-Addresses all Round 1 Codex review remediation directives (R1–R7):
-1. **R1:** Elimination of `ZipFile.testzip()` and member decoding during acquisition; isolated Central Directory structure and `[Content_Types].xml` verification.
-2. **R2:** Elimination of swallowed `OSError` on flush/fsync; strict typed taxonomy mapping storage and I/O faults to non-retryable `XlsxSnapshotStorageError` and `XlsxSnapshotIntegrityError`.
-3. **R3:** Full retention of coincident acquisition/consumer, integrity, and cleanup errors via native Python 3.13 `ExceptionGroup` and `BaseExceptionGroup`.
-4. **R4:** Private POSIX permissions (`0700` lease directory, `0600` files) and immediate pre-open rejection of non-regular files (FIFO, socket, character/block device, directory) with `XlsxSourcePolicyError`.
-5. **R5:** True atomic replacement detection via recorded file identity (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`) and post-lease checks catching `os.replace` (even with identical content) and symlink swaps.
-6. **R6:** Sanitized generic error messages and `repr()` strings preventing leakage of confidential file names, paths, or raw OS error text.
-7. **R7:** Expanded test evidence for locked sources, bounded streams (`_copy_chunk_size`, no `read(-1)`), multi-concurrent acquisitions, and full 4-sheet workbook parity against independent WP-04 / WP-03 oracle.
+Addresses all Round 2 Codex review remediation directives (R2-01 to R2-08):
+1. **R2-01:** Identity tracking of lease directory, candidate, and final; candidate symlink rejected without touching external targets; pre-existing final snapshot is never overwritten or deleted; cleanup unlinks strictly matching artifacts; unexpected replacements left untouched for forensics.
+2. **R2-02:** Initial symlinks rejected with `XlsxSourcePolicyError`; conversion of source to symlink at any race point aborts with `XlsxSourceNotReadyError`; POSIX `O_NOFOLLOW` and handle/path identity verification prevent following symlinks.
+3. **R2-03:** Cross-platform st_dev/st_ino/mtime/size checks detect `os.replace` during lease even with 100% identical content; replacement file is preserved on disk with `XlsxSnapshotIntegrityError` and `XlsxSnapshotCleanupError`.
+4. **R2-04:** Source read errors mapped to `XlsxSourceNotReadyError` (`retryable=True`); candidate write, short-write, flush, fsync, and promotion errors mapped to `XlsxSnapshotStorageError` (`retryable=False`); underlying causes preserved in chained exceptions.
+5. **R2-05:** `_cleanup_managed_artifacts` preserves all underlying `OSError` instances as causes in `XlsxSnapshotCleanupError`; multi-exception combinations (acquisition+cleanup, consumer+cleanup, consumer+integrity+cleanup) verified with group flattening.
+6. **R2-06:** `open_stable_xlsx_snapshot` requires `Path` instances for `source_path` and `snapshot_root`; generic sanitized messages ensure secret filenames and directories are never leaked.
+7. **R2-07:** Multi-concurrent acquisitions verify SHA parity on identical sources, distinct SHAs on different sources, and independent early exit; full 4-sheet workbook equality verified against independent WP-04 / WP-03 oracle.
 
 ## Roadmap traceability
 
-- **Decisions Implemented:** O-31 (Isolated snapshot lifecycle), O-53 (Two observations before copy), O-71 (Bounded memory & linear copy).
+- **Decisions Implemented:** O-31 (Isolated snapshot lifecycle), O-53 (Windows Local Agent stack / execution architecture), O-71 (Bounded memory & linear copy).
+- **Roadmap Section 5.2 Step 1:** Implements Step 1 (Safe snapshot acquisition). Step 3 is NOT implemented by WP-06 and remains reserved for subsequent integration packages.
 - **Evidence Status:** Recorded under `test-results.txt` and `acceptance-matrix.md`.
-- **Roadmap Section 5.2 Step 3:** Prepared and enabled for Reader / Local Agent integration; WP-06 scope is strictly bounded snapshot acquisition adapter.
 
 ## Changed files
 
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported `DEFAULT_COPY_CHUNK_SIZE`, `XLSX_SNAPSHOT_ACQUISITION_VERSION`, `StableXlsxSnapshot`, error taxonomy classes, and `open_stable_xlsx_snapshot`.
-- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Implemented versioned context manager with R1–R6 review fixes.
-- `tests/test_xlsx_snapshot_acquisition.py`: Comprehensive test suite containing 39 tests covering SA-01 to SA-14 and R1–R7 evidence.
+- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Implemented versioned context manager with Round 2 review fixes (R2-01 to R2-06).
+- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 43 tests covering SA-01 to SA-14 and R2-01 to R2-07 evidence.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/acceptance-matrix.md`: Detailed requirement acceptance matrix.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/test-results.txt`: Verbatim command outputs, 3-run benchmark logs, and quality scan records.
@@ -50,16 +54,16 @@ Addresses all Round 1 Codex review remediation directives (R1–R7):
 2. `uv run ruff check .` (Exit 0, all checks passed)
 3. `uv run mypy .` (Exit 0, 23 source files checked)
 4. `uv run mypy --platform win32 .` (Exit 0, 23 source files checked)
-5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 39 passed in 13.16s)
-6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 10.83s, 10.00s, 10.31s duration; 58.68 MiB, 59.03 MiB, 58.77 MiB peak RSS)
-7. `uv run pytest -v` (Exit 0, 239 passed in 34.80s)
+5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 43 passed in 12.91s)
+6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 10.82s, 10.72s, 10.67s duration; 59.26 MiB, 58.96 MiB, 59.07 MiB peak RSS)
+7. `uv run pytest -v` (Exit 0, 243 passed in 34.13s)
 8. `git ls-files` check (Exit 0, 92 tracked files, 0 prohibited files)
 9. `git grep` sensitive patterns check (Exit 1 failure-on-match -> Exit 0 clean)
 
 ## Tests and evidence
 
-- Full repository suite: 239 tests passing cleanly.
-- SA-01 to SA-14 coverage: 39 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
+- Full repository suite: 243 tests passing cleanly (zero failures).
+- SA-01 to SA-14 coverage: 43 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
 - Verbatim execution logs and metrics recorded in `test-results.txt`.
 
 ## Assumptions and open items
