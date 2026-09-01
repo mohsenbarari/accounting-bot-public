@@ -1,27 +1,28 @@
 WORK PACKAGE: WP-06: Stable XLSX snapshot acquisition and cleanup
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-01T13:16:00Z
+RECORDED AT UTC: 2026-09-01T13:48:00Z
 
-# Test Results: WP-06 Stable XLSX Snapshot Acquisition and Cleanup
+# Test Results: WP-06 Stable XLSX Snapshot Acquisition and Cleanup (Codex Review R1–R7 Remediation)
 
 ## FINAL SUMMARY
 
-- Status: ALL PASS (Linux & Windows Mypy Clean) / WP-06 Implementation and Evidence Delivery
+- Status: ALL PASS (Linux & Windows Mypy Clean) / WP-06 Remediation & Evidence Delivery
 - Test suites:
   - Base architecture, contracts & domain tests: 89 passed
   - Reader suite (tests/test_xlsx_source_reader.py): 45 passed
   - Raw contract regressions (tests/test_xlsx_source_reader_raw_contract_regressions.py): 7 passed
   - SST activity regressions (tests/test_xlsx_source_reader_sst_activity_regressions.py): 59 passed
-  - Snapshot acquisition suite (tests/test_xlsx_snapshot_acquisition.py): 22 passed (SA-01 to SA-14, Hypothesis properties, race fault injections, and combined 15k row benchmark)
-  - Total: 222 passed in 36.84s (zero failures)
-- Linters & Types: Ruff format 0 errors (58 files), Ruff check 0 errors, Mypy Linux native 0 errors (23 source files), Mypy win32 target 0 errors (23 source files)
+  - Snapshot acquisition suite (tests/test_xlsx_snapshot_acquisition.py): 39 passed (SA-01 to SA-14, R1 Central Directory verification without testzip, R2 storage & I/O durability taxonomy, R3 ExceptionGroup retention, R4 private POSIX permissions & non-regular file rejection, R5 true atomic replacement detection, R6 secret/path leakage prevention, R7 bounded streams, multi-concurrent isolation, and WP-04 oracle parity)
+  - Total: 239 passed in 34.80s (zero failures)
+- Linters & Types: Ruff format 0 errors (60 files already formatted), Ruff check 0 errors, Mypy Linux native 0 errors (23 source files), Mypy win32 target 0 errors (23 source files)
 - Combined Streaming Benchmark (Acquisition + WP-05 Reader, 15,000 active rows + 5,000 tail rows, CPython 3.13.15 Linux):
   - 3 Isolated Subprocess Benchmark Runs:
-    - Run 1: duration 11.9523s, baseline current RSS 27.44 MiB, call peak RSS 58.86 MiB, rows 15,000, file_bytes 549,787, file_sha ad33175d9e41...
-    - Run 2: duration 11.6056s, baseline current RSS 27.44 MiB, call peak RSS 59.17 MiB, rows 15,000, file_bytes 549,787, file_sha b82649de7df9...
-    - Run 3: duration 11.3455s, baseline current RSS 27.47 MiB, call peak RSS 59.24 MiB, rows 15,000, file_bytes 549,787, file_sha 975716b2f595...
+    - Run 1: duration 10.8317s, baseline current RSS 27.42 MiB, call peak RSS 58.68 MiB, rows 15,000, file_bytes 549,787, file_sha 07da167034f5...
+    - Run 2: duration 10.0046s, baseline current RSS 27.53 MiB, call peak RSS 59.03 MiB, rows 15,000, file_bytes 549,787, file_sha c99c1ced2703...
+    - Run 3: duration 10.3146s, baseline current RSS 27.55 MiB, call peak RSS 58.77 MiB, rows 15,000, file_bytes 549,787, file_sha 5f8f78bfd320...
   - Limits: duration < 15.0s, call peak RSS < 128.0 MiB
-- Security scans: 0 tracked prohibited binaries/databases (git ls-files scan), 0 sensitive patterns/credentials (git grep failure-on-match exit code 1)
+- Platform Note: Windows execution and benchmark metrics are PENDING independent Codex CI execution on PR.
+- Security scans: 0 tracked prohibited binaries/databases (git ls-files scan, 92 tracked files), 0 sensitive patterns/credentials (git grep failure-on-match exit code 1)
 - Handoff validator: PASS (Handoff validation passed.)
 
 ---
@@ -51,7 +52,7 @@ Command: `/root/.local/bin/uv lock --check`
 Exit code: 0
 Output:
 ```text
-Resolved 88 packages in 3ms
+Resolved 88 packages in 4ms
 ```
 
 ### 4. Frozen Dependency Sync
@@ -67,7 +68,7 @@ Command: `/root/.local/bin/uv run ruff format --check .`
 Exit code: 0
 Output:
 ```text
-58 files already formatted
+60 files already formatted
 ```
 
 ### 6. Ruff Lint Check
@@ -78,7 +79,7 @@ Output:
 All checks passed!
 ```
 
-### 7. Focused WP-06 Snapshot Acquisition Test Suite (22 Tests)
+### 7. Focused WP-06 Snapshot Acquisition Test Suite (39 Tests)
 Command: `/root/.local/bin/uv run pytest tests/test_xlsx_snapshot_acquisition.py -v`
 Exit code: 0
 Output:
@@ -89,32 +90,49 @@ rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 22 items
+collected 39 items
 
-tests/test_xlsx_snapshot_acquisition.py::test_sa01_public_api_exports_and_version PASSED [  4%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa01_stable_xlsx_snapshot_invariants PASSED [  9%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa01_error_taxonomy_reasons_and_retryability PASSED [ 13%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa02_two_observations_and_sleeper PASSED [ 18%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa02_invalid_arguments_and_policy_rejections PASSED [ 22%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa03_source_immutability_on_success_and_failures PASSED [ 27%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa04_missing_and_disappearing_source_handling PASSED [ 31%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_observation] PASSED [ 36%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[before_copy_open] PASSED [ 40%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_copy_chunk] PASSED [ 45%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[before_source_reverify] PASSED [ 50%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_source_reverify] PASSED [ 54%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa06_streaming_copy_bounded_chunks PASSED [ 59%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa07_invalid_container_and_storage_faults PASSED [ 63%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa08_promoted_path_and_source_mutation_isolation PASSED [ 68%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa09_lease_mutation_and_deletion_detection PASSED [ 72%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa10_cleanup_failure_and_exception_chaining PASSED [ 77%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa11_concurrent_disjoint_acquisitions PASSED [ 81%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa12_end_to_end_reader_and_planner_oracle PASSED [ 86%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa13_source_change_prevents_partial_planner_voids PASSED [ 90%]
-tests/test_xlsx_snapshot_acquisition.py::test_sa14_hypothesis_chunk_and_interval_properties PASSED [ 95%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_public_api_exports_and_version PASSED [  2%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_stable_xlsx_snapshot_invariants PASSED [  5%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_error_taxonomy_reasons_and_retryability PASSED [  7%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_no_path_or_secret_leakage_in_messages_and_repr PASSED [ 10%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_two_observations_and_sleeper PASSED [ 12%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_invalid_arguments_and_policy_rejections PASSED [ 15%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_non_regular_file_rejection_policy PASSED [ 17%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa03_source_immutability_on_success_and_failures PASSED [ 20%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa04_missing_and_disappearing_source_handling PASSED [ 23%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa04_inaccessible_file_permission_lock PASSED [ 25%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_observation] PASSED [ 28%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[before_copy_open] PASSED [ 30%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_copy_chunk] PASSED [ 33%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[before_source_reverify] PASSED [ 35%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_source_reverify] PASSED [ 38%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_observation] PASSED [ 41%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[before_copy_open] PASSED [ 43%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_copy_chunk] PASSED [ 46%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[before_source_reverify] PASSED [ 48%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_source_reverify] PASSED [ 51%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa06_streaming_copy_bounded_chunks PASSED [ 53%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa06_bounded_stream_wrapper_verification PASSED [ 56%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_zip_central_directory_only_and_no_testzip_or_open_called PASSED [ 58%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_invalid_container_and_storage_faults PASSED [ 61%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_io_faults_write_flush_fsync_storage_taxonomy PASSED [ 64%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa08_promoted_path_and_source_mutation_isolation PASSED [ 66%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa08_posix_private_file_permissions PASSED [ 69%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_lease_mutation_and_deletion_detection PASSED [ 71%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_atomic_os_replace_during_lease PASSED [ 74%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_symlink_replacement_during_lease PASSED [ 76%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_cleanup_failure_and_exception_chaining PASSED [ 79%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_acquisition_and_cleanup_coincident_exception_group PASSED [ 82%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_consumer_and_cleanup_coincident_exception_group PASSED [ 84%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_consumer_integrity_and_cleanup_coincident_exception_group PASSED [ 87%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa11_concurrent_disjoint_acquisitions PASSED [ 89%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa12_end_to_end_reader_and_planner_oracle PASSED [ 92%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa13_source_change_prevents_partial_planner_voids PASSED [ 94%]
+tests/test_xlsx_snapshot_acquisition.py::test_sa14_hypothesis_chunk_and_interval_properties PASSED [ 97%]
 tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark PASSED [100%]
 
-=================== 22 passed in 14.15s ====================
+=================== 39 passed in 13.16s ====================
 ```
 
 ### 8. Focused Combined Benchmark 3-Run Repetition under CPython 3.13.15
@@ -123,26 +141,26 @@ Exit code: 0
 
 - **Run 1 Output:**
 ```text
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.9523s | baseline_current_rss_mib: 27.44 MiB | call_peak_rss_mib: 58.86 MiB | rows: 15000 | file_bytes: 549787 | file_sha: ad33175d9e41... | platform: linux
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.8317s | baseline_current_rss_mib: 27.42 MiB | call_peak_rss_mib: 58.68 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 07da167034f5... | platform: linux
 PASSED
-1 passed, 21 deselected in 13.60s
+1 passed, 38 deselected in 12.35s
 ```
 
 - **Run 2 Output:**
 ```text
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.6056s | baseline_current_rss_mib: 27.44 MiB | call_peak_rss_mib: 59.17 MiB | rows: 15000 | file_bytes: 549787 | file_sha: b82649de7df9... | platform: linux
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.0046s | baseline_current_rss_mib: 27.53 MiB | call_peak_rss_mib: 59.03 MiB | rows: 15000 | file_bytes: 549787 | file_sha: c99c1ced2703... | platform: linux
 PASSED
-1 passed, 21 deselected in 13.13s
+1 passed, 38 deselected in 11.60s
 ```
 
 - **Run 3 Output:**
 ```text
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.3455s | baseline_current_rss_mib: 27.47 MiB | call_peak_rss_mib: 59.24 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 975716b2f595... | platform: linux
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.3146s | baseline_current_rss_mib: 27.55 MiB | call_peak_rss_mib: 58.77 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 5f8f78bfd320... | platform: linux
 PASSED
-1 passed, 21 deselected in 12.78s
+1 passed, 38 deselected in 11.87s
 ```
 
-### 9. Full Repository Quality Suite (222 Tests)
+### 9. Full Repository Quality Suite (239 Tests)
 Command: `/root/.local/bin/uv run pytest -v`
 Exit code: 0
 Output:
@@ -154,28 +172,28 @@ configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 222 items
+collected 239 items
 
-tests/test_architecture_guard.py ..............      [  6%]
+tests/test_architecture_guard.py ..............      [  5%]
 tests/test_canonical_date.py ..........              [ 10%]
-tests/test_canonical_hashing.py ..................   [ 18%]
-tests/test_imports.py .......                        [ 22%]
-tests/test_raw_input_contracts.py ...............    [ 28%]
-tests/test_source_change_plan.py ................... [ 37%]
-......                                               [ 40%]
-tests/test_xlsx_snapshot_acquisition.py ............ [ 45%]
-..........                                           [ 50%]
-tests/test_xlsx_source_reader.py ................... [ 58%]
+tests/test_canonical_hashing.py ..................   [ 17%]
+tests/test_imports.py .......                        [ 20%]
+tests/test_raw_input_contracts.py ...............    [ 26%]
+tests/test_source_change_plan.py ................... [ 34%]
+......                                               [ 37%]
+tests/test_xlsx_snapshot_acquisition.py ............ [ 42%]
+...........................                          [ 53%]
+tests/test_xlsx_source_reader.py ................... [ 61%]
 ...................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.4281s | baseline_current_rss_mib: 27.56 MiB | call_peak_rss_mib: 59.21 MiB | rows: 15000 | platform: linux
-.......                           [ 70%]
-tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 70%]
-......                                               [ 73%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 73%]
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.7883s | baseline_current_rss_mib: 27.58 MiB | call_peak_rss_mib: 59.24 MiB | rows: 15000 | platform: linux
+.......                           [ 72%]
+tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 72%]
+......                                               [ 75%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 75%]
 .................................................... [ 97%]
 ......                                               [100%]
 
-=================== 222 passed in 36.84s ===================
+=================== 239 passed in 34.80s ===================
 ```
 
 ### 10. Git Diff Cleanliness Check
@@ -191,7 +209,7 @@ Command: `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'ls-f
 Exit code: 0
 Output:
 ```text
-PASS: No prohibited tracked files found (checked 87 tracked files)
+PASS: No prohibited tracked files found (checked 92 tracked files)
 ```
 
 ### 12. Portable Failure-on-Match Sensitive Patterns Scan (git grep)
