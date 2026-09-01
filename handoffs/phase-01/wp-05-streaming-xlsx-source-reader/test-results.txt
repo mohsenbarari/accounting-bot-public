@@ -1,25 +1,25 @@
 WORK PACKAGE: WP-05: Read-only streaming XLSX source reader and physical row tracker
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-01T11:33:00Z
+RECORDED AT UTC: 2026-09-01T11:51:00Z
 
-# Test Results: WP-05 Streaming XLSX Source Reader (R5-F Sampler Lifecycle and Parser Hardening)
+# Test Results: WP-05 Streaming XLSX Source Reader (R5-G Windows Mypy Typing Correction)
 
 ## FINAL SUMMARY
 
-- Status: ALL PASS (Linux) / Remediated in R5-F Sampler Lifecycle and Parser Hardening turn (R5-F1..R5-F4) / Independent Codex CI Review Required on PR #19
+- Status: ALL PASS (Linux & Windows Mypy Clean) / Remediated in R5-G Windows Mypy Typing Turn (R5-G1, R5-G2) / Independent Codex CI Review Required on PR #19
 - Test suites:
   - Base architecture, contracts & domain tests: 89 passed
   - Reader unit, integration, probe and sampler tests (tests/test_xlsx_source_reader.py): 45 passed (includes 6 Windows WinAPI probe, call-window RSS sampler lifecycle, worker error propagation, termination guard, and strict VmRSS parser tests)
   - Raw contract regressions (tests/test_xlsx_source_reader_raw_contract_regressions.py): 7 passed
   - SST activity regressions (tests/test_xlsx_source_reader_sst_activity_regressions.py): 59 passed
-  - Total: 200 passed in 21.24s (zero failures)
-- Linters & Types: Ruff format 0 errors (54 files), Ruff check 0 errors, Mypy strict 0 errors (21 source files)
+  - Total: 200 passed in 22.06s (zero failures)
+- Linters & Types: Ruff format 0 errors (54 files), Ruff check 0 errors, Mypy Linux native 0 errors (21 source files), Mypy win32 target 0 errors (21 source files)
 - Call-Window Streaming Benchmark (15,000 active rows + 5,000 tail rows, CPython 3.13.15 Linux):
   - 3 Isolated Subprocess Benchmark Runs (Call-Window RSS Sampler @ 5ms interval):
-    - Run 1: duration 10.8605s, baseline current RSS 27.42 MiB, call peak RSS 59.27 MiB
-    - Run 2: duration 10.9714s, baseline current RSS 27.43 MiB, call peak RSS 59.05 MiB
-    - Run 3: duration 11.0951s, baseline current RSS 27.42 MiB, call peak RSS 59.05 MiB
-  - Full suite benchmark execution: duration 10.5332s, baseline current RSS 27.49 MiB, call peak RSS 59.09 MiB
+    - Run 1: duration 11.1328s, baseline current RSS 27.58 MiB, call peak RSS 59.20 MiB
+    - Run 2: duration 11.8152s, baseline current RSS 27.62 MiB, call peak RSS 59.18 MiB
+    - Run 3: duration 11.1791s, baseline current RSS 27.72 MiB, call peak RSS 59.26 MiB
+  - Full suite benchmark execution: duration 11.4697s, baseline current RSS 27.54 MiB, call peak RSS 59.15 MiB
   - Limits: duration < 15.0s, call peak RSS < 128.0 MiB
 - Security scans: 0 tracked prohibited binaries/databases (git ls-files scan: 85 tracked files checked), 0 sensitive patterns/credentials (git grep failure-on-match exit code 1)
 - Handoff validator: PASS (Handoff validation passed.)
@@ -47,45 +47,14 @@ RECORDED AT UTC: 2026-09-01T11:33:00Z
 | `9d8f677` | GitHub CI (PR #19 run `33492617454`) | Linux: 1 failed (265.91 MiB > 128 MiB), Windows: 1 failed (GetProcessMemoryInfo) | 3.0276s / 265.91 MiB (Linux CI) | First GitHub Actions CI run on PR #19 discovering CI-01 (Linux ru_maxrss lifetime high-water) and CI-02 (Windows WinAPI probe untyped). |
 | `c4a8292` | GitHub CI (PR #19 run `33496419728`) | Windows: 195 passed in 14.21s (SUCCESS); Linux: 1 failed (265.81 MiB pre-call / 265.81 MiB post-call) | Windows: 4.5091s / 26.70M pre / 57.40M post; Linux: 3.2069s / 265.81M pre / 265.81M post | Second GitHub Actions CI run on PR #19: Windows R5-D2 accepted (SUCCESS); Linux failed because process-lifetime ru_maxrss was contaminated by a 265.81 MiB high-water mark reached prior to the reader call. |
 | `02f7acd` | Implementer (R5-E) | 198 passed / 18.73s (full run) | Run 1: 10.44s / baseline 27.29M / peak 58.95M; Run 2: 10.34s / baseline 27.28M / peak 58.57M; Run 3: 10.39s / baseline 27.30M / peak 58.86M (Full suite: 10.29s / baseline 27.22M / peak 58.85M) | R5-E remediation: call-window current absolute RSS sampling via CallWindowRssSampler (@ 5ms interval). |
-| `c3c5978` | Implementer (R5-F) | 200 passed / 21.24s (full run) | Run 1: 10.86s / baseline 27.42M / peak 59.27M; Run 2: 10.97s / baseline 27.43M / peak 59.05M; Run 3: 11.10s / baseline 27.42M / peak 59.05M (Full suite: 10.53s / baseline 27.49M / peak 59.09M) | R5-F remediation: interruptible stop_event.wait loop (R5-F1), worker termination verification guard (R5-F1), event-synchronized real background worker probe error propagation test via injectable probe_fn (R5-F2), strict /proc/self/status VmRSS grammar with duplicate rejection (R5-F3), one-shot lifecycle state machine and interval validation (R5-F4). |
+| `4cda4d7` | GitHub CI (PR #19 run `33503837653`) | Linux: 200 passed in 6.61s (SUCCESS); Windows: 1 failed (Mypy no-any-return) | Linux: 1.6929s / 27.47M baseline / 59.06M peak; Windows: failed at Mypy before pytest | Third GitHub Actions CI run on PR #19: Linux job 99843105587 passed completely in 23s; Windows job 99843105723 failed in 36s at Mypy on `counters.WorkingSetSize` with `no-any-return` (no Windows pytest/benchmark executed). |
+| `7baff38` | Implementer (R5-G) | 200 passed / 22.06s (full run) | Run 1: 11.13s / baseline 27.58M / peak 59.20M; Run 2: 11.82s / baseline 27.62M / peak 59.18M; Run 3: 11.18s / baseline 27.72M / peak 59.26M (Full suite: 11.47s / baseline 27.54M / peak 59.15M) | R5-G remediation: explicit int/float concrete conversion of Windows WorkingSetSize in both bench_code and _get_current_process_rss_mib, achieving 0 errors on both native Mypy and `mypy --platform win32`. |
 
 ---
 
 ## Verbatim Command Executions and Outputs
 
-### 1. Lockfile Check
-Command: `/root/.local/bin/uv lock --check`
-Exit code: 0
-Output:
-```text
-Resolved 88 packages in 3ms
-```
-
-### 2. Frozen Dependency Sync
-Command: `/root/.local/bin/uv sync --frozen --all-packages --all-groups`
-Exit code: 0
-Output:
-```text
-Checked 81 packages in 4ms
-```
-
-### 3. Ruff Format Check
-Command: `/root/.local/bin/uv run ruff format --check .`
-Exit code: 0
-Output:
-```text
-54 files already formatted
-```
-
-### 4. Ruff Lint Check
-Command: `/root/.local/bin/uv run ruff check .`
-Exit code: 0
-Output:
-```text
-All checks passed!
-```
-
-### 5. Strict Mypy Static Type Checking
+### 1. Strict Mypy Static Type Checking (Native Linux Platform)
 Command: `/root/.local/bin/uv run mypy .`
 Exit code: 0
 Output:
@@ -94,12 +63,53 @@ pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*'
 Success: no issues found in 21 source files
 ```
 
-### 6. Focused Sampler, Lifecycle, and WinAPI Probe Unit Tests
+### 2. Strict Mypy Static Type Checking (Target Windows Platform — Mandatory Cross-Platform Check)
+Command: `/root/.local/bin/uv run mypy --platform win32 .`
+Exit code: 0
+Output:
+```text
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 21 source files
+```
+
+### 3. Lockfile Check
+Command: `/root/.local/bin/uv lock --check`
+Exit code: 0
+Output:
+```text
+Resolved 88 packages in 3ms
+```
+
+### 4. Frozen Dependency Sync
+Command: `/root/.local/bin/uv sync --frozen --all-packages --all-groups`
+Exit code: 0
+Output:
+```text
+Checked 81 packages in 2ms
+```
+
+### 5. Ruff Format Check
+Command: `/root/.local/bin/uv run ruff format --check .`
+Exit code: 0
+Output:
+```text
+54 files already formatted
+```
+
+### 6. Ruff Lint Check
+Command: `/root/.local/bin/uv run ruff check .`
+Exit code: 0
+Output:
+```text
+All checks passed!
+```
+
+### 7. Focused Sampler, Lifecycle, and WinAPI Probe Unit Tests
 Command: `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_r6_windows_memory_probe_structure_and_types or test_r6_current_process_rss_probe_and_sampler or test_r6_current_process_rss_sampler_worker_error_propagation or test_r6_current_process_rss_sampler_termination_guard or test_r6_current_process_rss_sampler_lifecycle_and_validation or test_r6_linux_proc_status_vmrss_parser_rejections" -v`
 Exit code: 0
 Output:
 ```text
-=================== test session starts ====================
+=================== test session starts ===================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
@@ -114,35 +124,35 @@ tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_terminatio
 tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_lifecycle_and_validation PASSED [ 83%]
 tests/test_xlsx_source_reader.py::test_r6_linux_proc_status_vmrss_parser_rejections PASSED [100%]
 
-============= 6 passed, 39 deselected in 2.85s =============
+============ 6 passed, 39 deselected in 2.85s =============
 ```
 
-### 7. Focused Benchmark 3-Run Repetition under CPython 3.13.15
+### 8. Focused Benchmark 3-Run Repetition under CPython 3.13.15
 Command: `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_xr12_synthetic_15000_row_benchmark" -s -vv`
 Exit code: 0
 
 - **Run 1 Output:**
 ```text
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.8605s | baseline_current_rss_mib: 27.42 MiB | call_peak_rss_mib: 59.27 MiB | rows: 15000 | platform: linux
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.1328s | baseline_current_rss_mib: 27.58 MiB | call_peak_rss_mib: 59.20 MiB | rows: 15000 | platform: linux
 PASSED
-1 passed, 44 deselected in 12.36s
+1 passed, 44 deselected in 12.68s
 ```
 
 - **Run 2 Output:**
 ```text
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.9714s | baseline_current_rss_mib: 27.43 MiB | call_peak_rss_mib: 59.05 MiB | rows: 15000 | platform: linux
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.8152s | baseline_current_rss_mib: 27.62 MiB | call_peak_rss_mib: 59.18 MiB | rows: 15000 | platform: linux
 PASSED
-1 passed, 44 deselected in 12.45s
+1 passed, 44 deselected in 13.27s
 ```
 
 - **Run 3 Output:**
 ```text
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.0951s | baseline_current_rss_mib: 27.42 MiB | call_peak_rss_mib: 59.05 MiB | rows: 15000 | platform: linux
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.1791s | baseline_current_rss_mib: 27.72 MiB | call_peak_rss_mib: 59.26 MiB | rows: 15000 | platform: linux
 PASSED
-1 passed, 44 deselected in 12.50s
+1 passed, 44 deselected in 12.65s
 ```
 
-### 8. Full Repository Quality Suite (200 Tests)
+### 9. Full Repository Quality Suite (200 Tests)
 Command: `/root/.local/bin/uv run pytest -v`
 Exit code: 0
 Output:
@@ -165,7 +175,7 @@ tests/test_source_change_plan.py ................... [ 41%]
 ......                                               [ 44%]
 tests/test_xlsx_source_reader.py ................... [ 54%]
 ...................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.5332s | baseline_current_rss_mib: 27.49 MiB | call_peak_rss_mib: 59.09 MiB | rows: 15000 | platform: linux
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.4697s | baseline_current_rss_mib: 27.54 MiB | call_peak_rss_mib: 59.15 MiB | rows: 15000 | platform: linux
 .......                           [ 67%]
 tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 67%]
 ......                                               [ 70%]
@@ -173,10 +183,10 @@ tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 71%]
 .................................................... [ 97%]
 ......                                               [100%]
 
-=================== 200 passed in 21.24s ===================
+=================== 200 passed in 22.06s ===================
 ```
 
-### 9. Git Diff Cleanliness Check
+### 10. Git Diff Cleanliness Check
 Command: `git diff --check origin/main...HEAD`
 Exit code: 0
 Output:
@@ -184,7 +194,7 @@ Output:
 (no output, clean diff)
 ```
 
-### 10. Portable Tracked Prohibited Files Scan (git ls-files)
+### 11. Portable Tracked Prohibited Files Scan (git ls-files)
 Command: `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'ls-files'], capture_output=True, text=True); (print('ERROR: git ls-files failed:\n' + res.stderr) or sys.exit(res.returncode)) if res.returncode != 0 else None; prohibited = ('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'); files = [line.strip() for line in res.stdout.splitlines() if line.strip()]; bad = [f for f in files if f.lower().endswith(prohibited)]; (print('PROHIBITED TRACKED FILES FOUND:\n' + '\n'.join(bad)) or sys.exit(1)) if bad else print('PASS: No prohibited tracked files found (checked ' + str(len(files)) + ' tracked files)')"`
 Exit code: 0
 Output:
@@ -192,7 +202,7 @@ Output:
 PASS: No prohibited tracked files found (checked 85 tracked files)
 ```
 
-### 11. Portable Failure-on-Match Sensitive Patterns Scan (git grep)
+### 12. Portable Failure-on-Match Sensitive Patterns Scan (git grep)
 Command: `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); (print('PASS: No sensitive patterns detected (grep exit 1)') or sys.exit(0)) if res.returncode == 1 else ((print('FAIL: Found sensitive patterns:\n' + res.stdout) or sys.exit(1)) if res.returncode == 0 else (print('ERROR: git grep failed:\n' + res.stderr) or sys.exit(res.returncode)))"`
 Exit code: 0
 Output:
@@ -200,7 +210,7 @@ Output:
 PASS: No sensitive patterns detected (grep exit 1)
 ```
 
-### 12. Handoff Structure Validation
+### 13. Handoff Structure Validation
 Command: `python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-05-streaming-xlsx-source-reader/`
 Exit code: 0
 Output:

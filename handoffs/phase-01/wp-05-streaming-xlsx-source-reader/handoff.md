@@ -3,7 +3,7 @@
 ## Identity
 
 - Phase: 1 — source and data-model foundation (Phase 1 authorized, Gate G1 is open / in-progress)
-- Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker (Status: REQUEST_CHANGES / R5-F Sampler Lifecycle and Parser Hardening Delivery)
+- Work Package: WP-05: Read-only streaming XLSX source reader and physical row tracker (Status: REQUEST_CHANGES / R5-G Windows Mypy Typing Correction Delivery)
 - Branch/worktree: antigravity/phase-01-streaming-xlsx-source-reader
 - Commit(s):
   - `5dd5d17` (feat(local_agent): implement streaming XLSX source reader and physical row tracker (WP-05))
@@ -31,6 +31,8 @@
   - `02f7acd` (test(local_agent): measure call-window current RSS and add sampler tests (R5-E))
   - `ee33f95` (docs(handoff): record R5-E call-window RSS evidence, benchmark results, and matrix updates)
   - `c3c5978` (test(local_agent): harden sampler lifecycle, probe error propagation, and VmRSS grammar (R5-F))
+  - `4cda4d7` (docs(handoff): record R5-F sampler lifecycle and parser hardening evidence)
+  - `7baff38` (fix(tests): cast Windows WorkingSetSize to concrete float for Mypy win32 (R5-G))
 - Implementer: Google Antigravity
 - Reviewer: Codex
 
@@ -40,27 +42,16 @@
 
 Implement a read-only streaming Excel `.xlsx` source reader under `apps/local_agent` using standard library `zipfile` and existing pinned `lxml 6.1.2`, extracting literal raw source inputs from the four approved sheets according to `RAW_CONTRACT_REGISTRY`, strictly excluding formula elements and formula coverage ranges, evaluating row activity from literal inputs, validating Persian and technical headers and UUIDv7 identifiers, and returning an immutable `XlsxSourceReadResult` containing a validated `ValidatedSourceWorkbookSnapshot` (WP-04) alongside an immutable mapping of physical row locations (`SourceRowLocation`).
 
-This delivery finalizes remediation package R5-F addressing review findings R5-F1..R5-F4:
-- **R5-F1 (Worker Termination Verification Guard & Interruptible Wait):**
-  - Replaced unconditional `time.sleep(interval)` with interruptible `_stop_event.wait(interval)` in the background sampling loop so normal stop wakes immediately.
-  - Added explicit post-join verification: after requesting stop and joining with a bounded timeout (`timeout=2.0`), checks `self._thread.is_alive()` and raises a deterministic `RuntimeError` if the worker thread failed to terminate.
-  - Protected reader exception propagation in `test_xr12_synthetic_15000_row_benchmark` so reader exceptions are never masked by sampler exceptions.
-  - Added deterministic unit tests for prompt normal termination and the non-terminated worker guard (`test_r6_current_process_rss_sampler_termination_guard`).
-- **R5-F2 (Event-Synchronized Real Worker Thread Error Propagation Test):**
-  - Refactored `CallWindowRssSampler` and `_CallWindowRssSampler` to accept an injectable `probe_fn: Callable[[], float] | None = None` (defaulting to the platform-specific current RSS probe).
-  - Replaced artificial test-thread error assignment with `test_r6_current_process_rss_sampler_worker_error_propagation`: allows baseline probe on `start()` to succeed, triggers a real exception in the background worker thread, synchronizes via threading events, and asserts that `stop_and_get_peak()` surfaces the failure with cause and returns no false metric.
-- **R5-F3 (Strict Linux VmRSS Grammar):**
-  - Hardened `/proc/self/status` parsing in both benchmark-embedded and test helper implementations to require exact token shape `VmRSS: [1-9][0-9]* kB`.
-  - Rejects missing `VmRSS`, missing units, non-kB units (`MB`, `KiB`, `bytes`), trailing tokens, non-ASCII digits, signed integers (`+1024`, `-1024`), floating-point values (`1024.5`), zero values (`0 kB`), and duplicate `VmRSS` entries with `RuntimeError`.
-  - Added comprehensive unit test `test_r6_linux_proc_status_vmrss_parser_rejections` covering all rejection cases.
-- **R5-F4 (One-Shot Lifecycle State Machine & Interval Validation):**
-  - Hardened lifecycle state machine to strictly one-shot (`INITIAL` $\rightarrow$ `RUNNING` $\rightarrow$ `STOPPED`).
-  - Rejects double start, stop before start, and double stop with deterministic `RuntimeError`.
-  - Validates `interval_seconds` rejecting booleans (`isinstance(bool)`), zero, negative numbers, NaN, Infinity, and values exceeding the approved 10 ms maximum (`0.0 < interval <= 0.010`).
-  - Added unit test `test_r6_current_process_rss_sampler_lifecycle_and_validation`.
-- **Contract & Benchmark Preservation:**
-  - Preserved all existing 194 tests and WP-02/WP-03/WP-04 contracts, raw preservation, UUIDv7 identities, physical row locations, and change planner transitions (200 tests total).
-  - Maintained zero changes to `xlsx_source_reader.py`, `.github/workflows/ci.yml`, dependencies, lockfile, ADRs, or Work Packages.
+This delivery finalizes remediation package R5-G addressing third CI run `33503837653` on PR #19:
+- **CI Run 33503837653 Outcome:**
+  - Linux job `99843105587`: SUCCESS in 23s (Mypy clean, benchmark duration 1.6929s, baseline current RSS 27.47 MiB, call peak RSS 59.06 MiB, 15,000 rows, full suite 200 passed in 6.61s).
+  - Windows job `99843105723`: FAILURE in 36s during Mypy check with error `tests\test_xlsx_source_reader.py:2694: error: Returning Any from function declared to return "float" [no-any-return]` before pytest execution.
+- **R5-G1 (Windows WorkingSetSize Explicit Concrete Typing Conversion):**
+  - Converted `counters.WorkingSetSize` explicitly via concrete numeric conversions (`working_set_bytes = int(counters.WorkingSetSize)` and `working_set_mib = float(working_set_bytes) / (1024.0 * 1024.0)`) in both the benchmark-embedded probe and the module-level helper `_get_current_process_rss_mib()`.
+  - Validated that both native Linux Mypy (`/root/.local/bin/uv run mypy .`) and cross-platform Windows target (`/root/.local/bin/uv run mypy --platform win32 .`) pass with zero errors across all 21 source files.
+- **R5-G2 / Contract Preservation:**
+  - Preserved the accepted typed WinAPI signatures, `PROCESS_MEMORY_COUNTERS` 10-field layout, `WorkingSetSize` current-memory semantics, 5 ms sampling interval, one-shot lifecycle state machine, termination verification guard, strict `VmRSS` parser, and all 200 repository tests.
+  - Maintained zero changes to product code `xlsx_source_reader.py`, `.github/workflows/ci.yml`, dependencies, lockfile, ADRs, or Work Packages.
 
 ### Review items status
 
@@ -74,7 +65,8 @@ This delivery finalizes remediation package R5-F addressing review findings R5-F
 - Finding CI-01 / R5-D1 (Linux RSS lifecycle optimization): Remediated in R5-D and verified.
 - Finding CI-02 / R5-D2 (Hardened Windows WinAPI memory probe): Remediated in R5-D, accepted in CI run 33496419728.
 - Finding R5-E1..R5-E4 (Call-window current RSS sampling & tests): Remediated in R5-E and verified.
-- Finding R5-F1..R5-F4 (Sampler lifecycle, termination guard, worker error propagation, strict VmRSS): Remediated in R5-F and ready for review.
+- Finding R5-F1..R5-F4 (Sampler lifecycle, termination guard, worker error propagation, strict VmRSS): Remediated in R5-F and verified (accepted on Linux CI run 33503837653).
+- Finding R5-G1..R5-G2 (Windows WorkingSetSize concrete typing conversion for win32 Mypy): Remediated in R5-G and ready for review.
 
 ### In scope
 
@@ -118,8 +110,8 @@ This delivery finalizes remediation package R5-F addressing review findings R5-F
 
 | File | Change | Reason |
 |---|---|---|
-| `tests/test_xlsx_source_reader.py` | Modified | Hardened benchmark subprocess and test helper `CallWindowRssSampler` with interruptible `_stop_event.wait` loop, termination verification guard, event-synchronized real worker probe error propagation, strict `/proc/self/status` VmRSS grammar, one-shot lifecycle state machine, interval validation, and 6 dedicated unit tests. |
-| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Synchronized handoff documents, acceptance matrix, and captured command test results for R5-F delivery. |
+| `tests/test_xlsx_source_reader.py` | Modified | Applied explicit concrete `int`/`float` conversion for Windows `WorkingSetSize` in `bench_code` and `_get_current_process_rss_mib` to resolve `mypy --platform win32` without Any returns. |
+| `handoffs/phase-01/wp-05-streaming-xlsx-source-reader/*` | Modified | Synchronized handoff documents, acceptance matrix, and captured command test results for R5-G delivery. |
 
 ## Schema and migrations
 
@@ -137,10 +129,11 @@ This delivery finalizes remediation package R5-F addressing review findings R5-F
 | `/root/.local/bin/uv sync --frozen --all-packages --all-groups` | 0 | Verify frozen dependencies installation |
 | `/root/.local/bin/uv run ruff format --check .` | 0 | Verify formatting compliance across 54 files |
 | `/root/.local/bin/uv run ruff check .` | 0 | Verify linting rules compliance |
-| `/root/.local/bin/uv run mypy .` | 0 | Verify strict static typing across 21 source files |
+| `/root/.local/bin/uv run mypy .` | 0 | Verify strict static typing on native Linux across 21 source files |
+| `/root/.local/bin/uv run mypy --platform win32 .` | 0 | Verify strict static typing for target Windows platform across 21 source files |
 | `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_r6_windows_memory_probe_structure_and_types or test_r6_current_process_rss_probe_and_sampler or test_r6_current_process_rss_sampler_worker_error_propagation or test_r6_current_process_rss_sampler_termination_guard or test_r6_current_process_rss_sampler_lifecycle_and_validation or test_r6_linux_proc_status_vmrss_parser_rejections"` | 0 | Execute 6 focused probe, sampler, lifecycle, and parser unit tests (6 passed in 2.85s) |
-| `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_xr12_synthetic_15000_row_benchmark" -s -vv` | 0 | Execute 3 clean subprocess benchmark repetitions under CPython 3.13.15 (10.86s/59.27M, 10.97s/59.05M, 11.10s/59.05M) |
-| `/root/.local/bin/uv run pytest -v` | 0 | Execute full repository test suite including XR-12 benchmark (200 passed in 21.24s) |
+| `/root/.local/bin/uv run pytest tests/test_xlsx_source_reader.py -k "test_xr12_synthetic_15000_row_benchmark" -s -vv` | 0 | Execute 3 clean subprocess benchmark repetitions under CPython 3.13.15 (11.13s/59.20M, 11.82s/59.18M, 11.18s/59.26M) |
+| `/root/.local/bin/uv run pytest -v` | 0 | Execute full repository test suite including XR-12 benchmark (200 passed in 22.06s) |
 | `git diff --check origin/main...HEAD` | 0 | Verify clean diff with zero whitespace defects |
 | `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'ls-files'], capture_output=True, text=True); (print('ERROR: git ls-files failed:\n' + res.stderr) or sys.exit(res.returncode)) if res.returncode != 0 else None; prohibited = ('.xlsx', '.xls', '.xlsm', '.sqlite', '.sqlite3', '.db', '.pdf', '.key', '.pem', '.env'); files = [line.strip() for line in res.stdout.splitlines() if line.strip()]; bad = [f for f in files if f.lower().endswith(prohibited)]; (print('PROHIBITED TRACKED FILES FOUND:\n' + '\n'.join(bad)) or sys.exit(1)) if bad else print('PASS: No prohibited tracked files found (checked ' + str(len(files)) + ' tracked files)')"` | 0 | Verify zero forbidden tracked binary/database/secret files in git |
 | `python3 -c "import subprocess, sys; res = subprocess.run(['git', 'grep', '-n', '-I', '-i', '-E', r'(password\s*[:=]|secret\s*[:=]|bearer\s+[A-Za-z0-9]|BEGIN RSA|BEGIN OPENSSH|09[0-9]{9})', '--', ':!ROADMAP.md', ':!docs/adr/*', ':!.agents/*', ':!handoffs/*', ':!uv.lock'], capture_output=True, text=True); (print('PASS: No sensitive patterns detected (grep exit 1)') or sys.exit(0)) if res.returncode == 1 else ((print('FAIL: Found sensitive patterns:\n' + res.stdout) or sys.exit(1)) if res.returncode == 0 else (print('ERROR: git grep failed:\n' + res.stderr) or sys.exit(res.returncode)))"` | 0 | Verify zero sensitive credentials, tokens, private keys, or Iranian mobile phone numbers |
@@ -179,4 +172,4 @@ This delivery finalizes remediation package R5-F addressing review findings R5-F
 
 ## Stop state
 
-Implementation is stopped pending independent Codex review and CI publication of R5-F delivery on PR #19. Gate G1 remains OPEN / IN PROGRESS and WP-05 remains REQUEST_CHANGES. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation is stopped pending independent Codex review and CI publication of R5-G delivery on PR #19. Gate G1 remains OPEN / IN PROGRESS and WP-05 remains REQUEST_CHANGES. No Gate approval, merge, push, deploy, or next Work Package has been performed.
