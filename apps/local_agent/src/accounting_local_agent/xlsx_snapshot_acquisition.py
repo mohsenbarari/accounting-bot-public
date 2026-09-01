@@ -21,6 +21,7 @@ import uuid
 import zipfile
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "DEFAULT_COPY_CHUNK_SIZE",
@@ -137,21 +138,6 @@ class XlsxSnapshotStorageError(XlsxSnapshotAcquisitionError):
             message=message,
             retryable=retryable,
         )
-
-
-class _PartialPromotionError(XlsxSnapshotStorageError):
-    """Internal exception carrying verified final token when unlink fails after link."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        promoted_device: int | None,
-        promoted_inode: int | None,
-    ) -> None:
-        super().__init__(message)
-        self.promoted_device = promoted_device
-        self.promoted_inode = promoted_inode
 
 
 class XlsxSnapshotIntegrityError(XlsxSnapshotAcquisitionError):
@@ -279,64 +265,171 @@ def _extract_device_and_inode(
     return st.st_dev, st.st_ino
 
 
-def _atomic_move_no_replace(src: Path, dst: Path, is_posix: bool) -> None:
-    """Atomic move with fail-if-exists semantics on both POSIX and Windows."""
-    if dst.exists(follow_symlinks=False):
-        raise FileExistsError("Quarantine destination already exists")
+_ctypes_provider: Any = ctypes
 
-    try:
-        st = src.lstat()
-    except OSError as exc:
-        raise OSError("Source file or directory does not exist") from exc
 
-    if is_posix and not stat.S_ISDIR(st.st_mode) and hasattr(os, "link"):
-        try:
-            os.link(src, dst)
-        except (FileExistsError, OSError) as exc:
-            if getattr(exc, "errno", None) == 17:  # EEXIST
-                raise FileExistsError("Quarantine destination already exists") from exc
-            raise
-        try:
-            src.unlink()
-        except OSError as exc:
-            try:
-                dst.unlink()
-            except OSError:
-                pass
-            raise OSError("Failed to remove source after link") from exc
-        return
+def _atomic_move_no_replace(src: Path, dst: Path) -> None:
+    """Atomic move with fail-if-exists semantics on Linux and Windows.
 
+    Uses renameat2(RENAME_NOREPLACE) on Linux and MoveFileExW without
+    MOVEFILE_REPLACE_EXISTING on Windows. Fails closed if the platform
+    primitive is unsupported or fails with ENOSYS/EINVAL.
+    """
     if sys.platform.startswith("linux"):
         try:
-            libc = ctypes.CDLL(None, use_errno=True)
-            if hasattr(libc, "renameat2"):
-                at_fdcwd = -100
-                rename_noreplace = 1
-                ret = libc.renameat2(
-                    at_fdcwd,
-                    os.fsencode(str(src)),
-                    at_fdcwd,
-                    os.fsencode(str(dst)),
-                    rename_noreplace,
-                )
-                if ret != 0:
-                    err = ctypes.get_errno()
-                    if err == 17:  # EEXIST
-                        raise FileExistsError("Quarantine destination already exists")
-                    raise OSError(err, os.strerror(err))
-                return
+            libc = _ctypes_provider.CDLL(None, use_errno=True)
+            if not hasattr(libc, "renameat2"):
+                raise OSError(38, "renameat2 is not supported on this system")
+
+            renameat2_func = libc.renameat2
+            renameat2_func.argtypes = [
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+            ]
+            renameat2_func.restype = ctypes.c_int
+
+            at_fdcwd = -100
+            rename_noreplace = 1
+            ret = renameat2_func(
+                at_fdcwd,
+                os.fsencode(str(src)),
+                at_fdcwd,
+                os.fsencode(str(dst)),
+                rename_noreplace,
+            )
+            if ret != 0:
+                err = _ctypes_provider.get_errno()
+                if err == 17:  # EEXIST
+                    raise FileExistsError("Destination path already exists")
+                raise OSError(err, os.strerror(err))
+            return
         except (AttributeError, OSError) as exc:
             if isinstance(exc, FileExistsError):
                 raise
+            raise OSError(f"Linux atomic move failed: {exc}") from exc
+    elif sys.platform == "win32":
+        try:
+            ctypes_win = _ctypes_provider
+            wintypes = ctypes_win.wintypes
+            kernel32 = ctypes_win.WinDLL("kernel32", use_last_error=True)
+            move_file_ex_w = kernel32.MoveFileExW
+            move_file_ex_w.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+            ]
+            move_file_ex_w.restype = wintypes.BOOL
 
-    try:
-        os.rename(src, dst)
-    except FileExistsError:
-        raise
-    except OSError as exc:
-        if getattr(exc, "errno", None) == 17:  # EEXIST
-            raise FileExistsError("Quarantine destination already exists") from exc
-        raise
+            # MoveFileExW flags: MOVEFILE_WRITE_THROUGH (0x8) without
+            # MOVEFILE_REPLACE_EXISTING (0x1)
+            flags = 0x8
+            ret = move_file_ex_w(str(src), str(dst), flags)
+            if not ret:
+                err = ctypes_win.get_last_error()
+                if err in (80, 183):  # ERROR_FILE_EXISTS, ERROR_ALREADY_EXISTS
+                    raise FileExistsError("Destination path already exists")
+                raise ctypes_win.WinError(err)
+            return
+        except (AttributeError, OSError) as exc:
+            if isinstance(exc, FileExistsError):
+                raise
+            raise OSError(f"Windows atomic move failed: {exc}") from exc
+    else:
+        raise OSError("Atomic no-replace move is not supported on this platform")
+
+
+def _create_and_anchor_lease_dir_windows(
+    lease_dir: Path,
+) -> tuple[_ArtifactOwnershipToken, int]:
+    """Create lease directory and acquire Windows directory handle anchor."""
+    lease_dir.mkdir(parents=False, exist_ok=False)
+
+    ctypes_win = _ctypes_provider
+    wintypes = ctypes_win.wintypes
+    kernel32 = ctypes_win.WinDLL("kernel32", use_last_error=True)
+    create_file_w = kernel32.CreateFileW
+    create_file_w.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file_w.restype = wintypes.HANDLE
+
+    generic_read = 0x80000000
+    file_share_read = 0x00000001
+    file_share_write = 0x00000002
+    file_share_delete = 0x00000004
+    open_existing = 3
+    file_flag_backup_semantics = 0x02000000
+    file_flag_open_reparse_point = 0x00200000
+    invalid_handle_value = wintypes.HANDLE(-1).value
+
+    handle = create_file_w(
+        str(lease_dir),
+        generic_read,
+        file_share_read | file_share_write | file_share_delete,
+        None,
+        open_existing,
+        file_flag_backup_semantics | file_flag_open_reparse_point,
+        None,
+    )
+
+    if handle in (-1, invalid_handle_value, None) or handle == 0:
+        err = ctypes_win.get_last_error()
+        raise OSError(f"CreateFileW failed on lease directory with error {err}")
+
+    class BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    get_info = kernel32.GetFileInformationByHandle
+    get_info.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(BY_HANDLE_FILE_INFORMATION),
+    ]
+    get_info.restype = wintypes.BOOL
+
+    info = BY_HANDLE_FILE_INFORMATION()
+    if not get_info(handle, ctypes.byref(info)):
+        err = ctypes_win.get_last_error()
+        kernel32.CloseHandle(handle)
+        raise OSError(f"GetFileInformationByHandle failed with error {err}")
+
+    vol_id = int(info.dwVolumeSerialNumber)
+    file_id = (int(info.nFileIndexHigh) << 32) | int(info.nFileIndexLow)
+    token = _ArtifactOwnershipToken(
+        device=vol_id,
+        inode=file_id,
+    )
+    return token, int(handle)
+
+
+def _close_windows_handle(handle: int) -> None:
+    if sys.platform == "win32" and handle != -1 and handle != 0:
+        ctypes_win = _ctypes_provider
+        wintypes = ctypes_win.wintypes
+        kernel32 = ctypes_win.WinDLL("kernel32", use_last_error=True)
+        close_h = kernel32.CloseHandle
+        close_h.argtypes = [wintypes.HANDLE]
+        close_h.restype = wintypes.BOOL
+        close_h(wintypes.HANDLE(handle))
 
 
 def _get_path_observation(path: Path) -> _FileToken:
@@ -629,60 +722,23 @@ def _validate_zip_container_candidate(
 def _promote_candidate_atomic_fail_if_exists(
     part_file: Path,
     final_file: Path,
-    is_posix: bool,
     owned_part_token: _ArtifactOwnershipToken | None,
 ) -> tuple[int | None, int | None]:
-    """Promote part_file to final_file with fail-if-exists semantics.
+    """Promote part_file to final_file using the atomic no-replace primitive."""
+    try:
+        _atomic_move_no_replace(part_file, final_file)
+    except FileExistsError as exc:
+        raise XlsxSnapshotStorageError(
+            "Promoted file already exists in private lease directory"
+        ) from exc
+    except OSError as exc:
+        raise XlsxSnapshotStorageError(
+            "Atomic promotion of snapshot candidate failed"
+        ) from exc
 
-    On POSIX systems with link(), hard-linking guarantees atomic fail-if-exists
-    semantics: if final_file already exists, os.link fails with FileExistsError
-    without overwriting final_file. Then part_file is unlinked.
-    On other platforms, os.rename provides fail-if-exists semantics.
-    """
-    if is_posix and hasattr(os, "link"):
-        try:
-            os.link(part_file, final_file)
-        except FileExistsError as exc:
-            raise XlsxSnapshotStorageError(
-                "Promoted file already exists in private lease directory"
-            ) from exc
-        except OSError as exc:
-            if getattr(exc, "errno", None) == 17:  # EEXIST
-                raise XlsxSnapshotStorageError(
-                    "Promoted file already exists in private lease directory"
-                ) from exc
-            raise XlsxSnapshotStorageError(
-                "Hard-link promotion of snapshot candidate failed"
-            ) from exc
-
-        fin_dev = owned_part_token.device if owned_part_token else None
-        fin_ino = owned_part_token.inode if owned_part_token else None
-
-        try:
-            part_file.unlink()
-        except OSError as exc:
-            raise _PartialPromotionError(
-                "Unlink of partial candidate after promotion failed",
-                promoted_device=fin_dev,
-                promoted_inode=fin_ino,
-            ) from exc
-
-        return fin_dev, fin_ino
-    else:
-        try:
-            os.rename(part_file, final_file)
-        except FileExistsError as exc:
-            raise XlsxSnapshotStorageError(
-                "Promoted file already exists in private lease directory"
-            ) from exc
-        except OSError as exc:
-            raise XlsxSnapshotStorageError(
-                "Atomic promotion of snapshot candidate failed"
-            ) from exc
-
-        fin_dev = owned_part_token.device if owned_part_token else None
-        fin_ino = owned_part_token.inode if owned_part_token else None
-        return fin_dev, fin_ino
+    fin_dev = owned_part_token.device if owned_part_token else None
+    fin_ino = owned_part_token.inode if owned_part_token else None
+    return fin_dev, fin_ino
 
 
 def _combine_exceptions(
@@ -824,7 +880,7 @@ def open_stable_xlsx_snapshot(
                 q_part = lease_dir / f".qpart-{uuid.uuid4().hex}"
                 moved_part = False
                 try:
-                    _atomic_move_no_replace(part_file, q_part, is_posix)
+                    _atomic_move_no_replace(part_file, q_part)
                     moved_part = True
                 except OSError as exc:
                     files_cleaned_successfully = False
@@ -858,7 +914,40 @@ def open_stable_xlsx_snapshot(
                         if is_owned:
                             if _fault_hook is not None:
                                 _fault_hook("inside_part_unlink", part_file, q_part)
-                            q_part.unlink()
+                            # R9-03: Re-attest identity of q_part before unlink
+                            try:
+                                post_part_lst = q_part.lstat()
+                                is_still_owned = False
+                                if not stat.S_ISLNK(
+                                    post_part_lst.st_mode
+                                ) and stat.S_ISREG(post_part_lst.st_mode):
+                                    post_dev, post_ino = _extract_device_and_inode(
+                                        post_part_lst
+                                    )
+                                    if (
+                                        owned_part_token is not None
+                                        and (
+                                            owned_part_token.inode is None
+                                            or post_ino == owned_part_token.inode
+                                        )
+                                        and (
+                                            owned_part_token.device is None
+                                            or post_dev == owned_part_token.device
+                                        )
+                                    ):
+                                        is_still_owned = True
+                                if is_still_owned:
+                                    q_part.unlink()
+                                else:
+                                    files_cleaned_successfully = False
+                                    cleanup_excs.append(
+                                        XlsxSnapshotCleanupError(
+                                            "Candidate file unproven or replaced"
+                                        )
+                                    )
+                            except OSError as post_exc:
+                                files_cleaned_successfully = False
+                                cleanup_excs.append(post_exc)
                         else:
                             files_cleaned_successfully = False
                             cleanup_excs.append(
@@ -868,7 +957,7 @@ def open_stable_xlsx_snapshot(
                             )
                             # Restore foreign file to original path if vacant
                             try:
-                                _atomic_move_no_replace(q_part, part_file, is_posix)
+                                _atomic_move_no_replace(q_part, part_file)
                             except OSError:
                                 pass
                     except OSError as exc:
@@ -884,7 +973,7 @@ def open_stable_xlsx_snapshot(
                 q_final = lease_dir / f".qfinal-{uuid.uuid4().hex}"
                 moved_final = False
                 try:
-                    _atomic_move_no_replace(final_file, q_final, is_posix)
+                    _atomic_move_no_replace(final_file, q_final)
                     moved_final = True
                 except OSError as exc:
                     files_cleaned_successfully = False
@@ -937,9 +1026,10 @@ def open_stable_xlsx_snapshot(
                                                 if not chk_chunk:
                                                     break
                                                 chk_hasher.update(chk_chunk)
+                                            exp_sha1 = owned_final_token.expected_sha256
                                             if (
                                                 chk_hasher.hexdigest().lower()
-                                                != owned_final_token.expected_sha256
+                                                != exp_sha1
                                             ):
                                                 is_owned = False
                                     except Exception:
@@ -952,7 +1042,80 @@ def open_stable_xlsx_snapshot(
                                     final_file,
                                     q_final,
                                 )
-                            q_final.unlink()
+                            # R9-03: Re-attest identity/size/sha before
+                            # unlink
+                            try:
+                                post_fin_lst = q_final.lstat()
+                                is_still_owned = False
+                                if not stat.S_ISLNK(
+                                    post_fin_lst.st_mode
+                                ) and stat.S_ISREG(post_fin_lst.st_mode):
+                                    post_dev, post_ino = _extract_device_and_inode(
+                                        post_fin_lst
+                                    )
+                                    if (
+                                        owned_final_token is not None
+                                        and (
+                                            owned_final_token.inode is None
+                                            or post_ino == owned_final_token.inode
+                                        )
+                                        and (
+                                            owned_final_token.device is None
+                                            or post_dev == owned_final_token.device
+                                        )
+                                    ):
+                                        is_still_owned = True
+                                        if (
+                                            owned_final_token.size is not None
+                                            and post_fin_lst.st_size
+                                            != owned_final_token.size
+                                        ):
+                                            is_still_owned = False
+
+                                        if (
+                                            is_still_owned
+                                            and owned_final_token.expected_sha256
+                                            is not None
+                                        ):
+                                            try:
+                                                chk_fd = _open_candidate_nofollow(
+                                                    q_final,
+                                                    owned_final_token.device,
+                                                    owned_final_token.inode,
+                                                )
+                                                with open(
+                                                    chk_fd, "rb", closefd=True
+                                                ) as chk_f:
+                                                    chk_hasher = hashlib.sha256()
+                                                    while True:
+                                                        chk_chunk = chk_f.read(
+                                                            _copy_chunk_size
+                                                        )
+                                                        if not chk_chunk:
+                                                            break
+                                                        chk_hasher.update(chk_chunk)
+                                                    oft = owned_final_token
+                                                    exp_sha = oft.expected_sha256
+                                                    if (
+                                                        chk_hasher.hexdigest().lower()
+                                                        != exp_sha
+                                                    ):
+                                                        is_still_owned = False
+                                            except Exception:
+                                                is_still_owned = False
+
+                                if is_still_owned:
+                                    q_final.unlink()
+                                else:
+                                    files_cleaned_successfully = False
+                                    cleanup_excs.append(
+                                        XlsxSnapshotCleanupError(
+                                            "Snapshot file unproven or replaced"
+                                        )
+                                    )
+                            except OSError as post_exc:
+                                files_cleaned_successfully = False
+                                cleanup_excs.append(post_exc)
                         else:
                             files_cleaned_successfully = False
                             cleanup_excs.append(
@@ -962,7 +1125,7 @@ def open_stable_xlsx_snapshot(
                             )
                             # Restore foreign file to original path if vacant
                             try:
-                                _atomic_move_no_replace(q_final, final_file, is_posix)
+                                _atomic_move_no_replace(q_final, final_file)
                             except OSError:
                                 pass
                     except OSError as exc:
@@ -979,7 +1142,7 @@ def open_stable_xlsx_snapshot(
                     q_dir = root / f".qdir-{uuid.uuid4().hex}"
                     moved_dir = False
                     try:
-                        _atomic_move_no_replace(lease_dir, q_dir, is_posix)
+                        _atomic_move_no_replace(lease_dir, q_dir)
                         moved_dir = True
                     except OSError as exc:
                         cln_err = XlsxSnapshotCleanupError(
@@ -1012,17 +1175,51 @@ def open_stable_xlsx_snapshot(
                             if is_dir_owned:
                                 if _fault_hook is not None:
                                     _fault_hook("inside_lease_rmdir", lease_dir, q_dir)
+                                # R9-03: Re-attest identity of q_dir before
+                                # rmdir
                                 try:
-                                    q_dir.rmdir()
-                                except OSError as rmdir_exc:
-                                    cleanup_excs.append(rmdir_exc)
-                                    # Restore directory to original path if vacant
-                                    try:
-                                        _atomic_move_no_replace(
-                                            q_dir, lease_dir, is_posix
+                                    post_dir_lst = q_dir.lstat()
+                                    is_dir_still_owned = False
+                                    if not stat.S_ISLNK(
+                                        post_dir_lst.st_mode
+                                    ) and stat.S_ISDIR(post_dir_lst.st_mode):
+                                        d_dev2, d_ino2 = _extract_device_and_inode(
+                                            post_dir_lst
                                         )
-                                    except OSError:
-                                        pass
+                                        if (
+                                            owned_lease_token is not None
+                                            and (
+                                                owned_lease_token.inode is None
+                                                or d_ino2 == owned_lease_token.inode
+                                            )
+                                            and (
+                                                owned_lease_token.device is None
+                                                or d_dev2 == owned_lease_token.device
+                                            )
+                                        ):
+                                            is_dir_still_owned = True
+
+                                    if is_dir_still_owned:
+                                        try:
+                                            q_dir.rmdir()
+                                        except OSError as rmdir_exc:
+                                            cleanup_excs.append(rmdir_exc)
+                                            # Restore directory to original path if
+                                            # vacant
+                                            try:
+                                                _atomic_move_no_replace(
+                                                    q_dir, lease_dir
+                                                )
+                                            except OSError:
+                                                pass
+                                    else:
+                                        cleanup_excs.append(
+                                            XlsxSnapshotCleanupError(
+                                                "Lease directory unproven or replaced"
+                                            )
+                                        )
+                                except OSError as post_exc:
+                                    cleanup_excs.append(post_exc)
                             else:
                                 cleanup_excs.append(
                                     XlsxSnapshotCleanupError(
@@ -1031,7 +1228,7 @@ def open_stable_xlsx_snapshot(
                                 )
                                 # Restore foreign directory to original path if vacant
                                 try:
-                                    _atomic_move_no_replace(q_dir, lease_dir, is_posix)
+                                    _atomic_move_no_replace(q_dir, lease_dir)
                                 except OSError:
                                     pass
                         except OSError as exc:
@@ -1042,8 +1239,9 @@ def open_stable_xlsx_snapshot(
         return cleanup_excs
 
     try:
-        # Create lease directory and record immutable descriptor anchor (fail-closed)
-        lease_dir_fd: int = -1
+        # Create lease dir & record immutable descriptor/handle anchor (fail-closed)
+        posix_dir_fd: int = -1
+        win_dir_handle: int = -1
         try:
             if is_posix:
                 lease_dir.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -1051,51 +1249,66 @@ def open_stable_xlsx_snapshot(
                     os.chmod(lease_dir, 0o700)
                 except OSError:
                     pass
-            else:
-                lease_dir.mkdir(parents=False, exist_ok=False)
 
-            if _fault_hook is not None:
-                _fault_hook("after_mkdir_before_anchor", lease_dir, None)
-
-            # Establish immutable descriptor anchor immediately after mkdir
-            open_flags = os.O_RDONLY
-            if hasattr(os, "O_DIRECTORY"):
-                open_flags |= os.O_DIRECTORY
-            if hasattr(os, "O_NOFOLLOW"):
-                open_flags |= os.O_NOFOLLOW
-            if hasattr(os, "O_BINARY"):
-                open_flags |= os.O_BINARY
-
-            try:
-                lease_dir_fd = os.open(lease_dir, open_flags)
                 if _fault_hook is not None:
-                    _fault_hook("after_anchor_open_before_fstat", lease_dir, None)
-                dir_st = os.fstat(lease_dir_fd)
-                l_dev, l_ino = _extract_device_and_inode(dir_st)
-                owned_lease_token = _ArtifactOwnershipToken(
-                    device=l_dev,
-                    inode=l_ino,
-                )
-            except OSError as exc:
-                raise XlsxSnapshotStorageError(
-                    "Failed to establish lease directory anchor"
-                ) from exc
-        except OSError as exc:
-            if lease_dir_fd >= 0:
+                    _fault_hook("after_mkdir_before_anchor", lease_dir, None)
+
+                # Establish immutable descriptor anchor immediately after mkdir
+                open_flags = os.O_RDONLY
+                if hasattr(os, "O_DIRECTORY"):
+                    open_flags |= os.O_DIRECTORY
+                if hasattr(os, "O_NOFOLLOW"):
+                    open_flags |= os.O_NOFOLLOW
+
                 try:
-                    os.close(lease_dir_fd)
+                    posix_dir_fd = os.open(lease_dir, open_flags)
+                    if _fault_hook is not None:
+                        _fault_hook("after_anchor_open_before_fstat", lease_dir, None)
+                    dir_st = os.fstat(posix_dir_fd)
+                    l_dev, l_ino = _extract_device_and_inode(dir_st)
+                    owned_lease_token = _ArtifactOwnershipToken(
+                        device=l_dev,
+                        inode=l_ino,
+                    )
+                except OSError as exc:
+                    raise XlsxSnapshotStorageError(
+                        "Failed to establish lease directory anchor"
+                    ) from exc
+            else:
+                # Windows real directory handle anchor via CreateFileW
+                if _fault_hook is not None:
+                    _fault_hook("after_mkdir_before_anchor", lease_dir, None)
+
+                try:
+                    (
+                        owned_lease_token,
+                        win_dir_handle,
+                    ) = _create_and_anchor_lease_dir_windows(lease_dir)
+                except OSError as exc:
+                    raise XlsxSnapshotStorageError(
+                        "Failed to establish lease directory anchor"
+                    ) from exc
+        except OSError as exc:
+            if posix_dir_fd >= 0:
+                try:
+                    os.close(posix_dir_fd)
                 except OSError:
                     pass
-                lease_dir_fd = -1
+                posix_dir_fd = -1
+            if win_dir_handle != -1:
+                _close_windows_handle(win_dir_handle)
+                win_dir_handle = -1
             if isinstance(exc, XlsxSnapshotAcquisitionError):
                 raise
             raise XlsxSnapshotStorageError("Failed to create lease directory") from exc
         finally:
-            if lease_dir_fd >= 0:
+            if posix_dir_fd >= 0:
                 try:
-                    os.close(lease_dir_fd)
+                    os.close(posix_dir_fd)
                 except OSError:
                     pass
+            if win_dir_handle != -1:
+                _close_windows_handle(win_dir_handle)
 
         # Post-mkdir verification of path identity against immutable anchor
         try:
@@ -1347,25 +1560,16 @@ def open_stable_xlsx_snapshot(
                 raise
             raise XlsxSnapshotStorageError("Failed to stat candidate file") from exc
 
-        # Promote candidate to final with fail-if-exists semantics
-        try:
-            promo_dev, promo_ino = _promote_candidate_atomic_fail_if_exists(
-                part_file, final_file, is_posix, owned_part_token
-            )
-            owned_final_token = _ArtifactOwnershipToken(
-                device=promo_dev,
-                inode=promo_ino,
-                size=copied_bytes,
-                expected_sha256=copy_sha256,
-            )
-        except _PartialPromotionError as promo_err:
-            owned_final_token = _ArtifactOwnershipToken(
-                device=promo_err.promoted_device,
-                inode=promo_err.promoted_inode,
-                size=copied_bytes,
-                expected_sha256=copy_sha256,
-            )
-            raise promo_err
+        # Promote candidate to final with atomic fail-if-exists primitive
+        promo_dev, promo_ino = _promote_candidate_atomic_fail_if_exists(
+            part_file, final_file, owned_part_token
+        )
+        owned_final_token = _ArtifactOwnershipToken(
+            device=promo_dev,
+            inode=promo_ino,
+            size=copied_bytes,
+            expected_sha256=copy_sha256,
+        )
 
         if is_posix:
             try:

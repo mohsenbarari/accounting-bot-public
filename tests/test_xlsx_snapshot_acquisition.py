@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import dataclasses
 import hashlib
 import io
@@ -2388,29 +2389,28 @@ def test_r8_10_first_lease_lstat_transient_failure_no_replacement_oracle(
     assert list(root.iterdir()) == []
 
 
-def test_r8_11_partial_posix_promotion_cleanup_without_replacement_oracle(
+def test_r8_11_atomic_promotion_failure_cleans_owned_artifacts_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test 11: Link succeeds + unlink fails; root empty."""
-    if os.name != "posix":
-        pytest.skip("POSIX hard link promotion test only applicable on POSIX")
+    """Test 11: Promotion failure aborts cleanly and removes candidate."""
+    import accounting_local_agent.xlsx_snapshot_acquisition as mod
 
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"
     root.mkdir()
 
-    orig_unlink = Path.unlink
-    unlink_failed = False
+    orig_move = mod._atomic_move_no_replace
+    move_failed = False
 
-    def failing_unlink(self: Path) -> None:
-        nonlocal unlink_failed
-        if not unlink_failed and self.name == "snapshot.part":
-            unlink_failed = True
-            raise OSError("Simulated partial promotion part unlink lock")
-        orig_unlink(self)
+    def failing_move(s: Path, d: Path) -> None:
+        nonlocal move_failed
+        if not move_failed and s.name == "snapshot.part" and d.name == "snapshot.xlsx":
+            move_failed = True
+            raise OSError("Simulated atomic promotion failure")
+        orig_move(s, d)
 
-    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    monkeypatch.setattr(mod, "_atomic_move_no_replace", failing_move)
 
     with pytest.raises(
         (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
@@ -2420,57 +2420,52 @@ def test_r8_11_partial_posix_promotion_cleanup_without_replacement_oracle(
 
     flat = _flatten_exceptions(exc_info.value)
     assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
-
-    # All owned items removed, snapshot_root is clean
     assert list(root.iterdir()) == []
 
 
-def test_r8_12_partial_posix_promotion_with_byte_identical_foreign_final_oracle(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_r8_12_atomic_promotion_with_foreign_final_oracle(
+    tmp_path: Path,
 ) -> None:
-    """Test 12: Final replaced with byte-identical foreign file; survives."""
-    if os.name != "posix":
-        pytest.skip("POSIX hard link promotion test only applicable on POSIX")
-
+    """Test 12: Final pre-exists before promotion; foreign survives."""
     src = tmp_path / "source.xlsx"
     valid_bytes = _build_valid_test_xlsx()
     src.write_bytes(valid_bytes)
     root = tmp_path / "root"
     root.mkdir()
 
-    orig_unlink = Path.unlink
-    unlink_failed = False
+    foreign_bytes = b"FOREIGN_PREEXISTING_FINAL_SNAPSHOT_R8"
     foreign_final_p: Path | None = None
 
-    def failing_unlink_and_swap_final(self: Path) -> None:
-        nonlocal unlink_failed, foreign_final_p
-        if not unlink_failed and self.name == "snapshot.part":
-            unlink_failed = True
-            final_p = self.parent / "snapshot.xlsx"
-            # Recreate foreign file with identical bytes (new inode)
-            orig_unlink(final_p)
-            final_p.write_bytes(valid_bytes)
+    def inject_foreign_final_before_promotion(
+        stage: str, s: Path, t: Path | None
+    ) -> None:
+        nonlocal foreign_final_p
+        if stage == "before_promotion" and t is not None:
+            final_p = t.parent / "snapshot.xlsx"
+            final_p.write_bytes(foreign_bytes)
             foreign_final_p = final_p
-            raise OSError("Simulated partial promotion part unlink lock")
-        orig_unlink(self)
-
-    monkeypatch.setattr(Path, "unlink", failing_unlink_and_swap_final)
 
     try:
         with pytest.raises(
             (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
         ) as exc_info:
-            with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=inject_foreign_final_before_promotion,
+            ):
                 pass
 
         flat = _flatten_exceptions(exc_info.value)
         assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
         assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
 
-        # Foreign byte-identical file MUST survive
+        # Foreign file MUST survive
         assert foreign_final_p is not None
         assert foreign_final_p.exists()
-        assert foreign_final_p.read_bytes() == valid_bytes
+        assert foreign_final_p.read_bytes() == foreign_bytes
     finally:
         if foreign_final_p is not None and foreign_final_p.exists():
             foreign_final_p.unlink()
@@ -2506,7 +2501,6 @@ def test_r8_13_real_lease_exit_race_between_lstat_and_open_oracle(
             pass
 
     flat = _flatten_exceptions(exc_info.value)
-    # IntegrityError present, StorageError NOT present as top-level exception
     assert any(isinstance(e, XlsxSnapshotIntegrityError) for e in flat)
     assert not any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
     assert list(root.iterdir()) == []
@@ -2540,7 +2534,6 @@ def test_r8_14_simulated_identity_collision_protection_oracle(
 
     def mock_lstat(self: Path) -> os.stat_result:
         real_st = orig_lstat(self)
-        # Mock simulated identity collision: preserve original dev & ino
         if (
             self.name == "snapshot.xlsx" or self.name.startswith(".qfinal-")
         ) and original_ino is not None:
@@ -2548,7 +2541,7 @@ def test_r8_14_simulated_identity_collision_protection_oracle(
                 (
                     real_st.st_mode,
                     original_ino,
-                    original_dev if original_dev is not None else real_st.st_dev,
+                    (original_dev if original_dev is not None else real_st.st_dev),
                     real_st.st_nlink,
                     real_st.st_uid,
                     real_st.st_gid,
@@ -2611,9 +2604,7 @@ def test_r8_15_real_mtime_zero_integrity_oracle(tmp_path: Path) -> None:
             _sleeper=lambda _: None,
             _fault_hook=set_candidate_mtime_zero,
         ) as snap:
-            # Assert that final snapshot is indeed at mtime_ns == 0
             assert snap.snapshot_path.stat().st_mtime_ns == 0
-            # Mutate mtime inside context
             os.utime(snap.snapshot_path, ns=(1_000_000_000, 1_000_000_000))
 
     assert list(root.iterdir()) == []
@@ -2628,7 +2619,6 @@ def test_r8_16_real_identity_unavailable_provider_fallback_oracle(
     root = tmp_path / "root"
     root.mkdir()
 
-    # Monkeypatch the real identity provider in xlsx_snapshot_acquisition
     import accounting_local_agent.xlsx_snapshot_acquisition as mod
 
     def mock_extract(st: os.stat_result) -> tuple[int | None, int | None]:
@@ -2642,3 +2632,548 @@ def test_r8_16_real_identity_unavailable_provider_fallback_oracle(
         assert len(read_res.snapshot.sheets) == 4
 
     assert list(root.iterdir()) == []
+
+
+def test_r9_01_link_unlink_api_not_used_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R9-02 Oracle: os.link is NOT used anywhere during snapshot lifecycle."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    link_called = False
+
+    def failing_link(s: Any, d: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal link_called
+        link_called = True
+        raise AssertionError("os.link must not be called under R9-02")
+
+    monkeypatch.setattr(os, "link", failing_link)
+
+    with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
+        assert snap.byte_count == len(_build_valid_test_xlsx())
+
+    # Oracle invariant: LINK_UNLINK_API_USED = False
+    assert link_called is False, "LINK_UNLINK_API_USED must be False"
+    assert list(root.iterdir()) == []
+
+
+def test_r9_02_quarantine_foreign_source_survived_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R9-02 Oracle: Foreign source at quarantine destination is preserved."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    fixed_uuid = "fixed_uuid_qpart_r9"
+    foreign_bytes = b"FOREIGN_QPART_SOURCE_DATA_R9"
+    foreign_qpart: Path | None = None
+
+    class FixedUUID:
+        hex = fixed_uuid
+
+    def inject_qpart_destination(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal foreign_qpart
+        if stage == "before_copy_open" and t is not None:
+            foreign_qpart = t.parent / f".qpart-{fixed_uuid}"
+            foreign_qpart.write_bytes(foreign_bytes)
+
+    monkeypatch.setattr(uuid, "uuid4", lambda: FixedUUID())
+
+    try:
+
+        def fail_during_copy(stage: str, s: Path, t: Path | None) -> None:
+            inject_qpart_destination(stage, s, t)
+            if stage == "before_write":
+                raise OSError("Simulated write failure to trigger part cleanup")
+
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=fail_during_copy,
+            ):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Oracle invariant: QUARANTINE_FOREIGN_SOURCE_SURVIVED = True
+        assert foreign_qpart is not None
+        assert foreign_qpart.exists()
+        assert foreign_qpart.read_bytes() == foreign_bytes
+    finally:
+        monkeypatch.undo()
+        if foreign_qpart is not None and foreign_qpart.exists():
+            foreign_qpart.unlink()
+            try:
+                foreign_qpart.parent.rmdir()
+            except OSError:
+                pass
+
+
+def test_r9_03_promotion_foreign_part_survived_and_displaced_owned_survived_oracle(
+    tmp_path: Path,
+) -> None:
+    """R9-02 Oracle: Foreign final file & displaced owned part survive promotion."""
+    import accounting_local_agent.xlsx_snapshot_acquisition as mod
+
+    src = tmp_path / "source.xlsx"
+    valid_bytes = _build_valid_test_xlsx()
+    src.write_bytes(valid_bytes)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    # 1. Test direct promotion primitive fail-if-exists semantics
+    direct_dir = tmp_path / "direct_promo"
+    direct_dir.mkdir()
+    owned_cand = direct_dir / "snapshot.part"
+    owned_cand.write_bytes(b"OWNED_CANDIDATE_DATA_R9")
+    foreign_final_direct = direct_dir / "snapshot.xlsx"
+    foreign_final_direct.write_bytes(b"FOREIGN_FINAL_DIRECT_R9")
+
+    promo_failed = False
+    try:
+        mod._promote_candidate_atomic_fail_if_exists(
+            owned_cand, foreign_final_direct, None
+        )
+    except XlsxSnapshotStorageError:
+        promo_failed = True
+
+    assert promo_failed is True
+    assert foreign_final_direct.read_bytes() == b"FOREIGN_FINAL_DIRECT_R9", (
+        "PROMOTION_FOREIGN_PART_SURVIVED must be True"
+    )
+    assert owned_cand.read_bytes() == b"OWNED_CANDIDATE_DATA_R9", (
+        "PROMOTION_DISPLACED_OWNED_SURVIVED must be True"
+    )
+
+    # 2. Test full context lifecycle with foreign final collision
+    foreign_bytes = b"FOREIGN_FINAL_PREEXISTING_R9"
+    foreign_final: Path | None = None
+
+    def inject_foreign_final(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal foreign_final
+        if stage == "before_promotion" and t is not None:
+            final_p = t.parent / "snapshot.xlsx"
+            final_p.write_bytes(foreign_bytes)
+            foreign_final = final_p
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=inject_foreign_final,
+            ):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Oracle invariant: PROMOTION_FOREIGN_PART_SURVIVED = True
+        assert foreign_final is not None
+        assert foreign_final.exists()
+        assert foreign_final.read_bytes() == foreign_bytes
+    finally:
+        if foreign_final is not None and foreign_final.exists():
+            foreign_final.unlink()
+            for qp in foreign_final.parent.glob(".qpart-*"):
+                qp.unlink()
+            try:
+                foreign_final.parent.rmdir()
+            except OSError:
+                pass
+
+
+def test_r9_04_rename_noreplace_unavailable_fails_closed_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R9-02 Oracle: renameat2 unavailable/ENOSYS fails closed with no fallback."""
+    import accounting_local_agent.xlsx_snapshot_acquisition as mod
+
+    foreign_dest = tmp_path / "foreign_dest.txt"
+    foreign_dest.write_bytes(b"FOREIGN_NO_OVERWRITE_R9")
+
+    test_src = tmp_path / "test_src.txt"
+    test_src.write_bytes(b"TEST_SRC_DATA_R9")
+
+    def mock_renameat2_unsupported(*args: Any, **kwargs: Any) -> int:
+        ctypes.set_errno(38)  # ENOSYS
+        return -1
+
+    class MockLibC:
+        renameat2 = mock_renameat2_unsupported
+
+    if sys.platform.startswith("linux"):
+        monkeypatch.setattr(ctypes, "CDLL", lambda *a, **k: MockLibC())
+
+    failed_closed = False
+    try:
+        mod._atomic_move_no_replace(test_src, foreign_dest)
+    except (OSError, FileExistsError):
+        failed_closed = True
+
+    # Oracle invariants:
+    assert failed_closed is True, (
+        "RENAME_NOREPLACE_UNAVAILABLE_FAILED_CLOSED must be True"
+    )
+    assert foreign_dest.read_bytes() == b"FOREIGN_NO_OVERWRITE_R9", (
+        "RENAME_FALLBACK_FOREIGN_OVERWRITTEN must be False"
+    )
+
+
+def test_r9_05_empty_foreign_qdir_survived_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R9-02 Oracle: Pre-existing EMPTY foreign directory at qdir is preserved."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    fixed_uuid = "fixed_empty_qdir_uuid_r9"
+    foreign_empty_qdir = root / f".qdir-{fixed_uuid}"
+
+    class FixedUUID:
+        hex = fixed_uuid
+
+    def inject_empty_qdir(stage: str, s: Path, t: Path | None) -> None:
+        if stage == "before_lease_reverify":
+            foreign_empty_qdir.mkdir(exist_ok=True)
+
+    monkeypatch.setattr(uuid, "uuid4", lambda: FixedUUID())
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotCleanupError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=inject_empty_qdir,
+            ):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Oracle invariant: EMPTY_FOREIGN_QDIR_SURVIVED = True
+        assert foreign_empty_qdir.exists()
+        assert foreign_empty_qdir.is_dir()
+    finally:
+        monkeypatch.undo()
+        if foreign_empty_qdir.exists():
+            try:
+                foreign_empty_qdir.rmdir()
+            except OSError:
+                pass
+
+
+def test_r9_06_qpart_postverify_after_hook_replaces_oracle(
+    tmp_path: Path,
+) -> None:
+    """R9-03: qpart swapped in hook is not deleted; displaced owned preserved."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    foreign_bytes = b"FOREIGN_QPART_SWAP_PAYLOAD_R9"
+    foreign_qpart_path: Path | None = None
+    displaced_owned_p: Path | None = None
+
+    def swap_qpart_in_hook(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal foreign_qpart_path, displaced_owned_p
+        if stage == "inside_part_unlink" and t is not None:
+            displaced = t.parent / f"displaced_{t.name}"
+            t.rename(displaced)
+            displaced_owned_p = displaced
+            t.write_bytes(foreign_bytes)
+            foreign_qpart_path = t
+
+    def trigger_part_cleanup(stage: str, s: Path, t: Path | None) -> None:
+        if stage == "before_write":
+            raise OSError("Trigger cleanup of part file")
+        swap_qpart_in_hook(stage, s, t)
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=trigger_part_cleanup,
+            ):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Oracle invariants:
+        assert foreign_qpart_path is not None
+        assert foreign_qpart_path.exists()
+        assert foreign_qpart_path.read_bytes() == foreign_bytes, (
+            "QPART_POSTVERIFY_FOREIGN_SURVIVED must be True"
+        )
+        assert displaced_owned_p is not None
+        assert displaced_owned_p.exists(), (
+            "QPART_POSTVERIFY_DISPLACED_OWNED_SURVIVED must be True"
+        )
+    finally:
+        if foreign_qpart_path is not None and foreign_qpart_path.exists():
+            foreign_qpart_path.unlink()
+        if displaced_owned_p is not None and displaced_owned_p.exists():
+            displaced_owned_p.unlink()
+        for d in root.glob("acq-*"):
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+
+
+def test_r9_07_qfinal_postverify_after_hook_replaces_oracle(
+    tmp_path: Path,
+) -> None:
+    """R9-03: qfinal swapped in hook is not deleted; displaced owned preserved."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    foreign_bytes = b"FOREIGN_QFINAL_SWAP_PAYLOAD_R9"
+    foreign_qfinal_path: Path | None = None
+    displaced_owned_p: Path | None = None
+
+    def swap_qfinal_in_hook(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal foreign_qfinal_path, displaced_owned_p
+        if stage == "inside_final_unlink" and t is not None:
+            displaced = t.parent / f"displaced_{t.name}"
+            t.rename(displaced)
+            displaced_owned_p = displaced
+            t.write_bytes(foreign_bytes)
+            foreign_qfinal_path = t
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotCleanupError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=swap_qfinal_in_hook,
+            ):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Oracle invariants:
+        assert foreign_qfinal_path is not None
+        assert foreign_qfinal_path.exists()
+        assert foreign_qfinal_path.read_bytes() == foreign_bytes, (
+            "QFINAL_POSTVERIFY_FOREIGN_SURVIVED must be True"
+        )
+        assert displaced_owned_p is not None
+        assert displaced_owned_p.exists(), (
+            "QFINAL_POSTVERIFY_DISPLACED_OWNED_SURVIVED must be True"
+        )
+    finally:
+        if foreign_qfinal_path is not None and foreign_qfinal_path.exists():
+            foreign_qfinal_path.unlink()
+        if displaced_owned_p is not None and displaced_owned_p.exists():
+            displaced_owned_p.unlink()
+        for d in root.glob("acq-*"):
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+
+
+def test_r9_08_qdir_postverify_after_hook_replaces_oracle(
+    tmp_path: Path,
+) -> None:
+    """R9-03 Oracle: qdir replaced in hook is not rmdir'd; displaced owned preserved."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_valid_test_xlsx())
+    root = tmp_path / "root"
+    root.mkdir()
+
+    foreign_payload_bytes = b"FOREIGN_QDIR_INTERNAL_DATA_R9"
+    foreign_qdir_path: Path | None = None
+    displaced_owned_p: Path | None = None
+
+    def swap_qdir_in_hook(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal foreign_qdir_path, displaced_owned_p
+        if stage == "inside_lease_rmdir" and t is not None:
+            displaced = t.parent / f"displaced_{t.name}"
+            t.rename(displaced)
+            displaced_owned_p = displaced
+            t.mkdir()
+            (t / "foreign_file.txt").write_bytes(foreign_payload_bytes)
+            foreign_qdir_path = t
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotCleanupError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=swap_qdir_in_hook,
+            ):
+                pass
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
+
+        # Oracle invariants:
+        assert foreign_qdir_path is not None
+        assert foreign_qdir_path.exists()
+        assert (foreign_qdir_path / "foreign_file.txt").exists(), (
+            "QDIR_POSTVERIFY_FOREIGN_SURVIVED must be True"
+        )
+        assert displaced_owned_p is not None
+        assert displaced_owned_p.exists(), (
+            "QDIR_POSTVERIFY_DISPLACED_OWNED_SURVIVED must be True"
+        )
+    finally:
+        if foreign_qdir_path is not None and foreign_qdir_path.exists():
+            for f in foreign_qdir_path.iterdir():
+                f.unlink()
+            try:
+                foreign_qdir_path.rmdir()
+            except OSError:
+                pass
+        if displaced_owned_p is not None and displaced_owned_p.exists():
+            try:
+                displaced_owned_p.rmdir()
+            except OSError:
+                pass
+
+
+def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R9-01 Oracle: Windows handle anchor fails closed on CreateFileW/GetInfo error."""
+    import accounting_local_agent.xlsx_snapshot_acquisition as mod
+
+    lease_dir = tmp_path / "test_lease_win"
+
+    class MockWintypes:
+        LPCWSTR = ctypes.c_wchar_p
+        DWORD = ctypes.c_uint32
+        LPVOID = ctypes.c_void_p
+        HANDLE = ctypes.c_void_p
+        BOOL = ctypes.c_int
+        FILETIME = ctypes.c_uint64
+
+    class MockFunc:
+        def __init__(self, fn: Any) -> None:
+            self.fn = fn
+            self.argtypes: Any = None
+            self.restype: Any = None
+
+        def __call__(self, *args: Any, **kwargs: Any) -> Any:
+            return self.fn(*args, **kwargs)
+
+    class MockKernel32FailCreate:
+        def __init__(self) -> None:
+            self.CreateFileW = MockFunc(lambda *args: -1)
+            self.GetFileInformationByHandle = MockFunc(lambda *args: True)
+            self.CloseHandle = MockFunc(lambda *args: True)
+
+    class MockCtypesWin:
+        wintypes = MockWintypes()
+
+        def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
+            return MockKernel32FailCreate()
+
+        def get_last_error(self) -> int:
+            return 5
+
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesWin())
+
+    with pytest.raises(OSError, match="CreateFileW failed"):
+        mod._create_and_anchor_lease_dir_windows(lease_dir)
+
+    class MockKernel32FailGetInfo:
+        def __init__(self) -> None:
+            self.closed = False
+            self.CreateFileW = MockFunc(lambda *args: 12345)
+            self.GetFileInformationByHandle = MockFunc(lambda *args: False)
+            self.CloseHandle = MockFunc(self._close)
+
+        def _close(self, *args: Any) -> bool:
+            self.closed = True
+            return True
+
+    mock_k32_info = MockKernel32FailGetInfo()
+
+    class MockCtypesWinInfo:
+        wintypes = MockWintypes()
+
+        def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
+            return mock_k32_info
+
+        def get_last_error(self) -> int:
+            return 6
+
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesWinInfo())
+
+    lease_dir_2 = tmp_path / "test_lease_win_2"
+    with pytest.raises(OSError, match="GetFileInformationByHandle failed"):
+        mod._create_and_anchor_lease_dir_windows(lease_dir_2)
+
+    assert mock_k32_info.closed is True
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows platform-conditional test only runs on Windows runtime",
+)
+def test_r9_10_windows_runtime_full_lifecycle_platform_conditional(
+    tmp_path: Path,
+) -> None:
+    """R9-01 Oracle: Real Windows runtime full acquisition, yield, and cleanup."""
+    src = tmp_path / "source.xlsx"
+    valid_bytes = _build_valid_test_xlsx()
+    src.write_bytes(valid_bytes)
+    root = tmp_path / "root"
+    root.mkdir()
+
+    initial_src_stat = src.stat()
+
+    with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
+        assert snap.byte_count == len(valid_bytes)
+        assert snap.snapshot_path.exists()
+        read_res = read_xlsx_source_snapshot(snap.snapshot_path)
+        assert len(read_res.snapshot.sheets) == 4
+
+    assert list(root.iterdir()) == []
+
+    final_src_stat = src.stat()
+    assert src.read_bytes() == valid_bytes
+    assert final_src_stat.st_size == initial_src_stat.st_size
