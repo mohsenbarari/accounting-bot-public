@@ -2,9 +2,13 @@
 
 - Phase: 1 — source and data-model foundation
 - Gate contribution: G1 physical XLSX-to-validated-source boundary only; this package cannot close G1
-- Status: Issued — implementation and evidence pending
+- Status: Accepted and merged
 - Issued by: Codex Project Manager
 - Issued on: 2026-08-31
+- Accepted by: Codex Project Manager
+- Accepted on: 2026-09-01
+- Review evidence: PR #19 and final CI Run `33505486610`
+- Merge commit: `638053a7968110b5d3631b74d1b155da5304cd0a`
 - Required skill: `accounting-bot-implementer`
 - Branch: `antigravity/phase-01-streaming-xlsx-source-reader`
 - Baseline: latest clean `origin/main` containing this Work Package and ADR-0008
@@ -170,3 +174,16 @@ Start only in `/srv/accounting-bot/workspace`, with a clean `main` equal to `ori
 Stop for Codex if the baseline is dirty/divergent, an accepted rule conflicts with the supported XLSX representation, reliable exclusion needs an unapproved formula/encoding rule, a dependency/contract change is needed, the benchmark cannot meet its target, or progress appears to require real data or any out-of-scope action. Do not substitute a permissive decoder, partial snapshot or formula cache to make tests pass.
 
 Complete the skill's `handoff.md`, `acceptance-matrix.md` and `test-results.txt` templates, run the validator, commit only in-scope implementation/evidence, and report the exact baseline/HEAD, changed files, public API, decoding/formula/pass strategy, test/benchmark commands and results, remaining risks and protected-asset check. Stop for independent Codex review. Do not Push, create a PR, Merge, deploy, edit Roadmap or start WP-06.
+
+## Independent acceptance record
+
+Codex Project Manager accepted this package after independently reviewing candidate `6684dda192a7cac9b66fcb9442b377e04b6e77db` against baseline `de6c475c1c6a96036e8962f633c8825e6ec3cf20`, validating the successive Reader, raw-preservation, selective-SST, constructor/property/lifecycle, performance and cross-platform RSS corrections, and merging [PR #19](https://github.com/mohsenbarari/accounting-bot-public/pull/19).
+
+- All 200 tests passed independently on the development server and in both Linux and Windows jobs of [CI Run 33505486610](https://github.com/mohsenbarari/accounting-bot-public/actions/runs/33505486610).
+- Final CI measured the contract-complete 15,000-active-row benchmark at `2.9061s / 58.96 MiB` on Linux and `4.6764s / 59.34 MiB` on Windows, below the unchanged limits of 15 seconds and 128 MiB absolute call-window RSS.
+- Independent server replay passed strict native and `--platform win32` Mypy, six focused RSS/Sampler/VmRSS tests, the complete suite and three benchmark repetitions: `10.5314s / 59.04 MiB`, `10.1004s / 59.12 MiB` and `10.5874s / 59.13 MiB`.
+- Generated ZIP/XML fixtures cover both namespace families, relationship and part resolution, exact Persian/technical headers, sparse/rich/shared text, Decimal/raw preservation, strict cell coordinates, formula/cache and array/data-table exclusion, row activity, UUIDv7 identity, all-or-nothing failure and read-only file integrity.
+- Parsed results were compared with independent WP-03/WP-04 oracles and exercised complete Insert/Edit/Void/Unchanged/reactivation planning, idempotency, randomized physical/string representations and late fourth-sheet failure.
+- Lock/frozen sync, Ruff format/lint, strict cross-platform Mypy, Handoff validation, diff checks and failure-on-match prohibited-asset/sensitive-pattern scans passed. No reference workbook, real data, database, identity, secret or production asset was accessed or modified.
+
+Acceptance is limited to the read-only physical XLSX-to-validated-source boundary proved with generated synthetic workbooks. Stable-copy acquisition, Save/OneDrive monitoring, Excel COM/UUID writing, fiscal/archive selection, business requiredness, real-workbook reconciliation, SQLite/import commit, Outbox and end-to-end G1 evidence remain outside this package. G1 remains open.
