@@ -2365,12 +2365,14 @@ def get_current_process_rss_mib() -> float:
                 f"Windows GetProcessMemoryInfo failed with error code {{err}}"
             )
 
-        val = counters.WorkingSetSize / (1024.0 * 1024.0)
-        if val <= 0.0:
+        working_set_bytes = int(counters.WorkingSetSize)
+        working_set_mib = float(working_set_bytes) / (1024.0 * 1024.0)
+        if working_set_mib <= 0.0:
             raise RuntimeError(
-                f"Windows GetProcessMemoryInfo returned non-positive set: {{val}}"
+                "Windows GetProcessMemoryInfo returned non-positive "
+                f"set: {{working_set_mib}}"
             )
-        return val
+        return working_set_mib
     elif sys.platform.startswith("linux"):
         try:
             with open("/proc/self/status", encoding="utf-8") as f:
@@ -2686,12 +2688,14 @@ def _get_current_process_rss_mib() -> float:
                 f"Windows GetProcessMemoryInfo failed with error code {err}"
             )
 
-        val = counters.WorkingSetSize / (1024.0 * 1024.0)
-        if val <= 0.0:
+        working_set_bytes = int(counters.WorkingSetSize)
+        working_set_mib = float(working_set_bytes) / (1024.0 * 1024.0)
+        if working_set_mib <= 0.0:
             raise RuntimeError(
-                f"Windows GetProcessMemoryInfo returned non-positive working set: {val}"
+                "Windows GetProcessMemoryInfo returned non-positive working "
+                f"set: {working_set_mib}"
             )
-        return val
+        return working_set_mib
     elif sys.platform.startswith("linux"):
         try:
             with open("/proc/self/status", encoding="utf-8") as f:
