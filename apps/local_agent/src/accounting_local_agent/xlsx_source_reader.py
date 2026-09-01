@@ -716,14 +716,19 @@ def _parse_shared_strings_table(
         try:
             context = _secure_iterparse(stream, events=("start", "end"))
             root_checked = False
+            root_elem: etree._Element | None = None
+            doctype_checked = False
             for event, elem in context:
-                tree = elem.getroottree()
-                if tree is not None and tree.docinfo.doctype:
-                    raise XlsxStructureError(REASON_STRUCTURE_MALFORMED_XML)
+                if not doctype_checked:
+                    doctype_checked = True
+                    tree = elem.getroottree()
+                    if tree is not None and tree.docinfo.doctype:
+                        raise XlsxStructureError(REASON_STRUCTURE_MALFORMED_XML)
 
                 if event == "start":
                     if not root_checked:
                         root_checked = True
+                        root_elem = elem
                         if elem.tag not in tuple(
                             f"{{{ns}}}sst" for ns in _VALID_SPREADSHEETML_NAMESPACES
                         ):
@@ -773,6 +778,9 @@ def _parse_shared_strings_table(
                     elem.clear()
                     while elem.getprevious() is not None:
                         del elem.getparent()[0]
+
+            if root_elem is not None:
+                root_elem.clear()
         except XlsxSourceReadError:
             raise
         except Exception as e:
@@ -1089,9 +1097,11 @@ def _discover_sheet_metadata_and_needed_sst(
                         candidate_data_rows.append((physical_row_num, row_cells))
 
                     elem.clear()
-                    if parent is not None:
-                        while len(parent) > 0 and parent[0] is not elem:
-                            del parent[0]
+                    while elem.getprevious() is not None:
+                        del elem.getparent()[0]
+
+            if root_element is not None:
+                root_element.clear()
         except XlsxSourceReadError:
             raise
         except Exception as e:
@@ -1909,9 +1919,11 @@ def _read_sheet_snapshot_and_locations(
                             )
 
                     elem.clear()
-                    if parent is not None:
-                        while len(parent) > 0 and parent[0] is not elem:
-                            del parent[0]
+                    while elem.getprevious() is not None:
+                        del elem.getparent()[0]
+
+            if root_element is not None:
+                root_element.clear()
         except XlsxSourceReadError:
             raise
         except Exception as e:
@@ -2206,6 +2218,9 @@ def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
             )
             shared_strings_map.update(sec_strings)
 
+    candidate_sst_rows_by_sheet.clear()
+    initial_sst_consumers.clear()
+
     # Step 8: Pass 2 on all approved sheets -> read rows and locations (R4-01..R4-04)
     all_sheet_inputs: list[SourceSheetInput] = []
     all_locations: dict[uuid.UUID, SourceRowLocation] = {}
@@ -2231,6 +2246,10 @@ def _read_xlsx_from_zip(zf: zipfile.ZipFile) -> XlsxSourceReadResult:
                     physical_row_number=row_loc.physical_row_number,
                 )
             all_locations[u] = row_loc
+
+    formula_coverage_by_sheet.clear()
+    shared_strings_map.clear()
+    sheet_parts.clear()
 
     # Step 9: Construct WP-04 snapshot with exception mapping (R4-04)
     try:

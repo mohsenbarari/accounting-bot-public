@@ -2283,10 +2283,11 @@ def get_peak_mem_mib():
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
+
         class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
             _fields_ = [
-                ("cb", wintypes.DWORD),
-                ("PageFaultCount", wintypes.DWORD),
+                ("cb", ctypes.c_uint32),
+                ("PageFaultCount", ctypes.c_uint32),
                 ("PeakWorkingSetSize", ctypes.c_size_t),
                 ("WorkingSetSize", ctypes.c_size_t),
                 ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
@@ -2296,20 +2297,46 @@ def get_peak_mem_mib():
                 ("PagefileUsage", ctypes.c_size_t),
                 ("PeakPagefileUsage", ctypes.c_size_t),
             ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.argtypes = []
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+
+        try:
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        except Exception:
+            psapi = kernel32
+
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+            ctypes.c_uint32,
+        ]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+
         counters = PROCESS_MEMORY_COUNTERS()
         counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        if ctypes.windll.psapi.GetProcessMemoryInfo(
+        handle = kernel32.GetCurrentProcess()
+        if not psapi.GetProcessMemoryInfo(
             handle, ctypes.byref(counters), counters.cb
         ):
-            val = counters.PeakWorkingSetSize / (1024.0 * 1024.0)
-            if val > 0.0:
-                return val
-        raise RuntimeError("Windows GetProcessMemoryInfo failed")
+            err = ctypes.get_last_error()
+            raise RuntimeError(
+                f"Windows GetProcessMemoryInfo failed with error code {{err}}"
+            )
+
+        val = counters.PeakWorkingSetSize / (1024.0 * 1024.0)
+        if val <= 0.0:
+            raise RuntimeError(
+                f"Windows GetProcessMemoryInfo returned non-positive peak: {{val}}"
+            )
+        return val
     else:
         import resource
         ru = resource.getrusage(resource.RUSAGE_SELF)
         return ru.ru_maxrss / 1024.0
+
+baseline_rss_mib = get_peak_mem_mib()
 
 pkg = Path({repr(str(pkg_path))})
 t0 = time.perf_counter()
@@ -2326,6 +2353,7 @@ out = {{
     "rows": res.snapshot.total_row_count,
     "locations": len(res.locations_by_uuid),
     "read_build_seconds": round(t1 - t0, 4),
+    "baseline_rss_mib": round(baseline_rss_mib, 2),
     "peak_rss_mib": round(peak_mib, 2),
     "version": res.version,
     "platform": sys.platform,
@@ -2348,6 +2376,7 @@ print(json.dumps(out))
 
     rows = data["rows"]
     duration = data["read_build_seconds"]
+    baseline_rss_mib = data["baseline_rss_mib"]
     peak_rss_mib = data["peak_rss_mib"]
     sheet_hashes = data["sheet_hashes"]
 
@@ -2355,6 +2384,7 @@ print(json.dumps(out))
         print(
             f"\n[WP-05 BENCHMARK] 15,000 active rows -> "
             f"read_build_seconds: {duration:.4f}s | "
+            f"baseline_rss_mib: {baseline_rss_mib:.2f} MiB | "
             f"peak_rss_mib: {peak_rss_mib:.2f} MiB | "
             f"rows: {rows} | platform: {data['platform']}"
         )
@@ -2386,3 +2416,40 @@ print(json.dumps(out))
     assert sheet_hashes == expected_golden_hashes, (
         f"Snapshot hashes differed from golden digests: {sheet_hashes}"
     )
+
+
+def test_r6_windows_memory_probe_structure_and_types() -> None:
+    """Validate PROCESS_MEMORY_COUNTERS layout and WinAPI probe behavior (R5-D2)."""
+    import ctypes
+
+    class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("cb", ctypes.c_uint32),
+            ("PageFaultCount", ctypes.c_uint32),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    # Structure has exactly 10 fields matching Win32 PSAPI specification
+    assert len(PROCESS_MEMORY_COUNTERS._fields_) == 10
+
+    # On 64-bit platforms: cb (4) + PageFaultCount (4) + 8 * 8 = 72 bytes
+    if ctypes.sizeof(ctypes.c_size_t) == 8:
+        assert ctypes.sizeof(PROCESS_MEMORY_COUNTERS) == 72
+        assert PROCESS_MEMORY_COUNTERS.cb.offset == 0
+        assert PROCESS_MEMORY_COUNTERS.PageFaultCount.offset == 4
+        assert PROCESS_MEMORY_COUNTERS.PeakWorkingSetSize.offset == 8
+    else:
+        # On 32-bit platforms: cb (4) + PageFaultCount (4) + 8 * 4 = 40 bytes
+        assert ctypes.sizeof(PROCESS_MEMORY_COUNTERS) == 40
+
+    # Instantiation and cb initialization
+    counters = PROCESS_MEMORY_COUNTERS()
+    counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+    assert counters.cb in (72, 40)
