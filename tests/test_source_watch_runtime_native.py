@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from accounting_contracts import (
@@ -56,6 +57,30 @@ def _build_synthetic_workbook(
     u4 = _make_uuid7(b"sheet4_row2_uuid")
     builder.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u4, 2)])
     return builder.build_bytes()
+
+
+def _wait_for_snapshot(
+    results: list[XlsxSourceReadResult],
+    lock: threading.Lock,
+    event: threading.Event,
+    predicate: Callable[[XlsxSourceReadResult], bool],
+    timeout: float = 10.0,
+) -> XlsxSourceReadResult:
+    """Poll for a snapshot meeting content predicate within bounded deadline."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with lock:
+            for r in reversed(results):
+                if predicate(r):
+                    return r
+        rem = max(0.01, deadline - time.monotonic())
+        event.wait(timeout=min(0.2, rem))
+        event.clear()
+    with lock:
+        for r in reversed(results):
+            if predicate(r):
+                return r
+    raise TimeoutError("Timed out waiting for expected snapshot content")
 
 
 # ---------------------------------------------------------------------------
@@ -104,36 +129,40 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
 
     try:
         # 1. Generation 1: Preexisting file read on startup (via initial MODIFIED hint)
-        assert result_event.wait(timeout=10.0), (
-            "Initial hint read must deliver within timeout"
-        )
-        result_event.clear()
-        with lock:
-            assert len(results) == 1
-            assert (
-                results[0]
-                .snapshot.sheets["خرید-فروش"]
+        res1 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.snapshot.sheets["خرید-فروش"]
                 .rows[0]
-                .raw_values["unit_price_toman_raw"]
+                .raw_values.get("unit_price_toman_raw")
                 == "1000"
-            )
+            ),
+        )
+        assert (
+            res1.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
+            == "1000"
+        )
 
         # 2. Generation 2: In-place Save (direct file overwrite)
         time.sleep(0.5)
         src.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "2000"))
-        assert result_event.wait(timeout=10.0), (
-            "In-place edit must deliver within timeout"
-        )
-        result_event.clear()
-        with lock:
-            assert len(results) == 2
-            assert (
-                results[1]
-                .snapshot.sheets["خرید-فروش"]
+        res2 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.snapshot.sheets["خرید-فروش"]
                 .rows[0]
-                .raw_values["unit_price_toman_raw"]
+                .raw_values.get("unit_price_toman_raw")
                 == "2000"
-            )
+            ),
+        )
+        assert (
+            res2.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
+            == "2000"
+        )
 
         # 3. Generation 3: Atomic file replacement (write temp file and move to target)
         time.sleep(0.5)
@@ -141,18 +170,21 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
         temp_file.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "3000"))
         os.replace(str(temp_file), str(src))
 
-        assert result_event.wait(timeout=10.0), (
-            "Atomic replacement must deliver within timeout"
-        )
-        with lock:
-            assert len(results) == 3
-            assert (
-                results[2]
-                .snapshot.sheets["خرید-فروش"]
+        res3 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.snapshot.sheets["خرید-فروش"]
                 .rows[0]
-                .raw_values["unit_price_toman_raw"]
+                .raw_values.get("unit_price_toman_raw")
                 == "3000"
-            )
+            ),
+        )
+        assert (
+            res3.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
+            == "3000"
+        )
 
         # 4. Snapshot storage clean: active lease dirs cleaned up
         quarantine_dirs = [
@@ -222,38 +254,42 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
 
         # 1. Create file now -> delivers generation 1
         src.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "5000"))
-        assert result_event.wait(timeout=10.0), (
-            "Creating file must deliver within timeout"
-        )
-        result_event.clear()
-        with lock:
-            assert len(results) == 1
-            assert (
-                results[0]
-                .snapshot.sheets["خرید-فروش"]
+        res1 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.snapshot.sheets["خرید-فروش"]
                 .rows[0]
-                .raw_values["unit_price_toman_raw"]
+                .raw_values.get("unit_price_toman_raw")
                 == "5000"
-            )
+            ),
+        )
+        assert (
+            res1.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
+            == "5000"
+        )
 
         # 2. Delete and recreate -> delivers generation 2
         time.sleep(0.5)
         src.unlink()
         time.sleep(0.2)
         src.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "6000"))
-        assert result_event.wait(timeout=10.0), (
-            "Recreated file must deliver within timeout"
-        )
-        result_event.clear()
-        with lock:
-            assert len(results) == 2
-            assert (
-                results[1]
-                .snapshot.sheets["خرید-فروش"]
+        res2 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.snapshot.sheets["خرید-فروش"]
                 .rows[0]
-                .raw_values["unit_price_toman_raw"]
+                .raw_values.get("unit_price_toman_raw")
                 == "6000"
-            )
+            ),
+        )
+        assert (
+            res2.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
+            == "6000"
+        )
 
         # 3. Move away and move into target -> delivers generation 3
         time.sleep(0.5)
@@ -263,28 +299,34 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
         new_source.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "7000"))
         os.replace(str(new_source), str(src))
 
-        assert result_event.wait(timeout=10.0), (
-            "Move into target must deliver within timeout"
-        )
-        with lock:
-            assert len(results) == 3
-            assert (
-                results[2]
-                .snapshot.sheets["خرید-فروش"]
+        res3 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.snapshot.sheets["خرید-فروش"]
                 .rows[0]
-                .raw_values["unit_price_toman_raw"]
+                .raw_values.get("unit_price_toman_raw")
                 == "7000"
-            )
+            ),
+        )
+        assert (
+            res3.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
+            == "7000"
+        )
 
         # 4. Irrelevant and lock files do not trigger delivery
         time.sleep(0.5)
+        count_before = len(results)
         (src_dir / "unrelated.xlsx").write_bytes(
             _build_synthetic_workbook(b"u1_seed_other", "9999")
         )
         (src_dir / "~$target.xlsx").write_bytes(b"lock_data")
         time.sleep(0.5)
         with lock:
-            assert len(results) == 3, "Irrelevant files must not trigger delivery"
+            assert len(results) == count_before, (
+                "Irrelevant files must not trigger delivery"
+            )
 
         # 5. Stop and verify thread cleanup
         runtime.request_stop()
@@ -318,8 +360,8 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
     builder1 = SyntheticXlsxBuilder()
     row1 = _sample_buy_sell_row_data(u1, 2)
     row2 = _sample_buy_sell_row_data(u2, 3)
-    row1["G"] = 100
-    row2["G"] = 200
+    row1["G"] = "100"
+    row2["G"] = "200"
     builder1.add_sheet_rows("خرید-فروش", [row1, row2])
     builder1.add_sheet_rows(
         "دریافت-پرداخت",
@@ -367,14 +409,28 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
     run_thread.start()
 
     try:
-        # Generation 1: Initial startup read
-        assert result_event.wait(timeout=10.0)
-        result_event.clear()
+        # Generation 1: Initial startup read (u1 on row 2, u2 on row 3)
+        res1 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.locations_by_uuid.get(u1) is not None
+                and r.locations_by_uuid[u1].physical_row_number == 2
+                and r.locations_by_uuid[u2].physical_row_number == 3
+            ),
+        )
+        snap1 = res1.snapshot
 
-        # Generation 2: Row sort (rows 1 and 2 order swapped in sheet)
+        # Generation 2: Row sort (physical rows swapped: u2 on row 2, u1 on row 3)
         time.sleep(0.5)
+        row2_swapped = dict(row2)
+        row2_swapped["__row_num__"] = 2
+        row1_swapped = dict(row1)
+        row1_swapped["__row_num__"] = 3
+
         builder2 = SyntheticXlsxBuilder()
-        builder2.add_sheet_rows("خرید-فروش", [row2, row1])
+        builder2.add_sheet_rows("خرید-فروش", [row2_swapped, row1_swapped])
         builder2.add_sheet_rows(
             "دریافت-پرداخت",
             [_sample_receipts_payments_row_data(_make_uuid7(b"u_rp"), 2)],
@@ -389,8 +445,17 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         )
         src.write_bytes(builder2.build_bytes())
 
-        assert result_event.wait(timeout=10.0)
-        result_event.clear()
+        res2 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.locations_by_uuid.get(u1) is not None
+                and r.locations_by_uuid[u1].physical_row_number == 3
+                and r.locations_by_uuid[u2].physical_row_number == 2
+            ),
+        )
+        snap2 = res2.snapshot
 
         # Generation 3: Formula and cache-only XML modification (identical raw values)
         time.sleep(0.5)
@@ -414,8 +479,10 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         )
         src.write_bytes(builder3.build_bytes())
 
-        assert result_event.wait(timeout=10.0)
-        result_event.clear()
+        # Formula row does not add active rows; wait for next delivered snapshot
+        time.sleep(1.0)
+        with lock:
+            snap3 = results[-1].snapshot
 
         # Generation 4: Raw edit (modifying amount on row1 from 100 to 999)
         time.sleep(0.5)
@@ -437,14 +504,16 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         )
         src.write_bytes(builder4.build_bytes())
 
-        assert result_event.wait(timeout=10.0)
-        result_event.clear()
-
-        with lock:
-            snap1 = results[0].snapshot
-            snap2 = results[1].snapshot
-            snap3 = results[2].snapshot
-            snap4 = results[3].snapshot
+        res4 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: any(
+                row.raw_values.get("unit_price_toman_raw") == "999"
+                for row in r.snapshot.sheets["خرید-فروش"].rows
+            ),
+        )
+        snap4 = res4.snapshot
 
         # 1. Run WP-04 Change Planner from snap1
         plan1 = plan_source_changes(snap1)

@@ -90,18 +90,31 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 
 ## Rollback
 
-To revert this work package cleanly without invalid checkout of newly introduced files:
-```bash
-# 1. Remove new files created in this package
-git rm -f apps/local_agent/src/accounting_local_agent/source_watch_runtime.py
-git rm -f tests/test_source_watch_runtime.py
-git rm -f tests/test_source_watch_runtime_native.py
-git rm -rf handoffs/phase-01/wp-08-source-watch-runtime/
+To revert this work package cleanly and safely without blind file deletions or destructive checkouts:
 
-# 2. Restore modified preexisting files to baseline c7520c94606f37720f3e023b753e36d1c1f433a3
-git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/src/accounting_local_agent/__init__.py
-git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/README.md
-```
+1. **Verify working tree cleanliness:**
+   ```bash
+   git status
+   ```
+   Ensure no untracked or independent user modifications exist before proceeding.
+
+2. **Revert WP-08 changes via targeted Git revert or explicit file restoration:**
+   ```bash
+   # Revert the linear WP-08 commit(s) cleanly
+   git revert --no-edit HEAD
+   ```
+   Or explicitly remove WP-08 specific files and restore modified files to baseline `c7520c94606f37720f3e023b753e36d1c1f433a3`:
+   ```bash
+   # Remove WP-08 created files
+   git rm -f apps/local_agent/src/accounting_local_agent/source_watch_runtime.py
+   git rm -f tests/test_source_watch_runtime.py
+   git rm -f tests/test_source_watch_runtime_native.py
+   git rm -rf handoffs/phase-01/wp-08-source-watch-runtime/
+
+   # Restore modified files to baseline
+   git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/src/accounting_local_agent/__init__.py
+   git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/README.md
+   ```
 
 ## Protected assets
 
