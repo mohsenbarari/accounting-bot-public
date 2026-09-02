@@ -71,6 +71,14 @@ from accounting_contracts.source_change_plan import (
     build_source_workbook_snapshot,
     plan_source_changes,
 )
+from accounting_contracts.source_requiredness import (
+    SOURCE_REQUIREDNESS_VERSION,
+    SourceRequirednessInputError,
+    SourceRequirednessIssue,
+    SourceRequirednessIssueReason,
+    SourceRequirednessReport,
+    evaluate_source_requiredness,
+)
 
 __version__ = "0.1.0"
 
@@ -115,9 +123,14 @@ __all__ = [
     "SHEET_SNAPSHOT_HASH_VERSION",
     "SOURCE_CHANGE_PLAN_VERSION",
     "SOURCE_HASH_VERSION",
+    "SOURCE_REQUIREDNESS_VERSION",
     "SheetSnapshotHashResult",
     "SourceChangePlanError",
     "SourceHashResult",
+    "SourceRequirednessInputError",
+    "SourceRequirednessIssue",
+    "SourceRequirednessIssueReason",
+    "SourceRequirednessReport",
     "SourceRowInput",
     "SourceSheetInput",
     "TypeTag",
@@ -133,6 +146,7 @@ __all__ = [
     "classify_cell",
     "compute_sheet_snapshot_hash",
     "compute_source_hash",
+    "evaluate_source_requiredness",
     "get_raw_contract_registry",
     "get_sheet_contract",
     "normalize_digits",

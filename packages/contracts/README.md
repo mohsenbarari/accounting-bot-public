@@ -51,3 +51,16 @@ The source change planning module (`accounting_contracts.source_change_plan`) im
   - Settled voided identities that remain absent emit no plan item (idempotent no-op).
 - **Identity Invariant:** UUIDs are globally unique across all sheets; relocation between sheets raises `IdentityRelocationError`.
 - **Deterministic Ordering:** Items are sorted by authoritative sheet registry order and UUID binary bytes with O(N log N) time and O(N) memory complexity.
+
+## Source Requiredness Preflight (`source_requiredness`)
+
+The source requiredness module (`accounting_contracts.source_requiredness`) implements ADR-0012 for validating essential required raw input fields across complete four-sheet source snapshots:
+- **Preflight Version:** `source-requiredness.v1`
+- **Pure Preflight Boundary:** Evaluates requiredness over an existing immutable `ValidatedSourceWorkbookSnapshot`. It does not parse XLSX files, resolve entities, execute accounting logic, or commit imports.
+- **Exact Presence Rules:**
+  - `None` for a required field emits `SourceRequirednessIssueReason.MISSING_VALUE`.
+  - Required text whose `str.strip()` is empty emits `SourceRequirednessIssueReason.BLANK_TEXT`.
+  - Numeric zero (`0`, `"0"`, `Decimal("0")`), negative values, and non-empty text count as present.
+  - Optional fields (notes, discount, auxiliary codes/flags, phone numbers, purity) do not emit issues when null or blank.
+- **Raw Preservation & Masked Repr:** Original raw mappings, types, and source hashes are preserved without mutation. The report excludes the snapshot from `repr` and issue objects store no raw cell values.
+- **Deterministic Issue Ordering:** Issues are aggregated in registry sheet order, UUID bytes, and registry raw-column order.
