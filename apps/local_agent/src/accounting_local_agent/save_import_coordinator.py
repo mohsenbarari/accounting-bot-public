@@ -106,6 +106,10 @@ class SourceReadAttempt:
     _token_id: str
 
     def __init__(self, coordinator_id: str, token_id: str, started_at_ns: int) -> None:
+        if not isinstance(coordinator_id, str) or not isinstance(token_id, str):
+            raise SaveCoordinatorPolicyError("Token identifiers must be strings")
+        if type(started_at_ns) is not int or started_at_ns < 0:
+            raise SaveCoordinatorPolicyError("started_at_ns must be a non-negative int")
         object.__setattr__(self, "_coordinator_id", coordinator_id)
         object.__setattr__(self, "_token_id", token_id)
         object.__setattr__(self, "_started_at_ns", started_at_ns)
@@ -137,16 +141,11 @@ class SaveCoordinatorView:
 
     def __post_init__(self) -> None:
         if self.version != SAVE_IMPORT_COORDINATOR_VERSION:
-            raise SaveCoordinatorPolicyError(
-                f"Invalid coordinator version: {self.version!r}, "
-                f"expected {SAVE_IMPORT_COORDINATOR_VERSION!r}"
-            )
+            raise SaveCoordinatorPolicyError("Invalid coordinator version")
         if not isinstance(self.state, SaveCoordinatorState):
-            raise SaveCoordinatorPolicyError(f"Invalid state: {self.state!r}")
-        if not isinstance(self.pending, bool):
-            raise SaveCoordinatorPolicyError(
-                f"pending must be a bool, got {type(self.pending)}"
-            )
+            raise SaveCoordinatorPolicyError("Invalid coordinator state")
+        if type(self.pending) is not bool:
+            raise SaveCoordinatorPolicyError("pending must be a boolean")
 
         if self.state == SaveCoordinatorState.IDLE:
             if self.pending is not False:
@@ -160,7 +159,7 @@ class SaveCoordinatorView:
                 raise SaveCoordinatorPolicyError("WAITING state must have pending=True")
             if (
                 self.next_due_ns is None
-                or not isinstance(self.next_due_ns, int)
+                or type(self.next_due_ns) is not int
                 or self.next_due_ns < 0
             ):
                 raise SaveCoordinatorPolicyError(
@@ -192,9 +191,7 @@ def _validate_and_normalize_configured_path(
     path: Any, *, name: str = "source_path"
 ) -> tuple[Path, str]:
     if not isinstance(path, Path):
-        raise SaveCoordinatorPolicyError(
-            f"{name} must be a Path instance, got {type(path)}"
-        )
+        raise SaveCoordinatorPolicyError(f"{name} must be a Path instance")
     raw_str = str(path)
     if not path.is_absolute():
         raise SaveCoordinatorPolicyError(f"{name} must be an absolute path")
@@ -219,9 +216,7 @@ def _validate_and_normalize_configured_path(
 
 def _validate_notice_path(path: Any, *, name: str) -> str:
     if not isinstance(path, Path):
-        raise SaveCoordinatorPolicyError(
-            f"{name} must be a Path instance, got {type(path)}"
-        )
+        raise SaveCoordinatorPolicyError(f"{name} must be a Path instance")
     raw_str = str(path)
     if not path.is_absolute():
         raise SaveCoordinatorPolicyError(f"{name} must be an absolute path")
@@ -270,14 +265,10 @@ class SaveImportCoordinator:
         except Exception as exc:
             raise SaveCoordinatorStateError("Clock source failed") from exc
 
-        if not isinstance(t, int) or t < 0:
-            raise SaveCoordinatorStateError(
-                f"Clock source returned invalid time: {t!r}"
-            )
+        if type(t) is not int or t < 0:
+            raise SaveCoordinatorStateError("Clock source returned invalid time")
         if t < self._last_clock_ns:
-            raise SaveCoordinatorStateError(
-                f"Monotonic clock went backwards: {t} < {self._last_clock_ns}"
-            )
+            raise SaveCoordinatorStateError("Monotonic clock went backwards")
         self._last_clock_ns = t
         return t
 
@@ -295,12 +286,7 @@ class SaveImportCoordinator:
         affected state, False if the notice was ignored or unrelated.
         """
         if not isinstance(kind, SaveEventKind):
-            try:
-                kind = SaveEventKind(kind)
-            except (ValueError, TypeError) as exc:
-                raise SaveCoordinatorPolicyError(
-                    f"Invalid event kind: {kind!r}"
-                ) from exc
+            raise SaveCoordinatorPolicyError("Invalid event kind")
 
         if type(is_directory) is not bool:
             raise SaveCoordinatorPolicyError("is_directory must be a boolean")
@@ -317,7 +303,7 @@ class SaveImportCoordinator:
         else:
             if destination_path is not None:
                 raise SaveCoordinatorPolicyError(
-                    f"destination_path must be None for {kind.value} events"
+                    "destination_path must be None for non-MOVED events"
                 )
 
         if is_directory:
@@ -364,12 +350,13 @@ class SaveImportCoordinator:
             now = self._get_time_ns()
             if self._state == SaveCoordinatorState.WAITING:
                 if self._next_due_ns is not None and now >= self._next_due_ns:
-                    self._state = SaveCoordinatorState.RUNNING
+                    token_id = uuid.uuid4().hex
                     attempt = SourceReadAttempt(
                         coordinator_id=self._coordinator_id,
-                        token_id=uuid.uuid4().hex,
+                        token_id=token_id,
                         started_at_ns=now,
                     )
+                    self._state = SaveCoordinatorState.RUNNING
                     self._active_attempt = attempt
                     self._next_due_ns = None
                     self._pending_followup = False
@@ -379,12 +366,7 @@ class SaveImportCoordinator:
     def finish(self, attempt: SourceReadAttempt, outcome: SourceReadOutcome) -> None:
         """Complete an active attempt with a specific outcome."""
         if not isinstance(outcome, SourceReadOutcome):
-            try:
-                outcome = SourceReadOutcome(outcome)
-            except (ValueError, TypeError) as exc:
-                raise SaveCoordinatorPolicyError(
-                    f"Invalid finish outcome: {outcome!r}"
-                ) from exc
+            raise SaveCoordinatorPolicyError("Invalid finish outcome")
 
         with self._lock:
             if not isinstance(attempt, SourceReadAttempt):
@@ -496,15 +478,12 @@ def _guarded_force_fault(
     attempt: SourceReadAttempt,
 ) -> None:
     """Token-scoped failure guard releasing active attempt to FAULTED."""
-    try:
-        with coordinator._lock:
-            if coordinator._active_attempt is attempt:
-                coordinator._active_attempt = None
-                coordinator._state = SaveCoordinatorState.FAULTED
-                coordinator._next_due_ns = None
-                coordinator._pending_followup = True
-    except Exception:
-        pass
+    with coordinator._lock:
+        if coordinator._active_attempt is attempt:
+            coordinator._active_attempt = None
+            coordinator._state = SaveCoordinatorState.FAULTED
+            coordinator._next_due_ns = None
+            coordinator._pending_followup = True
 
 
 def read_due_source(
@@ -521,49 +500,62 @@ def read_due_source(
     """
     if not isinstance(coordinator, SaveImportCoordinator):
         raise SaveCoordinatorPolicyError(
-            f"coordinator must be a SaveImportCoordinator instance, "
-            f"got {type(coordinator)}"
+            "coordinator must be a SaveImportCoordinator instance"
         )
 
     attempt = coordinator.take_due()
     if attempt is None:
         return None
 
+    work_exc: BaseException | None = None
+    result: XlsxSourceReadResult | None = None
     outcome: SourceReadOutcome = SourceReadOutcome.FAULTED
-    token_finished = False
 
     try:
-        try:
-            with open_stable_xlsx_snapshot(
-                coordinator.source_path,
-                snapshot_root,
-                observation_interval_seconds,
-            ) as snapshot:
-                result = read_xlsx_source_snapshot(snapshot.snapshot_path)
-        except XlsxSourceNotReadyError:
-            outcome = SourceReadOutcome.SOURCE_NOT_READY
-            raise
-        except XlsxSourceReadError:
-            outcome = SourceReadOutcome.READER_REJECTED
-            raise
-        except BaseException:
-            outcome = SourceReadOutcome.FAULTED
-            raise
-        else:
-            outcome = SourceReadOutcome.SUCCESS
-            return result
-    except BaseException as orig_exc:
-        try:
-            coordinator.finish(attempt, outcome)
-            token_finished = True
-        except Exception as finish_exc:
-            _guarded_force_fault(coordinator, attempt)
-            raise orig_exc from finish_exc
-        raise orig_exc
-    finally:
-        if not token_finished:
-            try:
-                coordinator.finish(attempt, outcome)
-            except Exception:
-                _guarded_force_fault(coordinator, attempt)
-                raise
+        with open_stable_xlsx_snapshot(
+            coordinator.source_path,
+            snapshot_root,
+            observation_interval_seconds,
+        ) as snapshot:
+            result = read_xlsx_source_snapshot(snapshot.snapshot_path)
+        outcome = SourceReadOutcome.SUCCESS
+    except XlsxSourceNotReadyError as exc:
+        outcome = SourceReadOutcome.SOURCE_NOT_READY
+        work_exc = exc
+    except XlsxSourceReadError as exc:
+        outcome = SourceReadOutcome.READER_REJECTED
+        work_exc = exc
+    except BaseException as exc:
+        outcome = SourceReadOutcome.FAULTED
+        work_exc = exc
+
+    finish_exc: BaseException | None = None
+    try:
+        coordinator.finish(attempt, outcome)
+    except BaseException as exc:
+        finish_exc = exc
+        _guarded_force_fault(coordinator, attempt)
+
+    if work_exc is None and finish_exc is None:
+        return result
+    if work_exc is None and finish_exc is not None:
+        raise finish_exc
+    if work_exc is not None and finish_exc is None:
+        raise work_exc
+
+    # Both work_exc and finish_exc are present: combine without overwriting causes
+    assert work_exc is not None and finish_exc is not None
+    if (
+        isinstance(work_exc, BaseException)
+        and not isinstance(work_exc, Exception)
+        or isinstance(finish_exc, BaseException)
+        and not isinstance(finish_exc, Exception)
+    ):
+        raise BaseExceptionGroup(
+            "read_due_source encountered multiple failures",
+            [work_exc, finish_exc],
+        )
+    raise ExceptionGroup(
+        "read_due_source encountered multiple failures",
+        [work_exc, finish_exc],
+    )
