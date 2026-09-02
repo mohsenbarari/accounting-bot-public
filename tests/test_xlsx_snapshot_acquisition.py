@@ -13,6 +13,7 @@ import sys
 import threading
 import uuid
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -2802,8 +2803,19 @@ def test_r9_03_promotion_foreign_part_survived_and_displaced_owned_survived_orac
 def test_r9_04_rename_noreplace_unavailable_fails_closed_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """R9-02 Oracle: renameat2 unavailable/ENOSYS fails closed with no fallback."""
+    """R9-02 / R10-03 Oracle: renameat2 ENOSYS/EINVAL/Missing fails closed."""
     import accounting_local_agent.xlsx_snapshot_acquisition as mod
+
+    class MockCtypesFunc:
+        def __init__(self, callback: Callable[..., int]) -> None:
+            self.callback = callback
+            self.argtypes: Any = None
+            self.restype: Any = None
+            self.call_count: int = 0
+
+        def __call__(self, *args: Any, **kwargs: Any) -> int:
+            self.call_count += 1
+            return self.callback(*args, **kwargs)
 
     foreign_dest = tmp_path / "foreign_dest.txt"
     foreign_dest.write_bytes(b"FOREIGN_NO_OVERWRITE_R9")
@@ -2811,29 +2823,87 @@ def test_r9_04_rename_noreplace_unavailable_fails_closed_oracle(
     test_src = tmp_path / "test_src.txt"
     test_src.write_bytes(b"TEST_SRC_DATA_R9")
 
-    def mock_renameat2_unsupported(*args: Any, **kwargs: Any) -> int:
-        ctypes.set_errno(38)  # ENOSYS
+    # 1. Test ENOSYS (errno 38)
+    def mock_enosys(*args: Any, **kwargs: Any) -> int:
+        ctypes.set_errno(38)
         return -1
 
-    class MockLibC:
-        renameat2 = mock_renameat2_unsupported
+    enosys_func = MockCtypesFunc(mock_enosys)
 
-    if sys.platform.startswith("linux"):
-        monkeypatch.setattr(ctypes, "CDLL", lambda *a, **k: MockLibC())
+    class MockLibCEnosys:
+        def __init__(self) -> None:
+            self.renameat2 = enosys_func
 
-    failed_closed = False
+    class MockCtypesEnosys:
+        def CDLL(self, *a: Any, **k: Any) -> Any:
+            return MockLibCEnosys()
+
+        def get_errno(self) -> int:
+            return 38
+
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesEnosys())
+
+    failed_closed_enosys = False
     try:
         mod._atomic_move_no_replace(test_src, foreign_dest)
-    except (OSError, FileExistsError):
-        failed_closed = True
+    except OSError:
+        failed_closed_enosys = True
 
-    # Oracle invariants:
-    assert failed_closed is True, (
-        "RENAME_NOREPLACE_UNAVAILABLE_FAILED_CLOSED must be True"
-    )
-    assert foreign_dest.read_bytes() == b"FOREIGN_NO_OVERWRITE_R9", (
-        "RENAME_FALLBACK_FOREIGN_OVERWRITTEN must be False"
-    )
+    assert failed_closed_enosys is True, "Must fail closed on ENOSYS"
+    assert enosys_func.call_count > 0, "renameat2 stub must be invoked"
+    assert foreign_dest.read_bytes() == b"FOREIGN_NO_OVERWRITE_R9"
+    assert test_src.read_bytes() == b"TEST_SRC_DATA_R9"
+
+    # 2. Test EINVAL (errno 22)
+    def mock_einval(*args: Any, **kwargs: Any) -> int:
+        ctypes.set_errno(22)
+        return -1
+
+    einval_func = MockCtypesFunc(mock_einval)
+
+    class MockLibCEinval:
+        def __init__(self) -> None:
+            self.renameat2 = einval_func
+
+    class MockCtypesEinval:
+        def CDLL(self, *a: Any, **k: Any) -> Any:
+            return MockLibCEinval()
+
+        def get_errno(self) -> int:
+            return 22
+
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesEinval())
+
+    failed_closed_einval = False
+    try:
+        mod._atomic_move_no_replace(test_src, foreign_dest)
+    except OSError:
+        failed_closed_einval = True
+
+    assert failed_closed_einval is True, "Must fail closed on EINVAL"
+    assert einval_func.call_count > 0, "renameat2 stub must be invoked"
+    assert foreign_dest.read_bytes() == b"FOREIGN_NO_OVERWRITE_R9"
+    assert test_src.read_bytes() == b"TEST_SRC_DATA_R9"
+
+    # 3. Test Missing Symbol (hasattr renameat2 == False)
+    class MockLibCMissing:
+        pass
+
+    class MockCtypesMissing:
+        def CDLL(self, *a: Any, **k: Any) -> Any:
+            return MockLibCMissing()
+
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesMissing())
+
+    failed_closed_missing = False
+    try:
+        mod._atomic_move_no_replace(test_src, foreign_dest)
+    except OSError:
+        failed_closed_missing = True
+
+    assert failed_closed_missing is True, "Must fail closed when symbol missing"
+    assert foreign_dest.read_bytes() == b"FOREIGN_NO_OVERWRITE_R9"
+    assert test_src.read_bytes() == b"TEST_SRC_DATA_R9"
 
 
 def test_r9_05_empty_foreign_qdir_survived_oracle(
@@ -3074,10 +3144,33 @@ def test_r9_08_qdir_postverify_after_hook_replaces_oracle(
                 pass
 
 
-def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
+def test_r10_01_fresh_subprocess_import_and_wintypes_independence() -> None:
+    """R10-01 Oracle: Fresh process imports product without preloaded wintypes."""
+    code = (
+        "import sys\n"
+        "from accounting_local_agent import (\n"
+        "    DEFAULT_COPY_CHUNK_SIZE,\n"
+        "    XLSX_SNAPSHOT_ACQUISITION_VERSION,\n"
+        "    StableXlsxSnapshot,\n"
+        "    XlsxSnapshotAcquisitionError,\n"
+        "    open_stable_xlsx_snapshot,\n"
+        ")\n"
+        "assert XLSX_SNAPSHOT_ACQUISITION_VERSION == 'xlsx-snapshot-acquisition.v1'\n"
+        "assert callable(open_stable_xlsx_snapshot)\n"
+    )
+    res = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res.returncode == 0
+
+
+def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """R9-01 Oracle: Windows handle anchor fails closed on CreateFileW/GetInfo error."""
+    """R10-02 Oracle: Windows FileIdInfo 128-bit identity and fail-closed handling."""
     import accounting_local_agent.xlsx_snapshot_acquisition as mod
 
     lease_dir = tmp_path / "test_lease_win"
@@ -3095,17 +3188,76 @@ def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
             self.fn = fn
             self.argtypes: Any = None
             self.restype: Any = None
+            self.call_count: int = 0
 
         def __call__(self, *args: Any, **kwargs: Any) -> Any:
+            self.call_count += 1
             return self.fn(*args, **kwargs)
 
+    # 1. Test success with 64-bit volume (> 2**32) and 128-bit file ID (> 2**64)
+    expected_vol = 0x1F2E3D4C5B6A7988  # 64-bit volume serial
+    file_id_raw_bytes = bytes(
+        [
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            0x08,
+            0x09,
+            0x0A,
+            0x0B,
+            0x0C,
+            0x0D,
+            0x0E,
+            0x0F,
+            0x10,
+        ]
+    )
+    expected_file_id = int.from_bytes(file_id_raw_bytes, byteorder="little")
+
+    def mock_get_info_success(
+        handle: Any, info_class: int, p_info: Any, size: int
+    ) -> bool:
+        assert info_class == 18  # FileIdInfo
+        info_struct = ctypes.cast(p_info, ctypes.POINTER(mod._FILE_ID_INFO)).contents
+        info_struct.VolumeSerialNumber = expected_vol
+        for idx, b in enumerate(file_id_raw_bytes):
+            info_struct.FileId.Identifier[idx] = b
+        return True
+
+    class MockKernel32Success:
+        def __init__(self) -> None:
+            self.CreateFileW = MockFunc(lambda *args: 0x9999)
+            self.GetFileInformationByHandleEx = MockFunc(mock_get_info_success)
+            self.CloseHandle = MockFunc(lambda *args: True)
+
+    class MockCtypesSuccess:
+        wintypes = MockWintypes()
+
+        def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
+            return MockKernel32Success()
+
+        def get_last_error(self) -> int:
+            return 0
+
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesSuccess())
+
+    token, handle = mod._create_and_anchor_lease_dir_windows(lease_dir)
+    assert token.device == expected_vol, "Full 64-bit volume must match"
+    assert token.inode == expected_file_id, "Full 128-bit file ID must match"
+    assert handle == 0x9999
+
+    # 2. Test CreateFileW failure (returns -1 / INVALID_HANDLE_VALUE)
     class MockKernel32FailCreate:
         def __init__(self) -> None:
             self.CreateFileW = MockFunc(lambda *args: -1)
-            self.GetFileInformationByHandle = MockFunc(lambda *args: True)
+            self.GetFileInformationByHandleEx = MockFunc(lambda *args: True)
             self.CloseHandle = MockFunc(lambda *args: True)
 
-    class MockCtypesWin:
+    class MockCtypesFailCreate:
         wintypes = MockWintypes()
 
         def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
@@ -3114,16 +3266,18 @@ def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
         def get_last_error(self) -> int:
             return 5
 
-    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesWin())
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesFailCreate())
 
+    lease_dir_fail = tmp_path / "test_lease_win_fail"
     with pytest.raises(OSError, match="CreateFileW failed"):
-        mod._create_and_anchor_lease_dir_windows(lease_dir)
+        mod._create_and_anchor_lease_dir_windows(lease_dir_fail)
 
+    # 3. Test GetFileInformationByHandleEx failure (returns False)
     class MockKernel32FailGetInfo:
         def __init__(self) -> None:
             self.closed = False
-            self.CreateFileW = MockFunc(lambda *args: 12345)
-            self.GetFileInformationByHandle = MockFunc(lambda *args: False)
+            self.CreateFileW = MockFunc(lambda *args: 0x1234)
+            self.GetFileInformationByHandleEx = MockFunc(lambda *args: False)
             self.CloseHandle = MockFunc(self._close)
 
         def _close(self, *args: Any) -> bool:
@@ -3132,7 +3286,7 @@ def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
 
     mock_k32_info = MockKernel32FailGetInfo()
 
-    class MockCtypesWinInfo:
+    class MockCtypesFailGetInfo:
         wintypes = MockWintypes()
 
         def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
@@ -3141,13 +3295,22 @@ def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
         def get_last_error(self) -> int:
             return 6
 
-    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesWinInfo())
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesFailGetInfo())
 
-    lease_dir_2 = tmp_path / "test_lease_win_2"
-    with pytest.raises(OSError, match="GetFileInformationByHandle failed"):
-        mod._create_and_anchor_lease_dir_windows(lease_dir_2)
+    lease_dir_fail2 = tmp_path / "test_lease_win_fail2"
+    with pytest.raises(OSError, match="GetFileInformationByHandleEx failed"):
+        mod._create_and_anchor_lease_dir_windows(lease_dir_fail2)
 
-    assert mock_k32_info.closed is True
+    assert mock_k32_info.closed is True, "CloseHandle must be called on failure"
+
+
+def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Historical R9-01 / R10-02 test alias."""
+    test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
+        tmp_path, monkeypatch
+    )
 
 
 @pytest.mark.skipif(
@@ -3157,7 +3320,7 @@ def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
 def test_r9_10_windows_runtime_full_lifecycle_platform_conditional(
     tmp_path: Path,
 ) -> None:
-    """R9-01 Oracle: Real Windows runtime full acquisition, yield, and cleanup."""
+    """R9-01 / R10-02 Oracle: Real Windows runtime full acquisition, yield, cleanup."""
     src = tmp_path / "source.xlsx"
     valid_bytes = _build_valid_test_xlsx()
     src.write_bytes(valid_bytes)

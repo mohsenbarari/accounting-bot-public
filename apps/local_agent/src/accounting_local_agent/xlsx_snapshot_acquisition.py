@@ -265,7 +265,26 @@ def _extract_device_and_inode(
     return st.st_dev, st.st_ino
 
 
+try:
+    import ctypes.wintypes as _ctypes_wintypes
+except ImportError:
+    _ctypes_wintypes = None  # type: ignore[assignment]
+
 _ctypes_provider: Any = ctypes
+
+
+def _get_wintypes() -> Any:
+    """Safely retrieve wintypes module from provider or explicit import."""
+    if hasattr(_ctypes_provider, "wintypes") and _ctypes_provider.wintypes is not None:
+        return _ctypes_provider.wintypes
+    if _ctypes_wintypes is not None:
+        return _ctypes_wintypes
+    try:
+        import ctypes.wintypes as wt
+
+        return wt
+    except ImportError:
+        return None
 
 
 def _atomic_move_no_replace(src: Path, dst: Path) -> None:
@@ -312,9 +331,10 @@ def _atomic_move_no_replace(src: Path, dst: Path) -> None:
             raise OSError(f"Linux atomic move failed: {exc}") from exc
     elif sys.platform == "win32":
         try:
-            ctypes_win = _ctypes_provider
-            wintypes = ctypes_win.wintypes
-            kernel32 = ctypes_win.WinDLL("kernel32", use_last_error=True)
+            wintypes = _get_wintypes()
+            if wintypes is None:
+                raise OSError("Windows wintypes module is not available")
+            kernel32 = _ctypes_provider.WinDLL("kernel32", use_last_error=True)
             move_file_ex_w = kernel32.MoveFileExW
             move_file_ex_w.argtypes = [
                 wintypes.LPCWSTR,
@@ -328,10 +348,10 @@ def _atomic_move_no_replace(src: Path, dst: Path) -> None:
             flags = 0x8
             ret = move_file_ex_w(str(src), str(dst), flags)
             if not ret:
-                err = ctypes_win.get_last_error()
+                err = _ctypes_provider.get_last_error()
                 if err in (80, 183):  # ERROR_FILE_EXISTS, ERROR_ALREADY_EXISTS
                     raise FileExistsError("Destination path already exists")
-                raise ctypes_win.WinError(err)
+                raise _ctypes_provider.WinError(err)
             return
         except (AttributeError, OSError) as exc:
             if isinstance(exc, FileExistsError):
@@ -341,26 +361,44 @@ def _atomic_move_no_replace(src: Path, dst: Path) -> None:
         raise OSError("Atomic no-replace move is not supported on this platform")
 
 
+class _FILE_ID_128(ctypes.Structure):
+    _fields_ = [("Identifier", ctypes.c_ubyte * 16)]
+
+
+class _FILE_ID_INFO(ctypes.Structure):
+    _fields_ = [
+        ("VolumeSerialNumber", ctypes.c_uint64),
+        ("FileId", _FILE_ID_128),
+    ]
+
+
 def _create_and_anchor_lease_dir_windows(
     lease_dir: Path,
 ) -> tuple[_ArtifactOwnershipToken, int]:
-    """Create lease directory and acquire Windows directory handle anchor."""
+    """Create lease directory and acquire Windows directory handle anchor
+    via FileIdInfo.
+    """
     lease_dir.mkdir(parents=False, exist_ok=False)
 
-    ctypes_win = _ctypes_provider
-    wintypes = ctypes_win.wintypes
-    kernel32 = ctypes_win.WinDLL("kernel32", use_last_error=True)
-    create_file_w = kernel32.CreateFileW
-    create_file_w.argtypes = [
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.HANDLE,
-    ]
-    create_file_w.restype = wintypes.HANDLE
+    wintypes = _get_wintypes()
+    if wintypes is None:
+        raise OSError("Windows wintypes module is not available")
+
+    try:
+        kernel32 = _ctypes_provider.WinDLL("kernel32", use_last_error=True)
+        create_file_w = kernel32.CreateFileW
+        create_file_w.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        create_file_w.restype = wintypes.HANDLE
+    except (AttributeError, OSError) as exc:
+        raise OSError(f"Failed to initialize WinAPI CreateFileW: {exc}") from exc
 
     generic_read = 0x80000000
     file_share_read = 0x00000001
@@ -369,7 +407,11 @@ def _create_and_anchor_lease_dir_windows(
     open_existing = 3
     file_flag_backup_semantics = 0x02000000
     file_flag_open_reparse_point = 0x00200000
-    invalid_handle_value = wintypes.HANDLE(-1).value
+    invalid_handle_value = (
+        wintypes.HANDLE(-1).value
+        if hasattr(wintypes, "HANDLE") and hasattr(wintypes.HANDLE(-1), "value")
+        else -1
+    )
 
     handle = create_file_w(
         str(lease_dir),
@@ -382,38 +424,43 @@ def _create_and_anchor_lease_dir_windows(
     )
 
     if handle in (-1, invalid_handle_value, None) or handle == 0:
-        err = ctypes_win.get_last_error()
+        err = _ctypes_provider.get_last_error()
         raise OSError(f"CreateFileW failed on lease directory with error {err}")
 
-    class BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
-        _fields_ = [
-            ("dwFileAttributes", wintypes.DWORD),
-            ("ftCreationTime", wintypes.FILETIME),
-            ("ftLastAccessTime", wintypes.FILETIME),
-            ("ftLastWriteTime", wintypes.FILETIME),
-            ("dwVolumeSerialNumber", wintypes.DWORD),
-            ("nFileSizeHigh", wintypes.DWORD),
-            ("nFileSizeLow", wintypes.DWORD),
-            ("nNumberOfLinks", wintypes.DWORD),
-            ("nFileIndexHigh", wintypes.DWORD),
-            ("nFileIndexLow", wintypes.DWORD),
+    # Query FILE_ID_INFO (FileIdInfo = 18 in FILE_INFO_BY_HANDLE_CLASS)
+    file_id_info_class = 18
+    try:
+        get_info_ex = kernel32.GetFileInformationByHandleEx
+        get_info_ex.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
         ]
+        get_info_ex.restype = wintypes.BOOL
 
-    get_info = kernel32.GetFileInformationByHandle
-    get_info.argtypes = [
-        wintypes.HANDLE,
-        ctypes.POINTER(BY_HANDLE_FILE_INFORMATION),
-    ]
-    get_info.restype = wintypes.BOOL
+        info = _FILE_ID_INFO()
+        success = get_info_ex(
+            wintypes.HANDLE(handle),
+            file_id_info_class,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+    except Exception as exc:
+        _close_windows_handle(int(handle))
+        raise OSError(
+            f"GetFileInformationByHandleEx failed on lease directory: {exc}"
+        ) from exc
 
-    info = BY_HANDLE_FILE_INFORMATION()
-    if not get_info(handle, ctypes.byref(info)):
-        err = ctypes_win.get_last_error()
-        kernel32.CloseHandle(handle)
-        raise OSError(f"GetFileInformationByHandle failed with error {err}")
+    if not success:
+        err = _ctypes_provider.get_last_error()
+        _close_windows_handle(int(handle))
+        raise OSError(
+            f"GetFileInformationByHandleEx failed on lease directory with error {err}"
+        )
 
-    vol_id = int(info.dwVolumeSerialNumber)
-    file_id = (int(info.nFileIndexHigh) << 32) | int(info.nFileIndexLow)
+    vol_id = int(info.VolumeSerialNumber)
+    file_id = int.from_bytes(bytes(info.FileId.Identifier), byteorder="little")
     token = _ArtifactOwnershipToken(
         device=vol_id,
         inode=file_id,
@@ -422,14 +469,22 @@ def _create_and_anchor_lease_dir_windows(
 
 
 def _close_windows_handle(handle: int) -> None:
-    if sys.platform == "win32" and handle != -1 and handle != 0:
-        ctypes_win = _ctypes_provider
-        wintypes = ctypes_win.wintypes
-        kernel32 = ctypes_win.WinDLL("kernel32", use_last_error=True)
-        close_h = kernel32.CloseHandle
-        close_h.argtypes = [wintypes.HANDLE]
-        close_h.restype = wintypes.BOOL
-        close_h(wintypes.HANDLE(handle))
+    """Close a Windows HANDLE safely, ensuring argtypes and restype are configured."""
+    if (sys.platform == "win32" or _ctypes_provider is not ctypes) and handle not in (
+        -1,
+        0,
+        None,
+    ):
+        try:
+            wintypes = _get_wintypes()
+            if wintypes is not None:
+                kernel32 = _ctypes_provider.WinDLL("kernel32", use_last_error=True)
+                close_h = kernel32.CloseHandle
+                close_h.argtypes = [wintypes.HANDLE]
+                close_h.restype = wintypes.BOOL
+                close_h(wintypes.HANDLE(handle))
+        except Exception:
+            pass
 
 
 def _get_path_observation(path: Path) -> _FileToken:
