@@ -1,7 +1,7 @@
 ================================================================================
 WORK PACKAGE: WP-07: Save debounce, coalescing, and import coordination
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-02T11:15:00Z
+RECORDED AT UTC: 2026-09-02T11:38:00Z
 BASELINE COMMIT: 55b965dc6781c9371045f2ecf905ec27f52b64a5
 BRANCH: antigravity/phase-01-save-import-coordinator
 TRACEABILITY: O-31, O-53, O-71, O-72, ADR-0010
@@ -40,7 +40,7 @@ Success: no issues found in 25 source files
 Exit code: 0
 
 --------------------------------------------------------------------------------
-5. PYTEST WP-07 DEDICATED SUITE (SC-01 TO SC-16 AND W7-R1-01 TO W7-R1-06)
+5. PYTEST WP-07 DEDICATED SUITE (SC-01 TO SC-16, W7-R1-01..06, W7-R2-01..02)
 --------------------------------------------------------------------------------
 $ /root/.local/bin/uv run pytest tests/test_save_import_coordinator.py -v
 =================== test session starts ====================
@@ -49,44 +49,49 @@ rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 34 items
+collected 39 items
 
 tests/test_save_import_coordinator.py::test_sc01_public_api_exports_and_version PASSED [  2%]
 tests/test_save_import_coordinator.py::test_sc01_source_read_attempt_immutability PASSED [  5%]
-tests/test_save_import_coordinator.py::test_sc01_safe_repr_no_path_leakage PASSED [  8%]
-tests/test_save_import_coordinator.py::test_sc01_save_coordinator_view_invariants PASSED [ 11%]
-tests/test_save_import_coordinator.py::test_sc02_configuration_path_validation PASSED [ 14%]
-tests/test_save_import_coordinator.py::test_sc02_notification_path_and_kind_filtering PASSED [ 17%]
-tests/test_save_import_coordinator.py::test_sc03_move_into_and_out_of_target PASSED [ 20%]
-tests/test_save_import_coordinator.py::test_sc04_idle_construction_and_clock_boundaries PASSED [ 23%]
-tests/test_save_import_coordinator.py::test_sc05_burst_coalescing_and_past_deadline PASSED [ 26%]
-tests/test_save_import_coordinator.py::test_sc06_concurrent_due_takes_yield_single_token PASSED [ 29%]
-tests/test_save_import_coordinator.py::test_sc06_token_security_and_invalid_finish_outcomes PASSED [ 32%]
-tests/test_save_import_coordinator.py::test_sc07_followup_notices_during_running_state PASSED [ 35%]
-tests/test_save_import_coordinator.py::test_sc08_source_not_ready_automatic_retry_scheduling PASSED [ 38%]
-tests/test_save_import_coordinator.py::test_sc09_reader_rejected_no_timer_retry_unless_newer_notice PASSED [ 41%]
-tests/test_save_import_coordinator.py::test_sc10_faulted_state_and_explicit_resume PASSED [ 44%]
-tests/test_sc11_read_due_source_zero_io_when_not_due PASSED [ 47%]
-tests/test_sc12_read_due_source_success_lifecycle PASSED [ 50%]
-tests/test_sc12_read_due_source_missing_file_source_not_ready PASSED [ 52%]
-tests/test_sc12_read_due_source_reader_rejected_corrupt_file PASSED [ 55%]
-tests/test_sc12_read_due_source_integrity_failure_faults_coordinator PASSED [ 58%]
-tests/test_sc12_cancellation_keyboard_interrupt_faults_coordinator PASSED [ 61%]
-tests/test_sc13_notice_responsiveness_during_blocked_io PASSED [ 64%]
-tests/test_sc14_change_planner_oracle_zero_false_changes PASSED [ 67%]
-tests/test_sc15_hypothesis_property_state_machine_oracle PASSED [ 70%]
-tests/test_w7_r1_01_reader_error_with_faulty_finish_preserves_both_causes PASSED [ 73%]
-tests/test_w7_r1_01_success_with_faulty_finish_fails_closed_no_false_success PASSED [ 76%]
-tests/test_w7_r1_01_base_exception_in_finish_propagates_and_faults_active_token PASSED [ 79%]
-tests/test_w7_r1_01_guard_does_not_mutate_new_or_foreign_token PASSED [ 82%]
-tests/test_w7_r1_02_take_due_error_injection_rollback_and_subsequent_success PASSED [ 85%]
-tests/test_w7_r1_02_take_due_thread_contention_with_injected_error PASSED [ 88%]
-tests/test_w7_r1_04_constant_safe_error_messages_no_path_or_secret_leakage PASSED [ 91%]
-tests/test_w7_r1_05_strict_types_for_time_and_enums PASSED [ 94%]
-tests/test_w7_r1_06_source_not_ready_to_success_retry_lifecycle_without_new_notice PASSED [ 97%]
-tests/test_w7_r1_06_notice_responsiveness_during_blocked_lease_cleanup PASSED [100%]
+tests/test_save_import_coordinator.py::test_sc01_safe_repr_no_path_leakage PASSED [  7%]
+tests/test_save_import_coordinator.py::test_sc01_save_coordinator_view_invariants PASSED [ 10%]
+tests/test_save_import_coordinator.py::test_sc02_configuration_path_validation PASSED [ 12%]
+tests/test_save_import_coordinator.py::test_sc02_notification_path_and_kind_filtering PASSED [ 15%]
+tests/test_save_import_coordinator.py::test_sc03_move_into_and_out_of_target PASSED [ 17%]
+tests/test_save_import_coordinator.py::test_sc04_idle_construction_and_clock_boundaries PASSED [ 20%]
+tests/test_save_import_coordinator.py::test_sc05_burst_coalescing_and_past_deadline PASSED [ 23%]
+tests/test_save_import_coordinator.py::test_sc06_concurrent_due_takes_yield_single_token PASSED [ 25%]
+tests/test_save_import_coordinator.py::test_sc06_token_security_and_invalid_finish_outcomes PASSED [ 28%]
+tests/test_save_import_coordinator.py::test_sc07_followup_notices_during_running_state PASSED [ 30%]
+tests/test_save_import_coordinator.py::test_sc08_source_not_ready_automatic_retry_scheduling PASSED [ 33%]
+tests/test_save_import_coordinator.py::test_sc09_reader_rejected_no_timer_retry_unless_newer_notice PASSED [ 35%]
+tests/test_save_import_coordinator.py::test_sc10_faulted_state_and_explicit_resume PASSED [ 38%]
+tests/test_save_import_coordinator.py::test_sc11_read_due_source_zero_io_when_not_due PASSED [ 41%]
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_success_lifecycle PASSED [ 43%]
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_missing_file_source_not_ready PASSED [ 46%]
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_reader_rejected_corrupt_file PASSED [ 48%]
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_integrity_failure_faults_coordinator PASSED [ 51%]
+tests/test_save_import_coordinator.py::test_sc12_cancellation_keyboard_interrupt_faults_coordinator PASSED [ 53%]
+tests/test_save_import_coordinator.py::test_sc13_notice_responsiveness_during_blocked_io PASSED [ 56%]
+tests/test_save_import_coordinator.py::test_sc14_change_planner_oracle_zero_false_changes PASSED [ 58%]
+tests/test_save_import_coordinator.py::test_sc15_hypothesis_property_state_machine_oracle PASSED [ 61%]
+tests/test_save_import_coordinator.py::test_w7_r1_01_reader_error_with_faulty_finish_preserves_both_causes PASSED [ 64%]
+tests/test_save_import_coordinator.py::test_w7_r1_01_success_with_faulty_finish_fails_closed_no_false_success PASSED [ 66%]
+tests/test_save_import_coordinator.py::test_w7_r1_01_base_exception_in_finish_propagates_and_faults_active_token PASSED [ 69%]
+tests/test_save_import_coordinator.py::test_w7_r1_01_guard_does_not_mutate_new_or_foreign_token PASSED [ 71%]
+tests/test_save_import_coordinator.py::test_w7_r2_01_reader_and_finish_and_guard_all_failing_preserves_three_causes PASSED [ 74%]
+tests/test_save_import_coordinator.py::test_w7_r2_01_cancellation_in_guard_with_failing_reader_and_finish PASSED [ 76%]
+tests/test_save_import_coordinator.py::test_w7_r2_01_guard_failure_after_real_recovery_execution PASSED [ 79%]
+tests/test_save_import_coordinator.py::test_w7_r2_01_success_reader_with_faulty_finish_and_guard_fails_closed PASSED [ 82%]
+tests/test_save_import_coordinator.py::test_w7_r1_02_take_due_error_injection_rollback_and_subsequent_success PASSED [ 84%]
+tests/test_save_import_coordinator.py::test_w7_r1_02_take_due_thread_contention_with_injected_error PASSED [ 87%]
+tests/test_save_import_coordinator.py::test_w7_r2_02_concurrency_oracle_rejects_unexpected_worker_errors PASSED [ 89%]
+tests/test_save_import_coordinator.py::test_w7_r1_04_constant_safe_error_messages_no_path_or_secret_leakage PASSED [ 92%]
+tests/test_save_import_coordinator.py::test_w7_r1_05_strict_types_for_time_and_enums PASSED [ 94%]
+tests/test_save_import_coordinator.py::test_w7_r1_06_source_not_ready_to_success_retry_lifecycle_without_new_notice PASSED [ 97%]
+tests/test_save_import_coordinator.py::test_w7_r1_06_notice_responsiveness_during_blocked_lease_cleanup PASSED [100%]
 
-==================== 34 passed in 1.35s ====================
+==================== 39 passed in 1.51s ====================
 
 Exit code: 0
 
@@ -94,57 +99,76 @@ Exit code: 0
 6. FULL WORKSPACE PYTEST SUITE
 --------------------------------------------------------------------------------
 $ /root/.local/bin/uv run pytest -v
-=================== test session starts ===================
+=================== test session starts ====================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 308 items
+collected 313 items
 
-tests/test_architecture_guard.py ..............     [  4%]
-tests/test_canonical_date.py ..........             [  7%]
-tests/test_canonical_hashing.py ..................  [ 13%]
-tests/test_imports.py .......                       [ 15%]
-tests/test_raw_input_contracts.py ...............   [ 20%]
-tests/test_save_import_coordinator.py ............. [ 25%]
-.....................                               [ 31%]
-tests/test_source_change_plan.py .................. [ 37%]
-.......                                             [ 39%]
-tests/test_xlsx_snapshot_acquisition.py ........... [ 43%]
-...............................
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.7054s | baseline_current_rss_mib: 28.16 MiB | call_peak_rss_mib: 59.96 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 710f813753835b2bf107b8eed17cd07716d3d2adc323023eb544312b1c516c62 | platform: linux
-.................... [ 60%]
-..........ss                                        [ 63%]
-tests/test_xlsx_source_reader.py .................. [ 69%]
-....................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.5646s | baseline_current_rss_mib: 28.36 MiB | call_peak_rss_mib: 60.06 MiB | rows: 15000 | platform: linux
-.......                         [ 78%]
-tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 78%]
-......                                              [ 80%]
+tests/test_architecture_guard.py ..............      [  4%]
+tests/test_canonical_date.py ..........              [  7%]
+tests/test_canonical_hashing.py ..................   [ 13%]
+tests/test_imports.py .......                        [ 15%]
+tests/test_raw_input_contracts.py ...............    [ 20%]
+tests/test_save_import_coordinator.py .............. [ 24%]
+.........................                            [ 32%]
+tests/test_source_change_plan.py ................... [ 38%]
+......                                               [ 40%]
+tests/test_xlsx_snapshot_acquisition.py ............ [ 44%]
+..............................
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 12.1299s | baseline_current_rss_mib: 28.16 MiB | call_peak_rss_mib: 59.87 MiB | rows: 15000 | file_bytes: 549787 | file_sha: db55ceba9b4841c068c0b4e380b26df0994d255dd33aceeecd27f14d2371b024 | platform: linux
+...................... [ 61%]
+........ss                                           [ 64%]
+tests/test_xlsx_source_reader.py ................... [ 70%]
+...................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 12.3090s | baseline_current_rss_mib: 28.41 MiB | call_peak_rss_mib: 60.00 MiB | rows: 15000 | platform: linux
+.......                           [ 78%]
+tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 79%]
+......                                               [ 81%]
 tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 81%]
-................................................... [ 97%]
-.......                                             [100%]
+.................................................... [ 98%]
+......                                               [100%]
 
-================= short test summary info =================
+================= short test summary info ==================
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
-============= 306 passed, 2 skipped in 37.37s =============
+============= 311 passed, 2 skipped in 39.11s ==============
 
 Exit code: 0
 
 --------------------------------------------------------------------------------
-7. REPOSITORY INTEGRITY, TRACKED FILES, AND SENSITIVE PATTERNS SCAN
+7. DEPENDENCY LOCKFILE VALIDATION
+--------------------------------------------------------------------------------
+$ /root/.local/bin/uv lock --check
+Resolved 88 packages in 2ms
+
+Exit code: 0
+
+--------------------------------------------------------------------------------
+8. REPOSITORY INTEGRITY, TRACKED FILES, AND SENSITIVE PATTERNS SCAN
 --------------------------------------------------------------------------------
 $ git diff --check origin/main...HEAD
-(Clean, 0 errors, Exit code: 0)
+(Clean, 0 errors)
+Exit code: 0
 
 $ git ls-files | grep -E "(\.xlsx$|\.pdf$|\.db$|\.sqlite$|\.env$|secrets|credentials)"
-(Clean, 0 prohibited files, grep Exit code: 1)
+(Grep produced 0 matches, exiting with status code 1 indicating no prohibited files matched)
+Exit code: 1 (clean, 0 prohibited files)
 
 $ git grep -i -E "password|secret|api_key|private_key" -- apps/
-(Clean, 0 findings, grep Exit code: 1)
+(Grep produced 0 matches in product code, exiting with status code 1 indicating no sensitive markers found)
+Exit code: 1 (clean, 0 sensitive findings)
+
+--------------------------------------------------------------------------------
+9. HANDOFF PACKAGE VALIDATION
+--------------------------------------------------------------------------------
+$ python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-07-save-import-coordinator/
+Handoff validation passed.
+
+Exit code: 0
 
 --------------------------------------------------------------------------------
 FINAL SUMMARY
@@ -153,10 +177,10 @@ Status: ALL QUALITY CHECKS PASSED (Linux native)
 Windows Runtime: PENDING independent Codex CI execution on PR
 Branch: antigravity/phase-01-save-import-coordinator
 Baseline Commit: 55b965dc6781c9371045f2ecf905ec27f52b64a5
-Total Passed Tests: 306 passed, 2 platform-conditional skipped (308 collected)
-Coordinator Tests: 34/34 passed
+Total Passed Tests: 311 passed, 2 platform-conditional skipped (313 collected)
+Coordinator Tests: 39/39 passed
 Benchmark Limit: strictly <= 15.0s and <= 128.0 MiB
-Measured Benchmark RSS: 59.96 MiB (under 128.0 MiB ceiling)
-Measured Benchmark Duration: 11.71s (under 15.0s ceiling)
+Measured Benchmark RSS: 59.87 MiB (under 128.0 MiB ceiling)
+Measured Benchmark Duration: 12.13s (under 15.0s ceiling)
 Gate G1: OPEN / IN PROGRESS
 ================================================================================

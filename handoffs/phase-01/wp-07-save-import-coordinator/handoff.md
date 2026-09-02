@@ -7,27 +7,17 @@
 - **Component Version:** `SAVE_IMPORT_COORDINATOR_VERSION = "save-import-coordinator.v1"`
 - **Baseline Commit:** `55b965dc6781c9371045f2ecf905ec27f52b64a5`
 - **Target Branch:** `antigravity/phase-01-save-import-coordinator`
-- **Linear Branch Commits:**
-  - `3a84402` — `feat(local_agent,tests): implement save-import-coordinator.v1 and tests under WP-07`
-  - `2617237` — `docs(handoff): add WP-07 save import coordinator handoff package`
-  - `4f5042c` — `docs(handoff): synchronize commit list in WP-07 handoff`
-  - `16a49b5` — `fix(tests): import orig_read from rdr_mod for mypy compliance`
-  - `7ccdc9c` — `docs(handoff): finalize commit list in WP-07 handoff package`
-  - `efd2990` — `docs(handoff): record final commit in WP-07 handoff`
-  - `deca59b` — `fix(local_agent,tests): address Codex review round 1 W7-R1-01 to W7-R1-06`
-  - `7dd4aba` — `docs(handoff): update WP-07 handoff package with Codex review round 1 fixes`
-  - `ca306cf` — `docs(handoff): finalize commit list in WP-07 handoff package`
 - **Gate G1 Status:** `OPEN / IN PROGRESS`
 
 ## Scope
 
-Delivers the core save-import coordinator and single-attempt driver under ADR-0010 and WP-07, with all Codex Round 1 review remediations (W7-R1-01 through W7-R1-06):
+Delivers the core save-import coordinator and single-attempt driver under ADR-0010 and WP-07, with all Codex Round 1 (W7-R1-01 to W7-R1-06) and Round 2 (W7-R2-01, W7-R2-02) review remediations:
 1. **Save Debounce & Coalescing Engine:** Fixed 2.0s debounce (`SAVE_DEBOUNCE_NS = 2_000_000_000`), lexical host-native path comparison (`normpath`/`normcase`), ignoring irrelevant sibling files (`.tmp`, `~$`, conflicts, archives, snapshots, directories, read-only notices).
 2. **Move Event Support:** Symmetrical Move-in and Move-out matching with strict coordinator target path immutability.
-3. **Thread-Safe State Machine & Atomic Token Reservation (W7-R1-02):** Opaque `SourceReadAttempt` capability tokens constructed atomically before state mutation with zero state corruption on transient failure; `SaveCoordinatorView` invariant validation; clean state transitions (`IDLE`, `WAITING`, `RUNNING`, `FAULTED`); and lock-free execution during I/O and parsing.
+3. **Thread-Safe State Machine & Atomic Token Reservation (W7-R1-02, W7-R2-02):** Opaque `SourceReadAttempt` capability tokens constructed atomically before state mutation with zero state corruption on transient failure; `SaveCoordinatorView` invariant validation; clean state transitions (`IDLE`, `WAITING`, `RUNNING`, `FAULTED`); bounded-timeout barrier synchronization in concurrency testing with deterministic per-worker result and error assertions (no swallowed exceptions); and lock-free execution during I/O and parsing.
 4. **Follow-Up Coalescing:** Remembers at most one pending follow-up notice during active attempt execution, resolving both expired and future deadlines upon attempt finish.
 5. **Outcome Mapping & Recovery:** Automatic retry on direct `XlsxSourceNotReadyError` at completion + 2s; clean transition to `IDLE` on `XlsxSourceReadError` without timer retry of rejected generation; `FAULTED` state on infrastructure/integrity failures with explicit `resume_after_fault`.
-6. **Single-Path Driver & Cause Preservation (W7-R1-01):** `read_due_source` executes attempt completion exactly once, preserving both original reader causes and bookkeeping exceptions via `ExceptionGroup` without overwriting `__cause__`; token-scoped guard guarantees tokens never leak and never mutates foreign tokens.
+6. **Single-Path Driver & Complete Exception Tree Preservation (W7-R1-01, W7-R2-01):** `read_due_source` executes attempt completion exactly once, capturing and grouping all failures across work (Reader/acquisition), finish (bookkeeping), and guard (`_guarded_force_fault`) via `ExceptionGroup` (or `BaseExceptionGroup` for cancellations) with original identities and raw `__cause__` attributes completely preserved; token-scoped guard guarantees tokens never leak and protects real newly issued attempts.
 7. **Constant & Safe Error Messages (W7-R1-04):** Error boundaries never leak confidential paths or secret markers in error messages.
 8. **Strict Types & Enums (W7-R1-05):** Strict integer time enforcement (rejecting booleans/floats) and strict Enum instance checks without implicit string coercion.
 
@@ -40,12 +30,12 @@ Delivers the core save-import coordinator and single-attempt driver under ADR-00
 ## Changed files
 
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported WP-07 symbols (`SAVE_IMPORT_COORDINATOR_VERSION`, `SAVE_DEBOUNCE_NS`, `SaveImportCoordinator`, `SaveCoordinatorView`, `SourceReadAttempt`, `SaveCoordinatorState`, `SaveEventKind`, `SourceReadOutcome`, `SaveCoordinatorError`, `SaveCoordinatorPolicyError`, `SaveCoordinatorStateError`, `read_due_source`).
-- `apps/local_agent/src/accounting_local_agent/save_import_coordinator.py`: Core coordinator implementation, state machine, data contracts, and `read_due_source` driver.
+- `apps/local_agent/src/accounting_local_agent/save_import_coordinator.py`: Core coordinator implementation, state machine, data contracts, token-scoped failure guard, and `read_due_source` driver.
 - `apps/local_agent/README.md`: Documented coordinator architecture, API contracts, and validation commands.
-- `tests/test_save_import_coordinator.py`: Comprehensive test suite containing 34 tests covering SC-01 through SC-16, Codex review items W7-R1-01 to W7-R1-06, synthetic fixtures, Hypothesis property testing, and WP-04 Planner composition.
+- `tests/test_save_import_coordinator.py`: Comprehensive test suite containing 39 tests covering SC-01 through SC-16, Codex review items W7-R1-01..06 and W7-R2-01..02, synthetic fixtures, Hypothesis property testing, deterministic barrier proofs, and WP-04 Planner composition.
 - `handoffs/phase-01/wp-07-save-import-coordinator/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-07-save-import-coordinator/acceptance-matrix.md`: Detailed requirement acceptance matrix.
-- `handoffs/phase-01/wp-07-save-import-coordinator/test-results.txt`: Verbatim command outputs, quality scan records, and benchmark metrics.
+- `handoffs/phase-01/wp-07-save-import-coordinator/test-results.txt`: Direct command execution logs, quality scan records, and benchmark metrics.
 
 ## Schema and migrations
 
@@ -57,19 +47,21 @@ Delivers the core save-import coordinator and single-attempt driver under ADR-00
 2. `uv run ruff check .` (Exit 0, all checks passed)
 3. `uv run mypy .` (Exit 0, 25 source files checked)
 4. `uv run mypy --platform win32 .` (Exit 0, 25 source files checked)
-5. `uv run pytest tests/test_save_import_coordinator.py -v` (Exit 0, 34 passed in 1.35s)
-6. `uv run pytest -v` (Exit 0, 306 passed, 2 skipped in 37.37s)
-7. `git diff --check origin/main...HEAD` (Exit 0, 0 whitespace errors)
-8. `git ls-files | grep -E "(\.xlsx$|\.pdf$|\.db$|\.sqlite$|\.env$|secrets|credentials)"` (Exit 1 on grep -> 0 prohibited files)
-9. `git grep -i -E "password|secret|api_key|private_key" -- apps/` (Exit 1 on grep -> 0 findings)
+5. `uv run pytest tests/test_save_import_coordinator.py -v` (Exit 0, 39 passed in 1.51s)
+6. `uv run pytest -v` (Exit 0, 311 passed, 2 skipped in 39.11s)
+7. `uv lock --check` (Exit 0, 88 packages resolved)
+8. `git diff --check origin/main...HEAD` (Exit 0, 0 whitespace errors)
+9. `git ls-files | grep -E "(\.xlsx$|\.pdf$|\.db$|\.sqlite$|\.env$|secrets|credentials)"` (Exit 1 on grep -> 0 prohibited files)
+10. `git grep -i -E "password|secret|api_key|private_key" -- apps/` (Exit 1 on grep -> 0 sensitive findings)
+11. `python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-07-save-import-coordinator/` (Exit 0, handoff validation passed)
 
 ## Tests and evidence
 
-- **Full repository suite:** 306 tests passing cleanly on Linux native (2 platform-conditional skipped Windows-handle tests).
-- **Coordinator tests:** 34 dedicated unit, integration, fault-injection, concurrency, deterministic barrier, hypothesis, and composition tests.
-- **15,000-row streaming benchmark:** 11.71s duration (strictly within 15.0s ceiling), 59.96 MiB peak RSS (strictly within 128.0 MiB ceiling).
+- **Full repository suite:** 311 tests passing cleanly on Linux native (2 platform-conditional skipped Windows-handle tests; 313 collected total).
+- **Coordinator tests:** 39 dedicated unit, integration, fault-injection, concurrency, deterministic barrier, hypothesis, and composition tests.
+- **15,000-row streaming benchmark:** 12.13s duration (strictly within 15.0s ceiling), 59.87 MiB peak RSS (strictly within 128.0 MiB ceiling).
 - **Windows Platform:** Static type safety validated via `mypy --platform win32` (Exit 0); native runtime execution is pending independent Codex CI execution on PR.
-- Verbatim execution logs and metrics recorded in `test-results.txt`.
+- Direct execution logs and metrics recorded in `test-results.txt`.
 
 ## Assumptions and open items
 
