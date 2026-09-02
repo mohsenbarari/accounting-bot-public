@@ -893,9 +893,9 @@ def test_sc12_read_due_source_integrity_failure_faults_coordinator(
     clock.advance_seconds(3.0)
 
     # Tamper with snapshot during read
-    import accounting_local_agent.save_import_coordinator as coord_mod
+    import accounting_local_agent.xlsx_source_reader as rdr_mod
 
-    orig_read = coord_mod.read_xlsx_source_snapshot
+    orig_read = rdr_mod.read_xlsx_source_snapshot
 
     def tampering_read(p: Path | str) -> Any:
         path_obj = Path(p)
@@ -961,9 +961,9 @@ def test_sc13_notice_responsiveness_during_blocked_io(
     reader_entered = threading.Event()
     release_reader = threading.Event()
 
-    import accounting_local_agent.save_import_coordinator as coord_mod
+    import accounting_local_agent.xlsx_source_reader as rdr_mod
 
-    orig_reader = coord_mod.read_xlsx_source_snapshot
+    orig_reader = rdr_mod.read_xlsx_source_snapshot
 
     def blocking_reader(p: Path | str) -> Any:
         reader_entered.set()
