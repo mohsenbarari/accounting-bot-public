@@ -44,6 +44,7 @@
   - `e141bc8` — `fix(local_agent,tests): address Codex review round 10 R10-01 to R10-03`
   - `3ba087a` — `docs(handoff): update WP-06 handoff with Codex review round 10 evidence`
   - `89c40de` — `fix(local_agent,tests): address Codex review round 11 R11-01 to R11-04`
+  - `2f19d90` — `fix(local_agent): resolve Ruff B904 exception chaining in win query`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
