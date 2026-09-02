@@ -44,17 +44,20 @@
   - `e141bc8` — `fix(local_agent,tests): address Codex review round 10 R10-01 to R10-03`
   - `3ba087a` — `docs(handoff): update WP-06 handoff with Codex review round 10 evidence`
   - `89c40de` — `fix(local_agent,tests): address Codex review round 11 R11-01 to R11-04`
+  - `7e3775a` — `docs(handoff): update WP-06 handoff with Codex review round 11 evidence`
   - `2f19d90` — `fix(local_agent): resolve Ruff B904 exception chaining in win query`
+  - `8a037d4` — `docs(handoff): update WP-06 handoff commit list`
+  - `d2a114c` — `fix(local_agent,tests): complete typed handle error lifecycle, windows anchor oracle, candidate protection, and symlink probing for round 12`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
 
 Delivers bounded, atomic XLSX snapshot acquisition, exclusive leased consumer access, post-lease integrity verification, and namespace-safe cleanup lifecycle under ADR-0009 and WP-06.
-Addresses all Round 11 Codex review remediation directives (R11-01 to R11-04):
-1. **R11-01 (Windows Handle Close Error Visibility):** Checked return `BOOL` of `CloseHandle` and raised `OSError` with `get_last_error()` on failure; preserved chained causes on double failure; raised `XlsxSnapshotStorageError` in `finally` if `CloseHandle` fails, preventing yield. Tested with native `HANDLE_FLAG_PROTECT_FROM_CLOSE` test (`test_r11_01`).
-2. **R11-02 (Oracle Backend Alignment):** Aligned Linux `renameat2` dispatching on Windows via `_platform_override`; aligned anchor directory hooks after `mkdir()` and before `CreateFileW` / `GetFileInformationByHandleEx`; added dedicated candidate fstat seam `_fstat_candidate_fd`; unified provider fallback identity via `_extract_windows_handle_identity`; handled Windows open file locking vs replace outcome in `test_sa05`.
-3. **R11-03 (Honest Symlink Probing):** Probed environment symlink creation privilege honestly via `_can_create_symlinks(tmp_path)` across `test_sa02`, `test_sa05`, `test_sa07`, and `test_sa09`.
-4. **R11-04 (Full Benchmark Output):** Wrapped benchmark output with `capsys.disabled()`, outputting full 64-character SHA-256 string visible in standard CI execution.
+Addresses all Round 12 Codex review remediation directives (R12-01 to R12-04):
+1. **R12-01 (Typed Windows Handle Error Lifecycle & Double Failure):** Wrapped WinAPI lookups, argument setups, calls, and return-false checks into typed `XlsxSnapshotCleanupError(reason=SNAPSHOT_CLEANUP_FAILURE)` with original exception chained in `__cause__`; preserved double-failure exception chaining; converted `_close_windows_handle` failures in `finally` to `XlsxSnapshotCleanupError`, failing closed without yield; added comprehensive subtests in `test_r10_02` with exact `call_count` assertions; strengthened native oracle `test_r11_01`.
+2. **R12-02 (Windows Anchor Directory Oracle):** Intercepted `CreateFileW` on `foreign_dir` in `test_r8_01` on Windows, asserting `anchor_yielded is False`, `XlsxSnapshotStorageError` is raised, `foreign_dir.exists()`, `displaced_owned_dir.exists()`, and `list(foreign_dir.iterdir()) == []`.
+3. **R12-03 (Candidate Protection & Writer Coverage):** Verified candidate descriptor closure upon exit in `test_r8_08`; added `after_candidate_close_before_cleanup` hook in product code and asserted unconditional foreign candidate file survival, storage error, and no yield in `test_r8_09`; verified writer attempt/succeeded/blocked outcomes with source verification and subsequent next-generation acquisition in `test_sa05`; executed symlink swap during `during_observation` for `test_sa05`.
+4. **R12-04 (Honest Symlink Probing & CI Guard):** Probed native symlink creation capability via `_probe_symlink_capability(tmp_path)` skipping only for `WinError 1314` / `errno.EPERM`, while calling `pytest.fail` in CI environments to prevent silent capability skips.
 
 ## Roadmap traceability
 
@@ -65,7 +68,7 @@ Addresses all Round 11 Codex review remediation directives (R11-01 to R11-04):
 ## Changed files
 
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported `DEFAULT_COPY_CHUNK_SIZE`, `XLSX_SNAPSHOT_ACQUISITION_VERSION`, `StableXlsxSnapshot`, error taxonomy classes, and `open_stable_xlsx_snapshot`.
-- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Versioned context manager with Round 11 review fixes (R11-01 to R11-04).
+- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Versioned context manager with Round 12 review fixes (R12-01 to R12-04).
 - `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 72 tests covering SA-01 to SA-14 and all regression oracles.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/acceptance-matrix.md`: Detailed requirement acceptance matrix.
@@ -81,9 +84,9 @@ Addresses all Round 11 Codex review remediation directives (R11-01 to R11-04):
 2. `uv run ruff check .` (Exit 0, all checks passed)
 3. `uv run mypy .` (Exit 0, 23 source files checked)
 4. `uv run mypy --platform win32 .` (Exit 0, 23 source files checked)
-5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 70 passed, 2 skipped in 15.61s)
-6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark"` (Exit 0, 3 runs: 12.22s, 11.87s, 11.68s duration; 59.82 MiB, 59.85 MiB, 59.82 MiB peak RSS)
-7. `uv run pytest -v` (Exit 0, 270 passed, 2 skipped in 38.34s)
+5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 70 passed, 2 skipped in 15.71s)
+6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark"` (Exit 0, 3 runs: 12.47s, 11.20s, 11.76s duration; 59.51 MiB, 59.45 MiB, 59.89 MiB peak RSS)
+7. `uv run pytest -v` (Exit 0, 270 passed, 2 skipped in 38.42s)
 8. `git ls-files` check (Exit 0, 92 tracked files, 0 prohibited files)
 9. `git grep` sensitive patterns check (Exit 1 failure-on-match -> Exit 0 clean)
 
@@ -101,16 +104,22 @@ Addresses all Round 11 Codex review remediation directives (R11-01 to R11-04):
 
 ## Risks
 
-- Low: Component is isolated behind strict typed context manager boundary; original source workbooks are never written or modified.
+- **Concurrent Excel Writing Locks on Windows:** If Excel holds exclusive write lock on source file during open, `XlsxSourceNotReadyError` is raised with `retryable=True`. Calling orchestrator must implement appropriate backoff/retry.
+- **Disk Space Exhaustion on Snapshot Root:** Large source workbooks copied into temporary snapshots require disk space proportional to file size; snapshot directory cleanup runs on both success and failure to prevent space leaks.
 
 ## Rollback
 
-- Revert linear commits on `antigravity/phase-01-stable-xlsx-snapshot-acquisition` back to baseline `bc085acd8852e2293fdfcb786a7694fe96e93407`.
+1. Delete the branch `antigravity/phase-01-stable-xlsx-snapshot-acquisition`.
+2. Checkout `main` at baseline `bc085acd8852e2293fdfcb786a7694fe96e93407`.
 
 ## Protected assets
 
-- No real Excel files, COM automation, SQLite databases, Outbox pipelines, production networks, or credentials accessed or modified. All tests use synthetic-only fixtures.
+- [x] `ROADMAP.md` was not modified.
+- [x] The reference Excel workbook and unauthorized copies were not modified.
+- [x] No real accounting data, phone number, Telegram identity, PDF, SQLite database, dump, token, credential, or private key was added.
+- [x] No production Telegram, server, database, DNS, certificate, backup, or external repository was mutated.
+- [x] No destructive migration or unrelated user change was included.
 
 ## Stop state
 
-- Ready for Codex review and PR publication. No push, PR creation, or branch merge performed by implementer.
+Implementation for Round 12 is stopped pending independent Codex PR review and merge. Gate G1 remains `OPEN / IN PROGRESS` and WP-06 remains `REQUEST_CHANGES`. No Gate approval, merge, push, deploy, or next Work Package has been performed.
