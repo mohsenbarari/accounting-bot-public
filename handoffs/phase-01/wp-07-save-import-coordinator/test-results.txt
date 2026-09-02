@@ -1,0 +1,149 @@
+================================================================================
+WORK PACKAGE: WP-07: Save debounce, coalescing, and import coordination
+PHASE: 1 — source and data-model foundation
+RECORDED AT UTC: 2026-09-02T10:45:00Z
+BASELINE COMMIT: 55b965dc6781c9371045f2ecf905ec27f52b64a5
+BRANCH: antigravity/phase-01-save-import-coordinator
+================================================================================
+
+--------------------------------------------------------------------------------
+1. RUFF FORMAT CHECK
+--------------------------------------------------------------------------------
+$ /root/.local/bin/uv run ruff format --check .
+64 files already formatted
+
+Exit code: 0
+
+--------------------------------------------------------------------------------
+2. RUFF LINT CHECK
+--------------------------------------------------------------------------------
+$ /root/.local/bin/uv run ruff check .
+All checks passed!
+
+Exit code: 0
+
+--------------------------------------------------------------------------------
+3. MYPY LINUX NATIVE STATIC TYPE CHECK
+--------------------------------------------------------------------------------
+$ /root/.local/bin/uv run mypy .
+Success: no issues found in 25 source files
+
+Exit code: 0
+
+--------------------------------------------------------------------------------
+4. MYPY WIN32 TARGET STATIC TYPE CHECK
+--------------------------------------------------------------------------------
+$ /root/.local/bin/uv run mypy --platform win32 .
+Success: no issues found in 25 source files
+
+Exit code: 0
+
+--------------------------------------------------------------------------------
+5. PYTEST WP-07 DEDICATED SUITE (SC-01 TO SC-16)
+--------------------------------------------------------------------------------
+$ /root/.local/bin/uv run pytest tests/test_save_import_coordinator.py -v
+=================== test session starts ====================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /srv/accounting-bot/workspace
+configfile: pyproject.toml
+plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 25 items
+
+tests/test_save_import_coordinator.py::test_sc01_public_api_exports_and_version PASSED [  4%]
+tests/test_save_import_coordinator.py::test_sc01_source_read_attempt_immutability PASSED [  8%]
+tests/test_save_import_coordinator.py::test_sc01_safe_repr_no_path_leakage PASSED [ 12%]
+tests/test_save_import_coordinator.py::test_sc01_save_coordinator_view_invariants PASSED [ 16%]
+tests/test_save_import_coordinator.py::test_sc02_configuration_path_validation PASSED [ 20%]
+tests/test_save_import_coordinator.py::test_sc02_notification_path_and_kind_filtering PASSED [ 24%]
+tests/test_save_import_coordinator.py::test_sc03_move_into_and_out_of_target PASSED [ 28%]
+tests/test_save_import_coordinator.py::test_sc04_idle_construction_and_clock_boundaries PASSED [ 32%]
+tests/test_save_import_coordinator.py::test_sc05_burst_coalescing_and_past_deadline PASSED [ 36%]
+tests/test_save_import_coordinator.py::test_sc06_concurrent_due_takes_yield_single_token PASSED [ 40%]
+tests/test_save_import_coordinator.py::test_sc06_token_security_and_invalid_finish_outcomes PASSED [ 44%]
+tests/test_save_import_coordinator.py::test_sc07_followup_notices_during_running_state PASSED [ 48%]
+tests/test_save_import_coordinator.py::test_sc08_source_not_ready_automatic_retry_scheduling PASSED [ 52%]
+tests/test_save_import_coordinator.py::test_sc09_reader_rejected_no_timer_retry_unless_newer_notice PASSED [ 56%]
+tests/test_save_import_coordinator.py::test_sc10_faulted_state_and_explicit_resume PASSED [ 60%]
+tests/test_save_import_coordinator.py::test_sc10_injected_driver_bookkeeping_failure_guard PASSED [ 64%]
+tests/test_save_import_coordinator.py::test_sc11_read_due_source_zero_io_when_not_due PASSED [ 68%]
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_success_lifecycle PASSED [ 72%]
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_missing_file_source_not_ready PASSED [ 76%]
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_reader_rejected_corrupt_file PASSED [ 80%]
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_integrity_failure_faults_coordinator PASSED [ 84%]
+tests/test_save_import_coordinator.py::test_sc12_cancellation_keyboard_interrupt_faults_coordinator PASSED [ 88%]
+tests/test_save_import_coordinator.py::test_sc13_notice_responsiveness_during_blocked_io PASSED [ 92%]
+tests/test_save_import_coordinator.py::test_sc14_change_planner_oracle_zero_false_changes PASSED [ 96%]
+tests/test_save_import_coordinator.py::test_sc15_hypothesis_property_state_machine_oracle PASSED [100%]
+
+==================== 25 passed in 1.19s ====================
+
+Exit code: 0
+
+--------------------------------------------------------------------------------
+6. FULL WORKSPACE PYTEST SUITE
+--------------------------------------------------------------------------------
+$ /root/.local/bin/uv run pytest -v
+=================== test session starts ===================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /srv/accounting-bot/workspace
+configfile: pyproject.toml
+testpaths: tests
+plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 299 items
+
+tests/test_architecture_guard.py ..............     [  4%]
+tests/test_canonical_date.py ..........             [  8%]
+tests/test_canonical_hashing.py ..................  [ 14%]
+tests/test_imports.py .......                       [ 16%]
+tests/test_raw_input_contracts.py ...............   [ 21%]
+tests/test_save_import_coordinator.py ............. [ 25%]
+............                                        [ 29%]
+tests/test_source_change_plan.py .................. [ 35%]
+.......                                             [ 38%]
+tests/test_xlsx_snapshot_acquisition.py ........... [ 41%]
+...............................
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 12.1148s | baseline_current_rss_mib: 28.29 MiB | call_peak_rss_mib: 60.04 MiB | rows: 15000 | file_bytes: 549787 | file_sha: e0f73c97a18af41fe9c6753c986fba37cdd57d11b0af84396ae7aed5994c18fe | platform: linux
+.................... [ 58%]
+..........ss                                        [ 62%]
+tests/test_xlsx_source_reader.py .................. [ 68%]
+....................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.8079s | baseline_current_rss_mib: 28.38 MiB | call_peak_rss_mib: 60.01 MiB | rows: 15000 | platform: linux
+.......                         [ 77%]
+tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 78%]
+......                                              [ 80%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 80%]
+................................................... [ 97%]
+.......                                             [100%]
+
+================= short test summary info =================
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
+============= 297 passed, 2 skipped in 38.39s =============
+
+Exit code: 0
+
+--------------------------------------------------------------------------------
+7. REPOSITORY INTEGRITY, TRACKED FILES, AND SENSITIVE PATTERNS SCAN
+--------------------------------------------------------------------------------
+$ git diff --check origin/main...HEAD
+(Clean, 0 errors)
+
+$ git ls-files | grep -E "(\.xlsx|\.pdf|\.db|\.sqlite|\.env|secrets|credentials)"
+(Clean, 0 prohibited files)
+
+Exit code: 0
+
+--------------------------------------------------------------------------------
+FINAL SUMMARY
+--------------------------------------------------------------------------------
+Status: ALL QUALITY CHECKS PASSED
+Branch: antigravity/phase-01-save-import-coordinator
+Baseline Commit: 55b965dc6781c9371045f2ecf905ec27f52b64a5
+Total Passed Tests: 297 passed, 2 platform-conditional skipped (299 collected)
+Coordinator Tests: 25/25 passed
+Benchmark RSS: 60.04 MiB (under 128 MiB ceiling)
+Benchmark Time: 12.11s (under 30.0s ceiling)
+Gate G1: OPEN / IN PROGRESS
+================================================================================
