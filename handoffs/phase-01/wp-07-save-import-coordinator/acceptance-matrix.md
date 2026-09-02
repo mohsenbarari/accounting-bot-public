@@ -12,7 +12,7 @@
 
 ---
 
-## Detailed Requirement Verification (SC-01 to SC-16, W7-R1-01..06, W7-R2-01..02)
+## Detailed Requirement Verification (SC-01 to SC-16, W7-R1-01..06, W7-R2-01..02, W7-R3-01)
 
 | Item ID | Requirement / Scope | Status | Verification & Evidence |
 | :--- | :--- | :--- | :--- |
@@ -21,7 +21,7 @@
 | **SC-03** | Move events into or out of target match; coordinator target path is strictly immutable and never follows renamed destination; acquisition always uses configured target | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc03_move_into_and_out_of_target` |
 | **SC-04 / W7-R1-05** | Idle construction without timer threads; fake monotonic clock support; deadline boundaries (+/-1ns); repeated notices reset quiet period to latest notice + 2s; backwards/invalid clock fails closed; exact integer type enforcement | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc04_idle_construction_and_clock_boundaries`, `test_w7_r1_05_strict_types_for_time_and_enums` |
 | **SC-05** | Thousands of rapid burst notices coalesce to a single pending reservation; past deadline creates exactly one attempt reservation without retry backlog | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc05_burst_coalescing_and_past_deadline` |
-| **SC-06 / W7-R1-02 / W7-R2-02** | Concurrency safety under state lock; bounded barrier synchronization with per-worker result/error tracking (no swallowed exceptions); token created atomically before state mutation with zero rollback corruption; foreign, copied, stale, or double tokens and invalid outcomes rejected | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc06_concurrent_due_takes_yield_single_token`, `test_sc06_token_security_and_invalid_finish_outcomes`, `test_w7_r1_02_take_due_error_injection_rollback_and_subsequent_success`, `test_w7_r1_02_take_due_thread_contention_with_injected_error`, `test_w7_r2_02_concurrency_oracle_rejects_unexpected_worker_errors` |
+| **SC-06 / W7-R1-02 / W7-R2-02 / W7-R3-01** | Concurrency safety under state lock; bounded barrier synchronization with per-worker result/error accounting; token created atomically before state mutation with zero rollback corruption; strict in-race token winner verification without fallback workarounds; negative mutation witness proves oracle rejects 0-token winner; foreign, copied, stale, or double tokens and invalid outcomes rejected | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc06_concurrent_due_takes_yield_single_token`, `test_sc06_token_security_and_invalid_finish_outcomes`, `test_w7_r1_02_take_due_error_injection_rollback_and_subsequent_success`, `test_w7_r1_02_take_due_thread_contention_with_injected_error`, `test_w7_r3_01_concurrency_oracle_rejects_zero_token_winner_after_transient_error`, `test_w7_r2_02_concurrency_oracle_rejects_unexpected_worker_errors` |
 | **SC-07** | Follow-up notices during active attempt coalesce to at most one follow-up intent; handles both already-expired and future deadlines upon attempt completion | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc07_followup_notices_during_running_state` |
 | **SC-08 / W7-R1-06** | Direct `XlsxSourceNotReadyError` triggers automatic retry at completion + 2s without fresh notice; complete end-to-end retry lifecycle from missing file to success validated | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc08_source_not_ready_automatic_retry_scheduling`, `test_w7_r1_06_source_not_ready_to_success_retry_lifecycle_without_new_notice` |
 | **SC-09** | Direct Reader rejection transitions cleanly to `IDLE` with no timer retry of rejected generation; fresh notice afterwards succeeds on fixed file | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc09_reader_rejected_no_timer_retry_unless_newer_notice` |
@@ -31,13 +31,13 @@
 | **SC-13 / W7-R1-06** | Notification responsiveness during I/O and cleanup barriers; deterministic event barriers prove notices delivered while reader or lease cleanup is blocked complete before worker release | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc13_notice_responsiveness_during_blocked_io`, `test_w7_r1_06_notice_responsiveness_during_blocked_lease_cleanup` |
 | **SC-14** | Composition with independent WP-04 Planner oracle: proves zero Insert/Edit/Void for unchanged Raw across modified ZIP binary representation | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc14_change_planner_oracle_zero_false_changes` |
 | **SC-15 / W7-R1-03** | Cross-platform Hypothesis property-based state machine verification using host-native temporary paths; compares state, deadlines, pending flags, take counts, and finish counts against independent reference oracle | PASS (Linux native) | `tests/test_save_import_coordinator.py::test_sc15_hypothesis_property_state_machine_oracle` |
-| **SC-16** | Workspace regression preservation: full test suite passing (311 passed, 2 platform-conditional skipped), memory and duration benchmark strictly within 15.0s / 128.0 MiB limit | PASS (Linux native) | `tests/test_save_import_coordinator.py` (39/39 passed), full suite 311 passed, 2 skipped |
+| **SC-16** | Workspace regression preservation: full test suite passing (312 passed, 2 platform-conditional skipped), memory and duration benchmark strictly within 15.0s / 128.0 MiB limit | PASS (Linux native) | `tests/test_save_import_coordinator.py` (40/40 passed), full suite 312 passed, 2 skipped |
 
 ---
 
 ## Coverage gaps
 
-- **Linux Native:** 311 passed, 2 platform-conditional skipped Windows-handle tests (313 collected total); 39/39 coordinator tests passing; 15,000-row streaming benchmark measured at 12.13s / 59.87 MiB (strictly within 15.0s / 128.0 MiB ceiling).
+- **Linux Native:** 312 passed, 2 platform-conditional skipped Windows-handle tests (314 collected total); 40/40 coordinator tests passing; 15,000-row streaming benchmark measured at 10.98s / 59.38 MiB (strictly within 15.0s / 128.0 MiB ceiling).
 - **Windows Runtime Platform:** Windows runtime execution is **PENDING** independent Codex CI execution on PR. Static type safety for Windows targets is verified via `mypy --platform win32` (Exit 0).
 
 ---
