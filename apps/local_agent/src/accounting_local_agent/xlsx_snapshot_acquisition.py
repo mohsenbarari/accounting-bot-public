@@ -271,6 +271,15 @@ except ImportError:
     _ctypes_wintypes = None  # type: ignore[assignment]
 
 _ctypes_provider: Any = ctypes
+_platform_override: str | None = None
+_fstat_candidate_fd: Callable[[int], os.stat_result] = os.fstat
+
+
+def _extract_windows_handle_identity(
+    vol_id: int, file_id: int
+) -> tuple[int | None, int | None]:
+    """Extract Windows handle identity, defaulting to (vol_id, file_id)."""
+    return vol_id, file_id
 
 
 def _get_wintypes() -> Any:
@@ -294,7 +303,8 @@ def _atomic_move_no_replace(src: Path, dst: Path) -> None:
     MOVEFILE_REPLACE_EXISTING on Windows. Fails closed if the platform
     primitive is unsupported or fails with ENOSYS/EINVAL.
     """
-    if sys.platform.startswith("linux"):
+    current_platform = _platform_override or sys.platform
+    if current_platform.startswith("linux"):
         try:
             libc = _ctypes_provider.CDLL(None, use_errno=True)
             if not hasattr(libc, "renameat2"):
@@ -329,7 +339,7 @@ def _atomic_move_no_replace(src: Path, dst: Path) -> None:
             if isinstance(exc, FileExistsError):
                 raise
             raise OSError(f"Linux atomic move failed: {exc}") from exc
-    elif sys.platform == "win32":
+    elif current_platform == "win32":
         try:
             wintypes = _get_wintypes()
             if wintypes is None:
@@ -372,13 +382,52 @@ class _FILE_ID_INFO(ctypes.Structure):
     ]
 
 
+def _query_file_id_info_windows(kernel32: Any, handle: int) -> tuple[int, int]:
+    """Query FILE_ID_INFO from an open Windows file/directory handle."""
+    file_id_info_class = 18
+    wintypes = _get_wintypes()
+    if wintypes is None:
+        raise OSError("Windows wintypes module is not available")
+
+    get_info_ex = kernel32.GetFileInformationByHandleEx
+    get_info_ex.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    get_info_ex.restype = wintypes.BOOL
+
+    info = _FILE_ID_INFO()
+    success = get_info_ex(
+        wintypes.HANDLE(handle),
+        file_id_info_class,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+    )
+    if not success:
+        err = _ctypes_provider.get_last_error()
+        raise OSError(
+            f"GetFileInformationByHandleEx failed on lease directory with error {err}"
+        )
+
+    vol_id = int(info.VolumeSerialNumber)
+    file_id = int.from_bytes(bytes(info.FileId.Identifier), byteorder="little")
+    return vol_id, file_id
+
+
 def _create_and_anchor_lease_dir_windows(
     lease_dir: Path,
+    *,
+    _fault_hook: Callable[[str, Path, Path | None], None] | None = None,
 ) -> tuple[_ArtifactOwnershipToken, int]:
     """Create lease directory and acquire Windows directory handle anchor
     via FileIdInfo.
     """
     lease_dir.mkdir(parents=False, exist_ok=False)
+
+    if _fault_hook is not None:
+        _fault_hook("after_mkdir_before_anchor", lease_dir, None)
 
     wintypes = _get_wintypes()
     if wintypes is None:
@@ -427,64 +476,47 @@ def _create_and_anchor_lease_dir_windows(
         err = _ctypes_provider.get_last_error()
         raise OSError(f"CreateFileW failed on lease directory with error {err}")
 
-    # Query FILE_ID_INFO (FileIdInfo = 18 in FILE_INFO_BY_HANDLE_CLASS)
-    file_id_info_class = 18
+    if _fault_hook is not None:
+        _fault_hook("after_anchor_open_before_fstat", lease_dir, None)
+
     try:
-        get_info_ex = kernel32.GetFileInformationByHandleEx
-        get_info_ex.argtypes = [
-            wintypes.HANDLE,
-            ctypes.c_int,
-            ctypes.c_void_p,
-            wintypes.DWORD,
-        ]
-        get_info_ex.restype = wintypes.BOOL
-
-        info = _FILE_ID_INFO()
-        success = get_info_ex(
-            wintypes.HANDLE(handle),
-            file_id_info_class,
-            ctypes.byref(info),
-            ctypes.sizeof(info),
-        )
+        vol_id, file_id = _query_file_id_info_windows(kernel32, int(handle))
     except Exception as exc:
-        _close_windows_handle(int(handle))
-        raise OSError(
-            f"GetFileInformationByHandleEx failed on lease directory: {exc}"
-        ) from exc
+        query_exc = OSError(f"Failed to query lease directory identity: {exc}")
+        try:
+            _close_windows_handle(int(handle))
+        except OSError as close_exc:
+            close_exc.__cause__ = exc
+            query_exc.__cause__ = close_exc
+            raise query_exc
+        raise query_exc from exc
 
-    if not success:
-        err = _ctypes_provider.get_last_error()
-        _close_windows_handle(int(handle))
-        raise OSError(
-            f"GetFileInformationByHandleEx failed on lease directory with error {err}"
-        )
-
-    vol_id = int(info.VolumeSerialNumber)
-    file_id = int.from_bytes(bytes(info.FileId.Identifier), byteorder="little")
+    dev, ino = _extract_windows_handle_identity(vol_id, file_id)
     token = _ArtifactOwnershipToken(
-        device=vol_id,
-        inode=file_id,
+        device=dev,
+        inode=ino,
     )
     return token, int(handle)
 
 
 def _close_windows_handle(handle: int) -> None:
-    """Close a Windows HANDLE safely, ensuring argtypes and restype are configured."""
-    if (sys.platform == "win32" or _ctypes_provider is not ctypes) and handle not in (
-        -1,
-        0,
-        None,
-    ):
-        try:
-            wintypes = _get_wintypes()
-            if wintypes is not None:
-                kernel32 = _ctypes_provider.WinDLL("kernel32", use_last_error=True)
-                close_h = kernel32.CloseHandle
-                close_h.argtypes = [wintypes.HANDLE]
-                close_h.restype = wintypes.BOOL
-                close_h(wintypes.HANDLE(handle))
-        except Exception:
-            pass
+    """Close a Windows HANDLE safely, checking return value and error codes."""
+    if handle in (-1, 0, None):
+        return
+
+    wintypes = _get_wintypes()
+    if wintypes is None:
+        raise OSError("Windows wintypes module is not available")
+
+    kernel32 = _ctypes_provider.WinDLL("kernel32", use_last_error=True)
+    close_h = kernel32.CloseHandle
+    close_h.argtypes = [wintypes.HANDLE]
+    close_h.restype = wintypes.BOOL
+
+    ret = close_h(wintypes.HANDLE(handle))
+    if not ret:
+        err = _ctypes_provider.get_last_error()
+        raise OSError(f"CloseHandle failed on handle {handle} with error {err}")
 
 
 def _get_path_observation(path: Path) -> _FileToken:
@@ -918,7 +950,11 @@ def open_stable_xlsx_snapshot(
     lease_dir = (root / f"acq-{lease_id}").resolve()
     part_file = lease_dir / "snapshot.part"
     final_file = lease_dir / "snapshot.xlsx"
-    is_posix = os.name == "posix" or sys.platform != "win32"
+    is_posix = (
+        (_platform_override != "win32")
+        if _platform_override is not None
+        else (os.name == "posix" or sys.platform != "win32")
+    )
 
     owned_lease_token: _ArtifactOwnershipToken | None = None
     owned_part_token: _ArtifactOwnershipToken | None = None
@@ -1331,14 +1367,13 @@ def open_stable_xlsx_snapshot(
                     ) from exc
             else:
                 # Windows real directory handle anchor via CreateFileW
-                if _fault_hook is not None:
-                    _fault_hook("after_mkdir_before_anchor", lease_dir, None)
-
                 try:
                     (
                         owned_lease_token,
                         win_dir_handle,
-                    ) = _create_and_anchor_lease_dir_windows(lease_dir)
+                    ) = _create_and_anchor_lease_dir_windows(
+                        lease_dir, _fault_hook=_fault_hook
+                    )
                 except OSError as exc:
                     raise XlsxSnapshotStorageError(
                         "Failed to establish lease directory anchor"
@@ -1351,7 +1386,10 @@ def open_stable_xlsx_snapshot(
                     pass
                 posix_dir_fd = -1
             if win_dir_handle != -1:
-                _close_windows_handle(win_dir_handle)
+                try:
+                    _close_windows_handle(win_dir_handle)
+                except OSError:
+                    pass
                 win_dir_handle = -1
             if isinstance(exc, XlsxSnapshotAcquisitionError):
                 raise
@@ -1363,7 +1401,12 @@ def open_stable_xlsx_snapshot(
                 except OSError:
                     pass
             if win_dir_handle != -1:
-                _close_windows_handle(win_dir_handle)
+                try:
+                    _close_windows_handle(win_dir_handle)
+                except OSError as close_exc:
+                    raise XlsxSnapshotStorageError(
+                        "Failed to close lease directory anchor"
+                    ) from close_exc
 
         # Post-mkdir verification of path identity against immutable anchor
         try:
@@ -1416,10 +1459,10 @@ def open_stable_xlsx_snapshot(
 
                 try:
                     try:
-                        dst_st = os.fstat(dst_fd)
+                        dst_st = _fstat_candidate_fd(dst_fd)
                     except OSError:
                         # Handle-based retry on open descriptor for transient failure
-                        dst_st = os.fstat(dst_fd)
+                        dst_st = _fstat_candidate_fd(dst_fd)
                     p_dev, p_ino = _extract_device_and_inode(dst_st)
                     owned_part_token = _ArtifactOwnershipToken(
                         device=p_dev,
