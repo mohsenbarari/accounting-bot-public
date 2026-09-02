@@ -2,9 +2,14 @@
 
 - Phase: 1 — source and data-model foundation
 - Gate contribution: G1 native notification and runtime boundary; cannot close G1
-- Status: Issued for implementation; acceptance evidence pending
+- Status: Accepted and merged
 - Issued by: Codex Project Manager
 - Issued on: 2026-09-02
+- Accepted by: Codex Project Manager
+- Accepted on: 2026-09-02
+- Review evidence: PR #28 and final CI Run `33666088469`; [Codex acceptance](../../../handoffs/phase-01/wp-08-source-watch-runtime/codex-review.md)
+- Reviewed head: `2f51f2ef18a09f3c931dde46de5c3a1dbb12a4f3`
+- Merge commit: `0d1df855c39ab7ac5b8d5492915fb1014dc096cf`
 - Required skill: `accounting-bot-implementer`
 - Branch: `antigravity/phase-01-source-watch-runtime`
 - Planning baseline: `0e9bb74b79c8bd9517a1fc93fef1684f36a81b4a`
