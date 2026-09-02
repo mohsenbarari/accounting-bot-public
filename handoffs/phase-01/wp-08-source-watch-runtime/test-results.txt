@@ -1,7 +1,7 @@
 WORK PACKAGE: WP-08 Managed source watcher and serial read runtime
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-02T17:38:00Z
-TESTED CODE COMMIT SHA: 8c670b1ad34ba8519538c19f85b96d88a02173ab
+RECORDED AT UTC: 2026-09-02T17:58:00Z
+TESTED CODE COMMIT SHA: 809572f1b0e996c114ab5d5b6719ad151aab10ff
 
 ================================================================================
 1. SYNCHRONIZATION AND DEPENDENCY CHECK
@@ -90,7 +90,7 @@ tests/test_source_watch_runtime_native.py::test_wr15_native_startup_read_and_inp
 tests/test_source_watch_runtime_native.py::test_wr16_native_absent_source_lifecycle_and_thread_cleanup PASSED [ 97%]
 tests/test_source_watch_runtime_native.py::test_wr17_end_to_end_wp04_planner_composition PASSED [100%]
 
-================== 36 passed in 29.26s ==================
+================== 36 passed in 28.64s ==================
 Exit Code: 0
 
 ================================================================================
@@ -131,20 +131,20 @@ tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 75%]
 ================ short test summary info ==================
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
-======== 348 passed, 2 skipped in 67.46s (0:01:07) ========
+======== 348 passed, 2 skipped in 63.23s (0:01:03) ========
 Exit Code: 0
 
 ================================================================================
 6. STREAMING PERFORMANCE AND MEMORY BENCHMARKS
 ================================================================================
 $ uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 12.3137s | baseline_current_rss_mib: 30.18 MiB | call_peak_rss_mib: 61.57 MiB | rows: 15000 | platform: linux
-1 passed in 14.04s (Limits: 15.0s, 128.0 MiB)
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.7025s | baseline_current_rss_mib: 30.14 MiB | call_peak_rss_mib: 61.90 MiB | rows: 15000 | platform: linux
+1 passed in 12.15s (Limits: 15.0s, 128.0 MiB)
 Exit Code: 0
 
 $ uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.7962s | baseline_current_rss_mib: 30.05 MiB | call_peak_rss_mib: 61.65 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 8635d8ff798c1e7e2dcc77e52e4031e84d373acdafd9aa93a228feb88823af82 | platform: linux
-1 passed in 13.44s (Limits: 15.0s, 128.0 MiB)
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.3863s | baseline_current_rss_mib: 29.91 MiB | call_peak_rss_mib: 61.25 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 237950e08900fea6ea6730b3dc983a7daf300aa62e1d0033d809c23b25d87ab5 | platform: linux
+1 passed in 12.76s (Limits: 15.0s, 128.0 MiB)
 Exit Code: 0
 
 ================================================================================
@@ -160,13 +160,25 @@ $ git grep -i -E "(BEGIN PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[0-9a-zA-Z]{36})"
 Exit Code: 0 (0 sensitive credentials)
 
 ================================================================================
+8. ROLLBACK VERIFICATION ON ISOLATED SCRATCH BRANCH
+================================================================================
+$ git checkout -b scratch/verify-rollback 809572f1b0e996c114ab5d5b6719ad151aab10ff
+$ git revert --no-edit c7520c94606f37720f3e023b753e36d1c1f433a3..809572f1b0e996c114ab5d5b6719ad151aab10ff
+$ git diff --quiet c7520c94606f37720f3e023b753e36d1c1f433a3
+Output: ROLLBACK VERIFICATION SUCCESS: WORKING TREE MATCHES BASELINE EXACTLY
+$ git checkout antigravity/phase-01-source-watch-runtime
+$ git branch -D scratch/verify-rollback
+Exit Code: 0 (Baseline state verified identical)
+
+================================================================================
 FINAL SUMMARY
 ================================================================================
 - WP-08 Component: `source-watch-runtime.v1`
-- Tested Code Commit SHA: 8c670b1ad34ba8519538c19f85b96d88a02173ab
+- Tested Code Commit SHA: 809572f1b0e996c114ab5d5b6719ad151aab10ff
 - Unit & Deterministic Tests: 33 passed in `tests/test_source_watch_runtime.py`
 - Native OS Integration Tests: 3 passed in `tests/test_source_watch_runtime_native.py`
 - Full Monorepo Test Suite: 348 passed, 2 skipped (Windows-specific handle locks)
 - Cross-Platform Type Safety: Both Linux and Win32 full-repo mypy passed with 0 errors across 28 source files
-- 15,000-Row Benchmarks: Duration ~11.8s - 12.3s (< 15s limit), Peak RSS ~61.6 MiB (< 128 MiB limit)
+- 15,000-Row Benchmarks: Duration ~10.7s - 11.4s (< 15s limit), Peak RSS ~61.3 - 61.9 MiB (< 128 MiB limit)
+- Scratch Branch Rollback: Verified exact zero-diff revert across all 9 WP-08 commits back to baseline
 - Working Tree Changes: Tests only (`tests/test_source_watch_runtime.py`, `tests/test_source_watch_runtime_native.py`); product code untouched (R2 preserved)
