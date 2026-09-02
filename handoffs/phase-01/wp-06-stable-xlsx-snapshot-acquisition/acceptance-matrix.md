@@ -7,11 +7,11 @@
 - **Component Version:** `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
 - **Baseline Commit:** `bc085acd8852e2293fdfcb786a7694fe96e93407`
 - **Current Branch:** `antigravity/phase-01-stable-xlsx-snapshot-acquisition`
-- **Remediation Scope:** Codex Round 9 Review Remediation (R9-01 to R9-04)
+- **Remediation Scope:** Codex Round 10 Review Remediation (R10-01 to R10-03)
 
 ---
 
-## Detailed Requirement Verification (SA-01 to SA-14 & R9-01 to R9-04)
+## Detailed Requirement Verification (SA-01 to SA-14 & R10-01 to R10-03)
 
 | Item ID | Requirement / Scope | Status | Verification & Evidence |
 | :--- | :--- | :--- | :--- |
@@ -32,39 +32,32 @@
 
 ---
 
-## Round 9 Refinements & Verified Deterministic Oracles (R9-01 to R9-04)
+## Round 10 Refinements & Deterministic Oracles (R10-01 to R10-03)
 
-1. **R9-01: Windows Real Directory Handle (`test_r9_09`, `test_r9_10`):**
-   - Uses real `CreateFileW` with `FILE_FLAG_BACKUP_SEMANTICS` and `FILE_FLAG_OPEN_REPARSE_POINT` on Windows instead of `os.open` on directories.
-   - Extracts Volume Serial Number and 64-bit File ID via `GetFileInformationByHandle`.
-   - Fails closed on any creation/query error, ensuring no snapshot is yielded.
-   - Closed exactly once across all execution outcomes in `finally`.
-   - Windows runtime integration test provided as platform-conditional (`test_r9_10`).
+1. **R10-01: Independent and Explicit WinAPI Loading (`test_r10_01`):**
+   - Submodule `ctypes.wintypes` is explicitly imported at product level (`_ctypes_wintypes`) and resolved via `_get_wintypes()`.
+   - No Windows execution path relies on prior imports from pytest, host applications, or external tests (`WINTYPES_EXPLICIT_IMPORT_STANDALONE = True`, `WINTYPES_PRELOAD_INDEPENDENT = True`).
+   - Covered across all three Windows WinAPI operations: `_create_and_anchor_lease_dir_windows`, `MoveFileExW` in `_atomic_move_no_replace`, and `_close_windows_handle`.
+   - WinAPI initialization errors are wrapped into typed acquisition error taxonomy with chained causes (`__cause__`).
+   - Verified via fresh subprocess test (`test_r10_01_fresh_subprocess_import_and_wintypes_independence`) using `sys.executable` with zero preloaded test fixtures.
 
-2. **R9-02: Atomic Move No-Replace Primitive (`test_r9_01` to `test_r9_05`):**
-   - Replaced all `os.link` + `unlink` patterns across Quarantine, Restore, and Promotion (`LINK_UNLINK_API_USED = False`).
-   - Single shared `_atomic_move_no_replace` primitive using `renameat2(RENAME_NOREPLACE)` on Linux and `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows.
-   - Guaranteed fail-if-exists semantics:
-     - Foreign source at quarantine destination survives (`QUARANTINE_FOREIGN_SOURCE_SURVIVED = True`).
-     - Foreign final file survives promotion collision (`PROMOTION_FOREIGN_PART_SURVIVED = True`).
-     - Displaced owned candidate survives promotion collision (`PROMOTION_DISPLACED_OWNED_SURVIVED = True`).
-     - Unsupported primitive fails closed without fallback overwrite (`RENAME_NOREPLACE_UNAVAILABLE_FAILED_CLOSED = True`, `RENAME_FALLBACK_FOREIGN_OVERWRITTEN = False`).
-     - Pre-existing empty foreign directory survives (`EMPTY_FOREIGN_QDIR_SURVIVED = True`).
+2. **R10-02: Full 128-bit File ID and 64-bit Volume Identity from Windows Handle (`test_r10_02`, `test_r9_10`):**
+   - Implemented `FILE_ID_INFO` structure (`VolumeSerialNumber: ULONGLONG` [uint64], `FileId: FILE_ID_128` [16 bytes]) queried via `GetFileInformationByHandleEx(FileIdInfo = 18)`.
+   - Volume serial number is kept as full 64-bit integer (`WINDOWS_VOLUME_SERIAL_64BIT_EXACT = True`) and file ID as full 128-bit integer (`WINDOWS_FILE_ID_INFO_128BIT_EXACT = True`) without 32-bit/64-bit masking or truncation.
+   - Matches exact `Path.lstat().st_dev` and `st_ino` representation in CPython on Windows.
+   - Argtypes and restype accurately configured for all WinAPI calls, including `CloseHandle` in failure paths (`WINDOWS_HANDLE_CLOSE_EXACTLY_ONCE = True`).
+   - Tested for successful identity retrieval on fixture with `VolumeSerialNumber > 2**32` and `FileId > 2**64`, as well as `CreateFileW` and `GetFileInformationByHandleEx` failure paths.
 
-3. **R9-03: Re-attestation after Hook and before Delete (`test_r9_06` to `test_r9_08`):**
-   - Before `unlink` or `rmdir` on quarantined artifacts (`qpart`, `qfinal`, `qdir`), re-attests path identity (`lstat`), and for `qfinal` re-verifies file size and full SHA-256 digest.
-   - If foreign artifact is swapped into `qpart`, `qfinal`, or `qdir`, the foreign artifact is never deleted (`QPART_POSTVERIFY_FOREIGN_SURVIVED = True`, `QFINAL_POSTVERIFY_FOREIGN_SURVIVED = True`, `QDIR_POSTVERIFY_FOREIGN_SURVIVED = True`), displaced owned artifact is preserved (`QPART_POSTVERIFY_DISPLACED_OWNED_SURVIVED = True`, `QFINAL_POSTVERIFY_DISPLACED_OWNED_SURVIVED = True`, `QDIR_POSTVERIFY_DISPLACED_OWNED_SURVIVED = True`), and cleanup error is reported.
-
-4. **R9-04: Preservation of Historical Round 8 Refinements:**
-   - Fail-closed POSIX descriptor anchor preserved.
-   - Safe typed error messages without path leakage or raw `OSError` string interpolation preserved.
-   - All historical regression tests (tests 1 through 16) preserved and passing.
+3. **R10-03: Deterministic ENOSYS/EINVAL and Missing Symbol Oracle (`test_r9_04`):**
+   - Built a callable mock function wrapper (`MockCtypesFunc`) that tracks call counts while allowing `argtypes` and `restype` assignment.
+   - Tested `ENOSYS` (errno 38) and `EINVAL` (errno 22) independently, verifying the syscall stub is invoked (`RENAME_NOREPLACE_STUB_INVOKED = True`), fails closed with `OSError` (`RENAME_NOREPLACE_ENOSYS_FAILED_CLOSED = True`, `RENAME_NOREPLACE_EINVAL_FAILED_CLOSED = True`), and leaves both source and destination untouched (`RENAME_NOREPLACE_SOURCE_PRESERVED = True`, `RENAME_NOREPLACE_FOREIGN_DEST_PRESERVED = True`).
+   - Tested missing `renameat2` symbol independently (`RENAME_NOREPLACE_MISSING_SYMBOL_FAILED_CLOSED = True`).
 
 ---
 
 ## Coverage gaps
 
-- **Linux (Native Platform):** Full test suite (268/268 active tests passing, 3 benchmark runs under 12s and 60 MiB RSS).
+- **Linux (Native Platform):** Full test suite (270/270 active tests passing, 3 benchmark runs under 13s and 61 MiB RSS).
 - **Windows Runtime Platform:** Platform-conditional runtime execution (`test_r9_10`) is recorded as **PENDING** independent Codex CI execution on PR. Static type compliance verified via `mypy --platform win32` (Exit 0).
 
 ---

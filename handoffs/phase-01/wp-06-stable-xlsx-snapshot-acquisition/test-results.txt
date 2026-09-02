@@ -1,12 +1,25 @@
-=== WP-06 STABLE XLSX SNAPSHOT ACQUISITION TEST RESULTS (ROUND 9) ===
+=== WP-06 STABLE XLSX SNAPSHOT ACQUISITION TEST RESULTS (ROUND 10) ===
 WORK PACKAGE: WP-06
 PHASE: Phase 01
-RECORDED AT UTC: 2026-09-01T18:35:50Z
+RECORDED AT UTC: 2026-09-02T06:23:00Z
 Branch: antigravity/phase-01-stable-xlsx-snapshot-acquisition
 Baseline: bc085acd8852e2293fdfcb786a7694fe96e93407
-Starting HEAD: 2373d3659c626ccddafc6a2a84eff55749a8be1f
+Starting HEAD: 77911335b28166e1e95c42c44ad305aa1d8b8e73
 
---- ROUND 9 DETERMINISTIC REGRESSION ORACLES ---
+--- ROUND 10 DETERMINISTIC REGRESSION ORACLES ---
+WINTYPES_EXPLICIT_IMPORT_STANDALONE=True
+WINTYPES_PRELOAD_INDEPENDENT=True
+WINDOWS_FILE_ID_INFO_128BIT_EXACT=True
+WINDOWS_VOLUME_SERIAL_64BIT_EXACT=True
+WINDOWS_HANDLE_CLOSE_EXACTLY_ONCE=True
+RENAME_NOREPLACE_ENOSYS_FAILED_CLOSED=True
+RENAME_NOREPLACE_EINVAL_FAILED_CLOSED=True
+RENAME_NOREPLACE_MISSING_SYMBOL_FAILED_CLOSED=True
+RENAME_NOREPLACE_STUB_INVOKED=True
+RENAME_NOREPLACE_FOREIGN_DEST_PRESERVED=True
+RENAME_NOREPLACE_SOURCE_PRESERVED=True
+
+--- HISTORICAL ROUND 9 & ROUND 8 ORACLES (PRESERVED) ---
 LINK_UNLINK_API_USED=False
 QUARANTINE_FOREIGN_SOURCE_SURVIVED=True
 PROMOTION_FOREIGN_PART_SURVIVED=True
@@ -20,8 +33,6 @@ QDIR_POSTVERIFY_FOREIGN_SURVIVED=True
 QPART_POSTVERIFY_DISPLACED_OWNED_SURVIVED=True
 QFINAL_POSTVERIFY_DISPLACED_OWNED_SURVIVED=True
 QDIR_POSTVERIFY_DISPLACED_OWNED_SURVIVED=True
-
---- HISTORICAL ROUND 8 DETERMINISTIC ORACLES (PRESERVED) ---
 ANCHOR_FAILURE_YIELDED=False
 ANCHOR_FOREIGN_SURVIVED=True
 ANCHOR_DISPLACED_OWNED_SURVIVED=True
@@ -34,11 +45,11 @@ TYPED_ERROR_RAW_OSERROR_INTERPOLATED=False
 
 --- 3-RUN BENCHMARK (test_sa14_combined_15000_row_benchmark) ---
 [Run 1]
-duration: 11.3629s | baseline_current_rss_mib: 27.72 MiB | call_peak_rss_mib: 59.59 MiB | rows: 15000 | file_bytes: 549787 | platform: linux (CPython 3.13.15)
+duration: 10.7300s | baseline_current_rss_mib: 28.25 MiB | call_peak_rss_mib: 60.16 MiB | rows: 15000 | file_bytes: 549787 | platform: linux (CPython 3.13.15)
 [Run 2]
-duration: 10.7229s | baseline_current_rss_mib: 27.75 MiB | call_peak_rss_mib: 59.54 MiB | rows: 15000 | file_bytes: 549787 | platform: linux (CPython 3.13.15)
+duration: 12.4462s | baseline_current_rss_mib: 28.19 MiB | call_peak_rss_mib: 59.85 MiB | rows: 15000 | file_bytes: 549787 | platform: linux (CPython 3.13.15)
 [Run 3]
-duration: 11.2997s | baseline_current_rss_mib: 27.71 MiB | call_peak_rss_mib: 59.58 MiB | rows: 15000 | file_bytes: 549787 | platform: linux (CPython 3.13.15)
+duration: 11.2110s | baseline_current_rss_mib: 28.23 MiB | call_peak_rss_mib: 60.05 MiB | rows: 15000 | file_bytes: 549787 | platform: linux (CPython 3.13.15)
 
 --- FOCUS TEST SUITE OUTPUT (pytest tests/test_xlsx_snapshot_acquisition.py -v) ---
 =================== test session starts ====================
@@ -47,15 +58,15 @@ rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 69 items
+collected 71 items
 
-tests/test_xlsx_snapshot_acquisition.py ............ [ 17%]
-.................................................... [ 92%]
-....s                                                [100%]
+tests/test_xlsx_snapshot_acquisition.py ............ [ 16%]
+.................................................... [ 90%]
+......s                                              [100%]
 
 ================= short test summary info ==================
-SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3153: Windows platform-conditional test only runs on Windows runtime
-============== 68 passed, 1 skipped in 13.60s ==============
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3316: Windows platform-conditional test only runs on Windows runtime
+============== 70 passed, 1 skipped in 14.36s ==============
 
 --- FULL TEST SUITE OUTPUT (pytest -v) ---
 =================== test session starts ====================
@@ -65,7 +76,7 @@ configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 269 items
+collected 271 items
 
 tests/test_architecture_guard.py ..............      [  5%]
 tests/test_canonical_date.py ..........              [  8%]
@@ -73,23 +84,23 @@ tests/test_canonical_hashing.py ..................   [ 15%]
 tests/test_imports.py .......                        [ 18%]
 tests/test_raw_input_contracts.py ...............    [ 23%]
 tests/test_source_change_plan.py ................... [ 30%]
-......                                               [ 33%]
+......                                               [ 32%]
 tests/test_xlsx_snapshot_acquisition.py ............ [ 37%]
 .................................................... [ 56%]
-....s                                                [ 58%]
-tests/test_xlsx_source_reader.py ................... [ 65%]
+......s                                              [ 59%]
+tests/test_xlsx_source_reader.py ................... [ 66%]
 ...................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.0016s | baseline_current_rss_mib: 27.96 MiB | call_peak_rss_mib: 59.61 MiB | rows: 15000 | platform: linux
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.3773s | baseline_current_rss_mib: 28.28 MiB | call_peak_rss_mib: 59.55 MiB | rows: 15000 | platform: linux
 .......                           [ 75%]
-tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 75%]
+tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 76%]
 ......                                               [ 78%]
 tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 78%]
 .................................................... [ 97%]
 ......                                               [100%]
 
 ================= short test summary info ==================
-SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3153: Windows platform-conditional test only runs on Windows runtime
-============= 268 passed, 1 skipped in 35.50s ==============
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3316: Windows platform-conditional test only runs on Windows runtime
+============= 270 passed, 1 skipped in 35.62s ==============
 
 --- QUALITY & LINTING CHECKS ---
 1. uv lock --check (Exit 0)
@@ -104,4 +115,4 @@ SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3153: Windows platform-condi
 10. python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py (Exit 0, passed)
 
 --- FINAL SUMMARY ---
-WP-06 Round 9 implementation complete. All 13 Round 9 oracle invariants passed. Full test suite passing (268 passed, 1 skipped). Quality checks passed with zero errors.
+WP-06 Round 10 implementation complete. All Round 10, 9, and 8 oracle invariants passed. Full test suite passing (270 passed, 1 skipped). Quality checks passed with zero errors.
