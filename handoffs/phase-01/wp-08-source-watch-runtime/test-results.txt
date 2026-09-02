@@ -1,6 +1,6 @@
 WORK PACKAGE: WP-08 Managed source watcher and serial read runtime
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-02T15:37:30Z
+RECORDED AT UTC: 2026-09-02T16:03:00Z
 
 ================================================================================
 1. SYNCHRONIZATION AND DEPENDENCY CHECK
@@ -69,7 +69,7 @@ tests/test_source_watch_runtime_native.py::test_wr15_native_startup_read_and_inp
 tests/test_source_watch_runtime_native.py::test_wr16_native_absent_source_lifecycle_and_thread_cleanup PASSED [ 95%]
 tests/test_source_watch_runtime_native.py::test_wr17_end_to_end_wp04_planner_composition PASSED [100%]
 
-=================== 21 passed in 27.50s ===================
+=================== 21 passed in 33.32s ===================
 Exit Code: 0
 
 ================================================================================
@@ -111,20 +111,20 @@ tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 82%]
 ================= short test summary info ==================
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
-======== 333 passed, 2 skipped in 65.82s (0:01:05) ========
+======== 333 passed, 2 skipped in 69.78s (0:01:09) ========
 Exit Code: 0
 
 ================================================================================
 6. STREAMING PERFORMANCE AND MEMORY BENCHMARKS
 ================================================================================
 $ uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.0609s | baseline_current_rss_mib: 30.16 MiB | call_peak_rss_mib: 61.52 MiB | rows: 15000 | platform: linux
-1 passed in 12.59s (Limits: 15.0s, 128.0 MiB)
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.6111s | baseline_current_rss_mib: 30.31 MiB | call_peak_rss_mib: 62.03 MiB | rows: 15000 | platform: linux
+1 passed in 13.33s (Limits: 15.0s, 128.0 MiB)
 Exit Code: 0
 
 $ uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 12.0750s | baseline_current_rss_mib: 29.94 MiB | call_peak_rss_mib: 61.40 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 5651215e337471b6ff9b9830236b48347ed1b8b27defe27f19736614dcffa56d | platform: linux
-1 passed in 13.79s (Limits: 15.0s, 128.0 MiB)
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.3965s | baseline_current_rss_mib: 29.98 MiB | call_peak_rss_mib: 61.62 MiB | rows: 15000 | file_bytes: 549787 | file_sha: aae0e39ab6743ac2d67588ad9737fd8b178fa36835d4a9456c75b31ed84d9c4b | platform: linux
+1 passed in 12.91s (Limits: 15.0s, 128.0 MiB)
 Exit Code: 0
 
 ================================================================================
@@ -147,5 +147,6 @@ FINAL SUMMARY
 - Native OS Integration Tests: 3 passed in `tests/test_source_watch_runtime_native.py`
 - Full Monorepo Test Suite: 333 passed, 2 skipped (Windows-specific handle locks)
 - Cross-Platform Type Safety: Both Linux and Win32 mypy passed with 0 errors
-- 15,000-Row Benchmarks: Duration ~11.1s - 12.1s (< 15s limit), Peak RSS ~61.5 MiB (< 128 MiB limit)
+- 15,000-Row Benchmarks: Duration ~11.4s - 11.6s (< 15s limit), Peak RSS ~61.6 - 62.0 MiB (< 128 MiB limit)
 - Verification Status: All WR-01 through WR-18 and review items R1 through R8 verified and passing
+- Runner Thread Propagation: All runner threads capture and assert exceptions, ensuring 0 unhandled thread warnings

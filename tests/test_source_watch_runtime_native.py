@@ -90,7 +90,16 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
         observation_interval_seconds=0.01,
     )
 
-    run_thread = threading.Thread(target=lambda: runtime.run(consumer))
+    runner_err: BaseException | None = None
+
+    def runner() -> None:
+        nonlocal runner_err
+        try:
+            runtime.run(consumer)
+        except BaseException as e:
+            runner_err = e
+
+    run_thread = threading.Thread(target=runner)
     run_thread.start()
 
     try:
@@ -154,6 +163,7 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
         runtime.request_stop()
         run_thread.join(timeout=5.0)
         assert not run_thread.is_alive()
+        assert runner_err is None
         assert runtime.view().state == SourceWatchRuntimeState.STOPPED
     finally:
         runtime.request_stop()
@@ -192,7 +202,16 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
         observation_interval_seconds=0.01,
     )
 
-    run_thread = threading.Thread(target=lambda: runtime.run(consumer))
+    runner_err: BaseException | None = None
+
+    def runner() -> None:
+        nonlocal runner_err
+        try:
+            runtime.run(consumer)
+        except BaseException as e:
+            runner_err = e
+
+    run_thread = threading.Thread(target=runner)
     run_thread.start()
 
     try:
@@ -271,6 +290,7 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
         runtime.request_stop()
         run_thread.join(timeout=5.0)
         assert not run_thread.is_alive()
+        assert runner_err is None
         assert runtime.view().state == SourceWatchRuntimeState.STOPPED
 
         # Verify all expected worker threads terminated
@@ -334,7 +354,16 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         observation_interval_seconds=0.01,
     )
 
-    run_thread = threading.Thread(target=lambda: runtime.run(consumer))
+    runner_err: BaseException | None = None
+
+    def runner() -> None:
+        nonlocal runner_err
+        try:
+            runtime.run(consumer)
+        except BaseException as e:
+            runner_err = e
+
+    run_thread = threading.Thread(target=runner)
     run_thread.start()
 
     try:
@@ -467,6 +496,7 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         runtime.request_stop()
         run_thread.join(timeout=5.0)
         assert not run_thread.is_alive()
+        assert runner_err is None
     finally:
         runtime.request_stop()
         run_thread.join(timeout=2.0)

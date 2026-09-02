@@ -604,9 +604,7 @@ class SourceWatchRuntime:
             # 4. Check liveness and enqueue initial logical MODIFIED notice
             with self._lifecycle_lock:
                 self._check_liveness_locked()
-                if self._async_error is not None:
-                    raise self._async_error
-                if self._stop_requested:
+                if self._async_error is not None or self._stop_requested:
                     return
                 try:
                     self._coordinator.notify(
@@ -726,9 +724,7 @@ class SourceWatchRuntime:
                     run_error = loop_exc
                 elif isinstance(loop_exc, Exception):
                     wrap_err = SourceWatchRuntimeError(
-                        SourceWatchRuntimeReason.EVENT_DELIVERY_FAILED
-                        if loop_exc is self._async_error
-                        else SourceWatchRuntimeReason.SOURCE_READ_FAILED
+                        SourceWatchRuntimeReason.SOURCE_READ_FAILED
                     )
                     wrap_err.__cause__ = loop_exc
                     run_error = wrap_err
@@ -827,10 +823,7 @@ class SourceWatchRuntime:
                     final_async_err = async_err
 
                 if not any(
-                    e is final_async_err
-                    or getattr(e, "__cause__", None) is async_err
-                    or e is async_err
-                    for e in ordered_errors
+                    e is final_async_err or e is async_err for e in ordered_errors
                 ):
                     ordered_errors.append(final_async_err)
 
