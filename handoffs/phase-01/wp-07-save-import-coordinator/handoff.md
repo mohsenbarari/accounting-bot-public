@@ -10,6 +10,8 @@
 - **Linear Branch Commits:**
   - `3a84402` — `feat(local_agent,tests): implement save-import-coordinator.v1 and tests under WP-07`
   - `2617237` — `docs(handoff): add WP-07 save import coordinator handoff package`
+  - `4f5042c` — `docs(handoff): synchronize commit list in WP-07 handoff`
+  - `16a49b5` — `fix(tests): import orig_read from rdr_mod for mypy compliance`
 - **Gate G1 Status:** `OPEN / IN PROGRESS`
 
 ## Scope
