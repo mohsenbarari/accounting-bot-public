@@ -15,6 +15,7 @@
   - `7ccdc9c` — `docs(handoff): finalize commit list in WP-07 handoff package`
   - `efd2990` — `docs(handoff): record final commit in WP-07 handoff`
   - `deca59b` — `fix(local_agent,tests): address Codex review round 1 W7-R1-01 to W7-R1-06`
+  - `7dd4aba` — `docs(handoff): update WP-07 handoff package with Codex review round 1 fixes`
 - **Gate G1 Status:** `OPEN / IN PROGRESS`
 
 ## Scope
