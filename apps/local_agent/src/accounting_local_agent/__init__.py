@@ -3,6 +3,20 @@
 Provides XLSX source reading, snapshot acquisition, change tracking, and sync.
 """
 
+from accounting_local_agent.save_import_coordinator import (
+    SAVE_DEBOUNCE_NS,
+    SAVE_IMPORT_COORDINATOR_VERSION,
+    SaveCoordinatorError,
+    SaveCoordinatorPolicyError,
+    SaveCoordinatorState,
+    SaveCoordinatorStateError,
+    SaveCoordinatorView,
+    SaveEventKind,
+    SaveImportCoordinator,
+    SourceReadAttempt,
+    SourceReadOutcome,
+    read_due_source,
+)
 from accounting_local_agent.xlsx_snapshot_acquisition import (
     DEFAULT_COPY_CHUNK_SIZE,
     XLSX_SNAPSHOT_ACQUISITION_VERSION,
@@ -34,10 +48,21 @@ __version__ = "0.1.0"
 
 __all__ = [
     "DEFAULT_COPY_CHUNK_SIZE",
-    "XLSX_SNAPSHOT_ACQUISITION_VERSION",
-    "XLSX_SOURCE_READER_VERSION",
+    "SAVE_DEBOUNCE_NS",
+    "SAVE_IMPORT_COORDINATOR_VERSION",
+    "SaveCoordinatorError",
+    "SaveCoordinatorPolicyError",
+    "SaveCoordinatorState",
+    "SaveCoordinatorStateError",
+    "SaveCoordinatorView",
+    "SaveEventKind",
+    "SaveImportCoordinator",
+    "SourceReadAttempt",
+    "SourceReadOutcome",
     "SourceRowLocation",
     "StableXlsxSnapshot",
+    "XLSX_SNAPSHOT_ACQUISITION_VERSION",
+    "XLSX_SOURCE_READER_VERSION",
     "XlsxCellError",
     "XlsxFormulaCoverageError",
     "XlsxHeaderError",
@@ -54,5 +79,6 @@ __all__ = [
     "XlsxSourceReadResult",
     "XlsxStructureError",
     "open_stable_xlsx_snapshot",
+    "read_due_source",
     "read_xlsx_source_snapshot",
 ]
