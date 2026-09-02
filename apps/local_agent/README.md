@@ -4,6 +4,28 @@ Windows interactive user-session agent for monitoring Excel `.xlsx` saves, strea
 
 ## Architecture and boundaries
 
+- **Managed Source Watcher and Read Runtime (`source_watch_runtime.py` — WP-08 / ADR-0011):**
+  - Public version: `SOURCE_WATCH_RUNTIME_VERSION = "source-watch-runtime.v1"`
+  - Public API: `SourceWatchRuntime`, `SourceWatchRuntimeView`, `SourceWatchRuntimeState`, `SourceWatchRuntimeReason`, `SourceWatchRuntimeError`
+  - Lifecycle: single-use `new -> running -> stopping -> stopped` (clean) or `failed` (on error).
+  - Connects native `watchdog.observers.Observer` non-recursively to the source parent directory, maps mutating events to coordinator notifications, and enqueues an initial logical `MODIFIED` notice on successful start.
+  - Derives waiting intervals from coordinator deadlines with an idle 1.0s liveness check for observer and emitter threads.
+  - Executes serial `read_due_source` lock-free and delivers successful results synchronously to the caller-supplied `consumer` callback on the run thread.
+  - Thread-safe, non-blocking `request_stop()` wakes the loop, closes event admission, and gracefully drains any admitted read.
+  - Limitations: No process-wide lock or multi-instance coordination for the same file; liveness checks are bounded by the next loop iteration (blocked reader I/O or consumer delays liveness detection); normal shutdown waits for admitted I/O and backend joins without hard process termination.
+  - Synthetic library usage:
+    ```python
+    from pathlib import Path
+    from accounting_local_agent import SourceWatchRuntime
+
+    runtime = SourceWatchRuntime(
+        Path("/tmp/watched/synthetic_data.xlsx"),
+        snapshot_root=Path("/tmp/snapshots"),
+        observation_interval_seconds=0.05,
+    )
+    # runtime.run(lambda result: print("Received snapshot:", result.snapshot.version))
+    ```
+
 - **Save Debounce, Coalescing, and Coordination (`save_import_coordinator.py` — WP-07 / ADR-0010):**
   - Public version: `SAVE_IMPORT_COORDINATOR_VERSION = "save-import-coordinator.v1"`
   - Public API: `SaveImportCoordinator`, `SaveCoordinatorView`, `SourceReadAttempt`, `SaveEventKind`, `SaveCoordinatorState`, `SourceReadOutcome`, `read_due_source(...)`

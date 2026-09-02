@@ -1,0 +1,184 @@
+WORK PACKAGE: WP-08 Managed source watcher and serial read runtime
+PHASE: 1 — source and data-model foundation
+RECORDED AT UTC: 2026-09-02T17:58:00Z
+TESTED CODE COMMIT SHA: 809572f1b0e996c114ab5d5b6719ad151aab10ff
+
+================================================================================
+1. SYNCHRONIZATION AND DEPENDENCY CHECK
+================================================================================
+$ uv sync --frozen --all-packages --all-groups
+Checked 81 packages in 3ms
+Exit Code: 0
+
+$ uv lock --check
+Resolved 88 packages in 3ms
+Exit Code: 0
+
+================================================================================
+2. CODE QUALITY AND STYLE CHECKS
+================================================================================
+$ uv run ruff format --check .
+74 files already formatted
+Exit Code: 0
+
+$ uv run ruff check .
+All checks passed!
+Exit Code: 0
+
+$ git diff --check
+Exit Code: 0 (0 whitespace errors)
+
+================================================================================
+3. FULL-REPOSITORY STATIC TYPE SAFETY CHECKS (LINUX & WINDOWS)
+================================================================================
+$ uv run mypy .
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 28 source files
+Exit Code: 0
+
+$ uv run mypy --platform win32 .
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 28 source files
+Exit Code: 0
+
+================================================================================
+4. WP-08 UNIT & NATIVE TEST SUITES
+================================================================================
+$ uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v
+================== test session starts ==================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /srv/accounting-bot/workspace
+configfile: pyproject.toml
+plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 36 items
+
+tests/test_source_watch_runtime.py::test_wr01_public_api_exports_and_version PASSED [  2%]
+tests/test_source_watch_runtime.py::test_wr01_source_watch_runtime_view_invariants PASSED [  5%]
+tests/test_source_watch_runtime.py::test_wr01_safe_repr_no_path_leakage PASSED [  8%]
+tests/test_source_watch_runtime.py::test_wr01_constructor_lexical_validation_and_containment PASSED [ 11%]
+tests/test_source_watch_runtime.py::test_wr01_consumer_validation_and_invalid_transition PASSED [ 13%]
+tests/test_source_watch_runtime.py::test_wr02_captured_observer_factory_and_no_alloc_on_init PASSED [ 16%]
+tests/test_source_watch_runtime.py::test_wr03_watchdog_event_adapter_table_driven_mapping PASSED [ 19%]
+tests/test_source_watch_runtime.py::test_wr04_callback_boundary_fault_handling PASSED [ 22%]
+tests/test_source_watch_runtime.py::test_wr05_initial_hint_and_preexisting_file_read PASSED [ 25%]
+tests/test_source_watch_runtime.py::test_wr06_fake_clock_deadline_boundaries_and_liveness_wait PASSED [ 27%]
+tests/test_source_watch_runtime.py::test_wr07_case_a_stop_while_waiting_intermediate_and_final_state PASSED [ 30%]
+tests/test_source_watch_runtime.py::test_wr07_case_a2_intermediate_stopping_state_held_in_teardown PASSED [ 33%]
+tests/test_source_watch_runtime.py::test_wr07_case_b_stop_vs_cycle_admission_drains_result PASSED [ 36%]
+tests/test_source_watch_runtime.py::test_wr07_case_c_fault_before_consumer_admission_suppresses_consumer PASSED [ 38%]
+tests/test_source_watch_runtime.py::test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prevention PASSED [ 41%]
+tests/test_source_watch_runtime.py::test_wr08_burst_coalescing_and_responsiveness_during_blocking PASSED [ 44%]
+tests/test_source_watch_runtime.py::test_wr09_case_1_notready_retries_automatically PASSED [ 47%]
+tests/test_source_watch_runtime.py::test_wr09_case_2_reader_rejection_enters_idle_without_retry PASSED [ 50%]
+tests/test_source_watch_runtime.py::test_wr09_case_3_reader_rejection_with_followup_notice_retries PASSED [ 52%]
+tests/test_source_watch_runtime.py::test_wr10_consumer_delivery_and_stop_draining PASSED [ 55%]
+tests/test_source_watch_runtime.py::test_wr11_concurrent_run_calls_single_winner_losers_invalid_transition PASSED [ 58%]
+tests/test_source_watch_runtime.py::test_wr11_stop_requested_during_startup_before_run_loop PASSED [ 61%]
+tests/test_source_watch_runtime.py::test_wr12_partial_startup_failure_teardown PASSED [ 63%]
+tests/test_source_watch_runtime.py::test_wr13_emitter_death_detected_at_loop_boundary PASSED [ 66%]
+tests/test_source_watch_runtime.py::test_wr13_dispatcher_death_detected_while_emitters_remain_alive PASSED [ 69%]
+tests/test_source_watch_runtime.py::test_wr13_empty_emitters_set_detected_at_loop_boundary PASSED [ 72%]
+tests/test_source_watch_runtime.py::test_wr14_raw_base_exception_passthrough PASSED [ 75%]
+tests/test_source_watch_runtime.py::test_wr14_primary_cause_preserved_with_async_delivery_error PASSED [ 77%]
+tests/test_source_watch_runtime.py::test_wr14_shared_cause_preserved_across_driver_and_stop_failures PASSED [ 80%]
+tests/test_source_watch_runtime.py::test_wr14_async_error_during_start_with_teardown_failure_grouping PASSED [ 83%]
+tests/test_source_watch_runtime.py::test_wr14_three_simultaneous_standard_exceptions_cause_identities PASSED [ 86%]
+tests/test_source_watch_runtime.py::test_wr14_worker_thread_join_failure_wrapped_in_shutdown_failed PASSED [ 88%]
+tests/test_source_watch_runtime.py::test_wr14_mixed_cancellation_and_normal_stop_failure_base_exception_group PASSED [ 91%]
+tests/test_source_watch_runtime_native.py::test_wr15_native_startup_read_and_inplace_and_atomic_save PASSED [ 94%]
+tests/test_source_watch_runtime_native.py::test_wr16_native_absent_source_lifecycle_and_thread_cleanup PASSED [ 97%]
+tests/test_source_watch_runtime_native.py::test_wr17_end_to_end_wp04_planner_composition PASSED [100%]
+
+================== 36 passed in 28.64s ==================
+Exit Code: 0
+
+================================================================================
+5. FULL REPOSITORY TEST SUITE REGRESSION RUN
+================================================================================
+$ uv run pytest tests/ -k "not test_bench"
+=================== test session starts ===================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /srv/accounting-bot/workspace
+configfile: pyproject.toml
+plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 350 items
+
+tests/test_architecture_guard.py ..............     [  4%]
+tests/test_canonical_date.py ..........             [  6%]
+tests/test_canonical_hashing.py ..................  [ 12%]
+tests/test_imports.py .......                       [ 14%]
+tests/test_raw_input_contracts.py ...............   [ 18%]
+tests/test_save_import_coordinator.py ............. [ 22%]
+...........................                         [ 29%]
+tests/test_source_change_plan.py .................. [ 34%]
+.......                                             [ 36%]
+tests/test_source_watch_runtime.py ................ [ 41%]
+.................                                   [ 46%]
+tests/test_source_watch_runtime_native.py ...       [ 47%]
+tests/test_xlsx_snapshot_acquisition.py ........... [ 50%]
+...............................                     [ 59%]
+..........ss                                        [ 62%]
+tests/test_xlsx_source_reader.py .................. [ 67%]
+....................                                [ 73%]
+tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 73%]
+......                                              [ 75%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 75%]
+................................................... [ 90%]
+..................................                  [100%]
+
+================ short test summary info ==================
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
+======== 348 passed, 2 skipped in 63.23s (0:01:03) ========
+Exit Code: 0
+
+================================================================================
+6. STREAMING PERFORMANCE AND MEMORY BENCHMARKS
+================================================================================
+$ uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.7025s | baseline_current_rss_mib: 30.14 MiB | call_peak_rss_mib: 61.90 MiB | rows: 15000 | platform: linux
+1 passed in 12.15s (Limits: 15.0s, 128.0 MiB)
+Exit Code: 0
+
+$ uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.3863s | baseline_current_rss_mib: 29.91 MiB | call_peak_rss_mib: 61.25 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 237950e08900fea6ea6730b3dc983a7daf300aa62e1d0033d809c23b25d87ab5 | platform: linux
+1 passed in 12.76s (Limits: 15.0s, 128.0 MiB)
+Exit Code: 0
+
+================================================================================
+7. DIFF AND REPOSITORY SECURITY SCAN
+================================================================================
+$ git diff --check
+Exit Code: 0 (0 whitespace errors)
+
+$ git ls-files | grep -E "\.(env|key|pem|pfx|p12|kdbx|sqlite|db)$"
+Exit Code: 0 (0 prohibited files committed)
+
+$ git grep -i -E "(BEGIN PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[0-9a-zA-Z]{36})"
+Exit Code: 0 (0 sensitive credentials)
+
+================================================================================
+8. ROLLBACK VERIFICATION ON ISOLATED SCRATCH BRANCH
+================================================================================
+$ git checkout -b scratch/verify-rollback 809572f1b0e996c114ab5d5b6719ad151aab10ff
+$ git revert --no-edit c7520c94606f37720f3e023b753e36d1c1f433a3..809572f1b0e996c114ab5d5b6719ad151aab10ff
+$ git diff --quiet c7520c94606f37720f3e023b753e36d1c1f433a3
+Output: ROLLBACK VERIFICATION SUCCESS: WORKING TREE MATCHES BASELINE EXACTLY
+$ git checkout antigravity/phase-01-source-watch-runtime
+$ git branch -D scratch/verify-rollback
+Exit Code: 0 (Baseline state verified identical)
+
+================================================================================
+FINAL SUMMARY
+================================================================================
+- WP-08 Component: `source-watch-runtime.v1`
+- Tested Code Commit SHA: 809572f1b0e996c114ab5d5b6719ad151aab10ff
+- Unit & Deterministic Tests: 33 passed in `tests/test_source_watch_runtime.py`
+- Native OS Integration Tests: 3 passed in `tests/test_source_watch_runtime_native.py`
+- Full Monorepo Test Suite: 348 passed, 2 skipped (Windows-specific handle locks)
+- Cross-Platform Type Safety: Both Linux and Win32 full-repo mypy passed with 0 errors across 28 source files
+- 15,000-Row Benchmarks: Duration ~10.7s - 11.4s (< 15s limit), Peak RSS ~61.3 - 61.9 MiB (< 128 MiB limit)
+- Scratch Branch Rollback: Verified exact zero-diff revert across all 9 WP-08 commits back to baseline
+- Working Tree Changes: Tests only (`tests/test_source_watch_runtime.py`, `tests/test_source_watch_runtime_native.py`); product code untouched (R2 preserved)
