@@ -134,13 +134,14 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
         except BaseException as e:
             runner_err = e
 
+    with lock:
+        cursor1 = len(results)
+
     run_thread = threading.Thread(target=runner)
     run_thread.start()
 
     try:
         # 1. Generation 1: Preexisting file read on startup (via initial MODIFIED hint)
-        with lock:
-            cursor1 = len(results)
         res1 = _wait_for_snapshot(
             results,
             lock,
@@ -444,13 +445,14 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         except BaseException as e:
             runner_err = e
 
+    with lock:
+        cursor1 = len(results)
+
     run_thread = threading.Thread(target=runner)
     run_thread.start()
 
     try:
         # Generation 1: Initial startup read (u1 on row 2, u2 on row 3)
-        with lock:
-            cursor1 = len(results)
         res1 = _wait_for_snapshot(
             results,
             lock,

@@ -1116,6 +1116,8 @@ def test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prev
 
     arrived_before_wait_d = threading.Event()
     release_wait_d = threading.Event()
+    result_recorded_d = threading.Event()
+    wait_results_lock = threading.Lock()
     notice_injected_d = False
     orig_wait_d = runtime_d._condition.wait
     wait_results: list[bool] = []
@@ -1128,7 +1130,9 @@ def test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prev
             release_ok = release_wait_d.wait(timeout=5.0)
             assert release_ok, "release_wait_d timed out waiting for release"
         res = orig_wait_d(timeout)
-        wait_results.append(res)
+        with wait_results_lock:
+            wait_results.append(res)
+            result_recorded_d.set()
         return res
 
     monkeypatch.setattr(runtime_d._condition, "wait", hooked_wait_d)
@@ -1160,7 +1164,6 @@ def test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prev
 
         sender_t.start()
         assert sender_started.wait(timeout=5.0), "sender_started timed out"
-        time.sleep(0.02)
 
         # Release runner to enter orig_wait_d, which releases _lifecycle_lock
         release_wait_d.set()
@@ -1172,9 +1175,14 @@ def test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prev
         assert len(sender_errors) == 0, f"sender encountered error: {sender_errors}"
 
         # Runner wait should have been woken by the sender notification (res is True)
-        time.sleep(0.05)
-        assert len(wait_results) >= 1
-        assert wait_results[0] is True, "First wait timed out instead of being notified"
+        assert result_recorded_d.wait(timeout=5.0), (
+            "result_recorded_d timed out waiting for runner to append wait result"
+        )
+        with wait_results_lock:
+            assert len(wait_results) >= 1
+            assert wait_results[0] is True, (
+                "First wait timed out instead of being notified"
+            )
 
         runtime_d.request_stop()
         runner_d.join(timeout=5.0)
