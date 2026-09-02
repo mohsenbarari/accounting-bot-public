@@ -1652,10 +1652,53 @@ def test_w7_r1_02_take_due_error_injection_rollback_and_subsequent_success(
     assert coord.view().state == SaveCoordinatorState.RUNNING
 
 
+def _verify_contention_race_outcomes(
+    worker_results: list[SourceReadAttempt | None],
+    worker_errors: list[BaseException | None],
+    coord: SaveImportCoordinator,
+    num_threads: int,
+    expected_error_msg: str,
+) -> SourceReadAttempt:
+    """Strict oracle verifying contention with 1 transient error yields 1 winner."""
+    real_errors = [e for e in worker_errors if e is not None]
+    real_tokens = [r for r in worker_results if r is not None]
+    none_clean = [
+        r
+        for r, e in zip(worker_results, worker_errors, strict=True)
+        if r is None and e is None
+    ]
+
+    # Exactly one thread must encounter the injected OSError
+    assert len(real_errors) == 1, "Exactly one thread must encounter injected error"
+    assert isinstance(real_errors[0], OSError)
+    assert str(real_errors[0]) == expected_error_msg
+
+    # Zero unexpected errors across all threads
+    assert (
+        len(real_errors) + len([e for e in worker_errors if e is None]) == num_threads
+    )
+
+    # Exactly one worker in the race MUST acquire the token
+    assert len(real_tokens) == 1, "Exactly one worker must secure the token in the race"
+    winning_token = real_tokens[0]
+    assert isinstance(winning_token, SourceReadAttempt)
+
+    # Remaining workers must get clean None without error
+    assert len(none_clean) == num_threads - 2, "Remaining workers must get clean None"
+    assert len(real_errors) + len(real_tokens) + len(none_clean) == num_threads, (
+        "All workers must be strictly accounted for"
+    )
+
+    # Coordinator must be RUNNING with the winning token
+    assert coord.view().state == SaveCoordinatorState.RUNNING
+    assert coord._active_attempt is winning_token
+    return winning_token
+
+
 def test_w7_r1_02_take_due_thread_contention_with_injected_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """W7-R1-02 / W7-R2-02: Contention with transient error asserts outcomes."""
+    """W7-R1-02 / W7-R3-01: Contention with transient error requires in-race winner."""
     src = tmp_path / "source.xlsx"
     clock = FakeClock()
     coord = SaveImportCoordinator(src, _time_source=clock)
@@ -1703,29 +1746,45 @@ def test_w7_r1_02_take_due_thread_contention_with_injected_error(
             if t.is_alive():
                 t.join(timeout=1.0)
 
-    real_errors = [e for e in worker_errors if e is not None]
-    real_tokens = [r for r in worker_results if r is not None]
-
-    # Exactly one thread must encounter the injected OSError
-    assert len(real_errors) == 1, "Exactly one thread must encounter injected error"
-    assert isinstance(real_errors[0], OSError)
-    assert str(real_errors[0]) == "Injected transient entropy error"
-
-    # Zero unexpected errors (no BrokenBarrierError, no RuntimeError, etc.)
-    assert (
-        len(real_errors) + len([e for e in worker_errors if e is None]) == num_threads
+    _verify_contention_race_outcomes(
+        worker_results,
+        worker_errors,
+        coord,
+        num_threads,
+        "Injected transient entropy error",
     )
 
-    # At most one thread secured the token
-    assert len(real_tokens) in (0, 1)
 
-    if len(real_tokens) == 1:
-        assert coord.view().state == SaveCoordinatorState.RUNNING
-    else:
-        assert coord.view().state == SaveCoordinatorState.WAITING
-        subsequent_attempt = coord.take_due()
-        assert subsequent_attempt is not None
-        assert coord.view().state == SaveCoordinatorState.RUNNING
+def test_w7_r3_01_concurrency_oracle_rejects_zero_token_winner_after_transient_error(
+    tmp_path: Path,
+) -> None:
+    """W7-R3-01: Oracle strictly fails if race produces 0 token winners."""
+    src = tmp_path / "source.xlsx"
+    clock = FakeClock()
+    coord = SaveImportCoordinator(src, _time_source=clock)
+    coord.notify(SaveEventKind.MODIFIED, src)
+    clock.advance_seconds(3.0)
+
+    num_threads = 4
+    # Simulated mutation: 1 worker gets transient OSError, other 3 return None
+    mutated_results: list[SourceReadAttempt | None] = [None, None, None, None]
+    mutated_errors: list[BaseException | None] = [
+        OSError("Injected transient entropy error"),
+        None,
+        None,
+        None,
+    ]
+
+    with pytest.raises(
+        AssertionError, match="Exactly one worker must secure the token in the race"
+    ):
+        _verify_contention_race_outcomes(
+            mutated_results,
+            mutated_errors,
+            coord,
+            num_threads,
+            "Injected transient entropy error",
+        )
 
 
 def test_w7_r2_02_concurrency_oracle_rejects_unexpected_worker_errors(
