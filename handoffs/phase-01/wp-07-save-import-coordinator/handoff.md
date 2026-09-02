@@ -12,6 +12,7 @@
   - `2617237` — `docs(handoff): add WP-07 save import coordinator handoff package`
   - `4f5042c` — `docs(handoff): synchronize commit list in WP-07 handoff`
   - `16a49b5` — `fix(tests): import orig_read from rdr_mod for mypy compliance`
+  - `7ccdc9c` — `docs(handoff): finalize commit list in WP-07 handoff package`
 - **Gate G1 Status:** `OPEN / IN PROGRESS`
 
 ## Scope
