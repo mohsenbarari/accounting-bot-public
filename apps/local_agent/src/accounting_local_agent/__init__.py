@@ -17,6 +17,14 @@ from accounting_local_agent.save_import_coordinator import (
     SourceReadOutcome,
     read_due_source,
 )
+from accounting_local_agent.source_watch_runtime import (
+    SOURCE_WATCH_RUNTIME_VERSION,
+    SourceWatchRuntime,
+    SourceWatchRuntimeError,
+    SourceWatchRuntimeReason,
+    SourceWatchRuntimeState,
+    SourceWatchRuntimeView,
+)
 from accounting_local_agent.xlsx_snapshot_acquisition import (
     DEFAULT_COPY_CHUNK_SIZE,
     XLSX_SNAPSHOT_ACQUISITION_VERSION,
@@ -50,6 +58,7 @@ __all__ = [
     "DEFAULT_COPY_CHUNK_SIZE",
     "SAVE_DEBOUNCE_NS",
     "SAVE_IMPORT_COORDINATOR_VERSION",
+    "SOURCE_WATCH_RUNTIME_VERSION",
     "SaveCoordinatorError",
     "SaveCoordinatorPolicyError",
     "SaveCoordinatorState",
@@ -60,6 +69,11 @@ __all__ = [
     "SourceReadAttempt",
     "SourceReadOutcome",
     "SourceRowLocation",
+    "SourceWatchRuntime",
+    "SourceWatchRuntimeError",
+    "SourceWatchRuntimeReason",
+    "SourceWatchRuntimeState",
+    "SourceWatchRuntimeView",
     "StableXlsxSnapshot",
     "XLSX_SNAPSHOT_ACQUISITION_VERSION",
     "XLSX_SOURCE_READER_VERSION",
