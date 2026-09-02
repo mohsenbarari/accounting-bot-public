@@ -11,15 +11,15 @@
 
 ## Scope
 
-Delivers the managed source watcher and serial read runtime under ADR-0011 and WP-08, remediated for all review findings (R1 through R8 across rounds 1, 2, and 3):
+Delivers the managed source watcher and serial read runtime under ADR-0011 and WP-08, remediated for all review findings (R1 through R8 across rounds 1 to 5):
 1. **Public API & Version:** Implemented and exported `SOURCE_WATCH_RUNTIME_VERSION = "source-watch-runtime.v1"`, `SourceWatchRuntime`, `SourceWatchRuntimeState`, `SourceWatchRuntimeReason`, `SourceWatchRuntimeError`, and frozen `SourceWatchRuntimeView`.
 2. **Lexical Validation & Non-Containment:** Strict constructor validation of `source_path` (.xlsx, non-lock `~$`, absolute, rejecting relative segments `'..'`/`'.'`) and `snapshot_root` with cross-platform containment enforcement.
 3. **Table-Driven Watchdog Event Adapter:** Single `dispatch()` handler mapping file creations, modifications, deletions, and moves to `SaveImportCoordinator` notices; safely ignores directory events, temporary files, conflict files, read-only events, and unknown events (`future_event`) without filesystem I/O.
 4. **Debounced Coordinator Runtime Loop:** Driver coordinates serial snapshot acquisition and reading through `read_due_source`; enqueues an initial `MODIFIED` hint upon startup; uses a 1.0s maximum idle wait for liveness checking.
 5. **Synchronous Caller-Thread Delivery:** Delivers successful reader snapshots synchronously to the consumer on the run caller's thread after clean lease exit; drains active cycles gracefully upon `request_stop()`.
-6. **Thread Lifecycle & Multi-Failure Grouping (R1/R2):** Strict worker tracking and joined teardown; deduplication strictly on exact instance identities, preserving independent errors with pre-existing or shared causes in `[run_error, async_error, *teardown_errors]` order; raw `BaseException` (like `KeyboardInterrupt`) preserved without wrapping; async error during startup wrapped in `EVENT_DELIVERY_FAILED` and grouped with stop failure.
-7. **Native OS Integration & WP-04 Composition (WR-15..17):** Real filesystem watcher responsiveness for in-place saves, atomic replaces, missing-source creation, and 4 distinct generations including Generation 3 Formula/Cache XML verified against independent WP-04 Planner oracle (0 changes).
-8. **Thread Exception Propagation:** All test runner threads capture and assert exceptions, ensuring 0 unhandled thread warnings and immediate pytest failure upon thread mutation.
+6. **Thread Lifecycle & Multi-Failure Grouping:** Strict worker tracking and joined teardown; deduplication strictly on exact instance identities, preserving independent errors with pre-existing or shared causes in `[run_error, async_error, *teardown_errors]` order; raw `BaseException` (like `KeyboardInterrupt`) preserved without wrapping; worker thread join failure wrapped in `SHUTDOWN_FAILED` with cause; mixed cancellation and normal stop failure in `BaseExceptionGroup`.
+7. **Native OS Integration & WP-04 Composition (WR-15..17):** Real filesystem watcher responsiveness for in-place saves, atomic replaces, missing-source creation, and 4 distinct generations with bounded delivery deadlines, including Generation 3 Formula/Cache XML verified against independent WP-04 Planner oracle (0 changes, 5 UNCHANGED) prior to Generation 4 raw edit (1 EDIT, 4 UNCHANGED).
+8. **Controlled Waiter & Timing Verification:** `ControlledConditionWaiter` hooks `Condition.wait` to eliminate arbitrary sleeps and deterministically verify deadline boundaries (deadline - 1ns wait duration 0.0001s, exact deadline cycle admission, latest-event debounce reset, and 0 retry I/O on reader error).
 
 ## Roadmap traceability
 
@@ -27,21 +27,24 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 - **Roadmap Section 5.1 & 19.1:** Connects filesystem notifications to the save-import coordinator and read pipeline, establishing the native watcher runtime boundary for Phase 1.
 - **Evidence Status:** Recorded under `test-results.txt` and `acceptance-matrix.md`.
 
-## Review findings resolution summary (Round 3)
+## Review findings resolution summary (R7, R8 Round 5)
 
 | Review Item | Description & Root Cause | Resolution |
 | :--- | :--- | :--- |
-| **R2 (Round 3)** | **Error Origin Disentanglement:** Deduplication in teardown compared `__cause__` equality (`getattr(e, "__cause__", None) is async_err`), causing independent errors with pre-existing causes (`primary.__cause__ = async_original`) to drop the async error. | In `source_watch_runtime.py`, startup async error detection cleanly returns to teardown; step 7 deduplication strictly checks exact object identity (`e is final_async_err or e is async_err`). Verified in `test_wr14` producing `BaseExceptionGroup([primary_ki, async_wrapper])` with `primary_ki.__cause__ is async_original` and `async_wrapper.__cause__ is async_original`. |
-| **R2.a/b/c** | Shared cause between Driver error and Stop error, async error during start with stop failure, and coordinator init cancellation. | All verified in `test_wr14`: shared cause preserved in `BaseExceptionGroup([driver_ki, stop_se])`; single async start error raises single wrapper; async start + stop failure raises `ExceptionGroup([async_wrapper, stop_wrapper])`; coordinator constructor cancellation passes raw `KeyboardInterrupt`. |
-| **R7 (Round 3)** | **Complete Scenario Execution & Runner Propagation:** Dual barrier arrival/release synchronization, 4-phase blocking (Acq, Reader, Cleanup, Consumer), Reader rejection without/with follow-up, and background runner exceptions captured. | `test_wr07` rewritten with arrival/release events; `test_wr08` tests 2,000 burst notices across all 4 blocking phases; `test_wr09` tests Reader rejection and follow-up preservation; `test_wr15..17` and unit tests wrap all runner threads with `runner_err` capture and `assert runner_err is None`, eliminating unhandled thread warnings. |
-| **R8 (Round 3)** | **Handoff Evidence & Safe Rollback:** Accurate node IDs, raw execution logs, exact SHA from `git rev-parse HEAD`, separate native vs CI status, and safe rollback without invalid baseline checkout of new files. | Handoff regenerated with exact raw logs, node IDs, benchmark measurements, and precise file deletion/checkout rollback instructions. |
+| **WR-17 Oracle Defect** | Generation 3 Formula test relied on `time.sleep(1.0)` and `results[-1]`, failing to deterministically await generation delivery and risking reading Generation 2 or overlapping Generation 4. | Implemented `_wait_for_snapshot` with bounded deadline and `cursor=2` slicing `results[cursor:]`. Generation 3 snapshot is strictly delivered and verified (`res3 is not res2`, `snap3 is not snap2`) and validated against WP-04 Planner (0 changes, 5 `UNCHANGED`) before Generation 4 is written. Safe runner stop and join in `finally`. |
+| **WR-07 Race State Assertion** | Immediate post-`request_stop()` check rejected `STOPPED` if runner finished teardown quickly, asserting only `STOPPING`. | Case A allows `state in (STOPPING, STOPPED)` immediately after stop request, and strictly asserts `STOPPED` after runner join. Added Case A2 which holds teardown via observer stop barrier, deterministically asserting `STOPPING` while held, and `STOPPED` after release and join. Case D asserts lost-wake prevention. |
+| **WR-06 & WR-09 Timing Control** | Tests relied on arbitrary `time.sleep()` for deadline, idle, and retry waits. | Replaced arbitrary sleeps with `ControlledConditionWaiter` hooked into `runtime._condition.wait`, providing deterministic lock release synchronization (`wait_for_ack()`), verifying exact wait timeouts (e.g. 0.0001s at deadline - 1ns, 1.0s in idle), and confirming 0 retry I/O upon reader error. |
+| **WR-11 Concurrent Loser Outcome** | Winner runner was not held while checking losers; stop during startup before run loop was not tested. | Winner held in consumer barrier while asserting all loser threads exit with `INVALID_TRANSITION` and only 1 backend observer is allocated (`factory_calls == 1`). Added dedicated test for `request_stop()` during observer factory initialization before run loop. |
+| **WR-13 Dispatcher-Only Death** | Dispatcher death test called `mock_obs.stop()`, inadvertently killing emitters as well. | Set only `mock_obs2._stop_event.set()` and joined `mock_obs2` without stopping emitters. At failure detection, asserted `not mock_obs2.is_alive()` AND `all(em.is_alive() for em in mock_obs2.emitters)`. |
+| **WR-14 Join Failure, Mixed Cancellation & Cause Identities** | Missing worker thread join failure in teardown, mixed cancellation + normal stop failure, and cause identities for 3 simultaneous standard exceptions. | Added dedicated tests: join failure wrapped in `SHUTDOWN_FAILED` with `__cause__ is join_os_err`; mixed cancellation (`KeyboardInterrupt`) + stop failure (`RuntimeError`) wrapped in `BaseExceptionGroup`; asserted exact identity (`is`) for all 3 standard exception causes. |
+| **R8 Safe Rollback & Platform Logging** | Rollback instructions must specify exact commit range and avoid destructive baseline checkouts; evidence must record current real SHA and distinct native Linux vs CI Windows status. | Documented exact commit range (`c7520c94606f37720f3e023b753e36d1c1f433a3..HEAD` for package, single commit for Round 5) with scratch-branch verification. Test logs and SHA updated with live run outputs. |
 
 ## Changed files
 
-- `apps/local_agent/src/accounting_local_agent/source_watch_runtime.py`: Core managed source watcher runtime implementation, event adapter, lifecycle state machine, error taxonomy, worker tracking, liveness verification, atomic view transition in teardown, runner loop, and object-identity deduplication.
+- `apps/local_agent/src/accounting_local_agent/source_watch_runtime.py`: Core managed source watcher runtime implementation (R2 closed; untouched in Round 5).
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported WP-08 public symbols (`SOURCE_WATCH_RUNTIME_VERSION`, `SourceWatchRuntime`, `SourceWatchRuntimeState`, `SourceWatchRuntimeReason`, `SourceWatchRuntimeError`, `SourceWatchRuntimeView`).
 - `apps/local_agent/README.md`: Documented architecture, lifecycle transitions, exception hierarchy, and synthetic-only library usage example.
-- `tests/test_source_watch_runtime.py`: Deterministic unit, barrier, race condition, fault injection, and exception grouping test suite (18 tests covering WR-01 through WR-14).
+- `tests/test_source_watch_runtime.py`: Deterministic unit, barrier, race condition, fault injection, and exception grouping test suite (33 tests covering WR-01 through WR-14).
 - `tests/test_source_watch_runtime_native.py`: Real native OS filesystem observer integration test suite (3 tests covering WR-15 through WR-17).
 - `handoffs/phase-01/wp-08-source-watch-runtime/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-08-source-watch-runtime/acceptance-matrix.md`: Detailed requirement acceptance matrix (WR-01 to WR-18).
@@ -57,12 +60,12 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 2. `uv lock --check` (Exit 0, 88 packages resolved)
 3. `uv run ruff format --check .` (Exit 0, 74 files checked)
 4. `uv run ruff check .` (Exit 0, all checks passed)
-5. `uv run mypy .` (Exit 0, 28 source files checked)
-6. `uv run mypy --platform win32 .` (Exit 0, 28 source files checked)
-7. `uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v` (Exit 0, 21 passed in 33.32s)
-8. `uv run pytest -v` (Exit 0, 333 passed, 2 skipped in 69.78s)
-9. `uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s` (Exit 0, 11.61s / 62.03 MiB)
-10. `uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s` (Exit 0, 11.40s / 61.62 MiB)
+5. `uv run mypy --config-file pyproject.toml apps/local_agent/src packages/contracts/src packages/domain/src tests` (Exit 0, 24 source files checked)
+6. `uv run mypy --config-file pyproject.toml --platform win32 apps/local_agent/src packages/contracts/src packages/domain/src tests` (Exit 0, 24 source files checked)
+7. `uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v` (Exit 0, 36 passed in 33.13s)
+8. `uv run pytest tests/ -k "not test_bench"` (Exit 0, 348 passed, 2 skipped in 70.84s)
+9. `uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s` (Exit 0, 11.66s / 61.53 MiB)
+10. `uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s` (Exit 0, 11.12s / 61.58 MiB)
 11. `git diff --check origin/main...HEAD` (Exit 0, 0 whitespace errors)
 12. `git ls-files | grep -E "(\.xlsx$|\.pdf$|\.db$|\.sqlite$|\.env$|secrets|credentials)"` (Exit 0 on check, 0 prohibited files)
 13. `git grep -i -E "password|secret|api_key|private_key" -- apps/` (Exit 0 on check, 0 sensitive credentials)
@@ -70,9 +73,9 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 
 ## Tests and evidence
 
-- **Full repository suite:** 333 tests passing cleanly on Linux native (2 platform-conditional skipped Windows-handle tests; 335 collected total).
-- **Watcher Runtime tests:** 21 dedicated unit, deterministic barrier, native OS observer, lifecycle race, and composition tests.
-- **15,000-row streaming benchmarks:** WP-05 Reader at 11.61s duration / 62.03 MiB peak RSS; WP-06 Acquisition at 11.40s duration / 61.62 MiB peak RSS (strictly within 15.0s / 128.0 MiB ceilings).
+- **Full repository suite:** 348 tests passing cleanly on Linux native (2 platform-conditional skipped Windows-handle tests; 350 collected total).
+- **Watcher Runtime tests:** 36 dedicated unit, deterministic barrier, native OS observer, lifecycle race, and composition tests (33 in `tests/test_source_watch_runtime.py`, 3 in `tests/test_source_watch_runtime_native.py`).
+- **15,000-row streaming benchmarks:** WP-05 Reader at 11.66s duration / 61.53 MiB peak RSS; WP-06 Acquisition at 11.12s duration / 61.58 MiB peak RSS (strictly within 15.0s / 128.0 MiB ceilings).
 - **Windows Platform:** Static type safety validated via `mypy --platform win32` (Exit 0); native runtime execution is pending independent Codex CI execution on PR.
 - Direct execution logs and metrics recorded in `test-results.txt`.
 
@@ -81,7 +84,7 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 - **Clock Source:** Default clock uses `time.monotonic_ns()`. `FakeClock` used in test fixtures for deterministic time control.
 - **Observer Ownership:** `SourceWatchRuntime` creates, schedules, starts, stops, and joins its private `watchdog.observers.Observer` instance and captured worker emitters. Construction performs zero thread allocations.
 - **Single-use Lifecycle:** Each `SourceWatchRuntime` instance supports exactly one execution of `run()`. Terminal instances (`STOPPED`, `FAILED`) reject subsequent `run()` invocations.
-- **Remediation R1-R8:** All items from Codex review rounds 1, 2, and 3 (worker tracking before start, raw BaseException preservation, expected worker liveness, watchdog dispatch override, lexical path relative segment rejection, atomic teardown view invariant, shared cause deduplication, error origin disentanglement, async start error wrapping with stop failure, coordinator constructor cancellation, barrier tests, 4-phase 2,000 notice burst blocking, reader rejection retry, formula/cache XML generation with WP-04 planner oracle, runner thread exception propagation, and full WR-01..18 test coverage) have been fully addressed and tested.
+- **Remediation R1-R8:** All items from Codex review rounds 1 to 5 (worker tracking before start, raw BaseException preservation, expected worker liveness, watchdog dispatch override, lexical path relative segment rejection, atomic teardown view invariant, shared cause deduplication, error origin disentanglement, async start error wrapping with stop failure, coordinator constructor cancellation, barrier tests, 4-phase 2,000 notice burst blocking, reader rejection retry, formula/cache XML generation with WP-04 planner oracle, runner thread exception propagation, independent dispatcher failure, cause identities, join failure, mixed cancellation, and full WR-01..18 test coverage) have been fully addressed and tested.
 
 ## Risks
 
@@ -98,23 +101,36 @@ To revert this work package cleanly and safely without blind file deletions or d
    ```
    Ensure no untracked or independent user modifications exist before proceeding.
 
-2. **Revert WP-08 changes via targeted Git revert or explicit file restoration:**
-   ```bash
-   # Revert the linear WP-08 commit(s) cleanly
-   git revert --no-edit HEAD
-   ```
-   Or explicitly remove WP-08 specific files and restore modified files to baseline `c7520c94606f37720f3e023b753e36d1c1f433a3`:
-   ```bash
-   # Remove WP-08 created files
-   git rm -f apps/local_agent/src/accounting_local_agent/source_watch_runtime.py
-   git rm -f tests/test_source_watch_runtime.py
-   git rm -f tests/test_source_watch_runtime_native.py
-   git rm -rf handoffs/phase-01/wp-08-source-watch-runtime/
+2. **Reverting Changes by Scope:**
+   - **Scope A: Revert Only Round 5 Remediation Commit:**
+     If only the Round 5 remediation commit is to be backed out while preserving earlier WP-08 commits:
+     ```bash
+     # Revert the latest remediation commit
+     git revert --no-edit HEAD
+     ```
+   - **Scope B: Revert Entire WP-08 Package:**
+     To revert the entire WP-08 work package back to baseline commit `c7520c94606f37720f3e023b753e36d1c1f433a3`:
+     ```bash
+     git revert --no-edit c7520c94606f37720f3e023b753e36d1c1f433a3..HEAD
+     ```
+   - **Recommended Safe Verification Procedure:**
+     To verify that the revert leaves no unexpected diffs or broken dependencies, test the revert on a temporary scratch branch before touching the delivery branch:
+     ```bash
+     # Create a scratch verification branch from current HEAD
+     git checkout -b scratch/verify-rollback
 
-   # Restore modified files to baseline
-   git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/src/accounting_local_agent/__init__.py
-   git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/README.md
-   ```
+     # Apply the revert
+     git revert --no-edit c7520c94606f37720f3e023b753e36d1c1f433a3..HEAD
+
+     # Run tests and type checks to confirm clean baseline state
+     uv run ruff check .
+     uv run pytest tests/ -k "not test_bench"
+
+     # Return to delivery branch and delete scratch branch
+     git checkout antigravity/phase-01-source-watch-runtime
+     git branch -D scratch/verify-rollback
+     ```
+   - **Precaution:** Avoid running blind `git rm` or destructive `git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- .` directly on the delivery branch if subsequent independent commits or uncommitted changes exist, as that would destroy non-WP-08 modifications.
 
 ## Protected assets
 
@@ -126,4 +142,4 @@ To revert this work package cleanly and safely without blind file deletions or d
 
 ## Stop state
 
-Implementation, remediation of all review items (R1 through R8 across rounds 1, 2, and 3), native OS observer tests, runner thread propagation, and test verification for WP-08 are completed and stopped for handoff review. Gate G1 remains `OPEN / IN PROGRESS`. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation, remediation of all review items (R1 through R8 across rounds 1 to 5), native OS observer tests, runner thread propagation, and test verification for WP-08 are completed and stopped for handoff review. Gate G1 remains `OPEN / IN PROGRESS`. No Gate approval, merge, push, deploy, or next Work Package has been performed.

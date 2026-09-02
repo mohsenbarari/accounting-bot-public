@@ -65,22 +65,32 @@ def _wait_for_snapshot(
     event: threading.Event,
     predicate: Callable[[XlsxSourceReadResult], bool],
     timeout: float = 10.0,
+    *,
+    cursor: int = 0,
 ) -> XlsxSourceReadResult:
-    """Poll for a snapshot meeting content predicate within bounded deadline."""
+    """Poll for a snapshot meeting content predicate within bounded deadline.
+
+    Only examines results delivered strictly at or after the provided cursor index,
+    guaranteeing that stale results cannot satisfy fresh generation expectations.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         with lock:
-            for r in reversed(results):
-                if predicate(r):
-                    return r
+            if len(results) > cursor:
+                for r in reversed(results[cursor:]):
+                    if predicate(r):
+                        return r
         rem = max(0.01, deadline - time.monotonic())
         event.wait(timeout=min(0.2, rem))
         event.clear()
     with lock:
-        for r in reversed(results):
-            if predicate(r):
-                return r
-    raise TimeoutError("Timed out waiting for expected snapshot content")
+        if len(results) > cursor:
+            for r in reversed(results[cursor:]):
+                if predicate(r):
+                    return r
+    raise TimeoutError(
+        f"Timed out waiting for expected snapshot content after cursor {cursor}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +149,8 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
                 .raw_values.get("unit_price_toman_raw")
                 == "1000"
             ),
+            cursor=0,
+            timeout=10.0,
         )
         assert (
             res1.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
@@ -158,6 +170,8 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
                 .raw_values.get("unit_price_toman_raw")
                 == "2000"
             ),
+            cursor=1,
+            timeout=10.0,
         )
         assert (
             res2.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
@@ -180,6 +194,8 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
                 .raw_values.get("unit_price_toman_raw")
                 == "3000"
             ),
+            cursor=2,
+            timeout=10.0,
         )
         assert (
             res3.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
@@ -199,7 +215,8 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
         assert runtime.view().state == SourceWatchRuntimeState.STOPPED
     finally:
         runtime.request_stop()
-        run_thread.join(timeout=2.0)
+        run_thread.join(timeout=5.0)
+        assert not run_thread.is_alive()
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +281,8 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
                 .raw_values.get("unit_price_toman_raw")
                 == "5000"
             ),
+            cursor=0,
+            timeout=10.0,
         )
         assert (
             res1.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
@@ -285,6 +304,8 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
                 .raw_values.get("unit_price_toman_raw")
                 == "6000"
             ),
+            cursor=1,
+            timeout=10.0,
         )
         assert (
             res2.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
@@ -309,6 +330,8 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
                 .raw_values.get("unit_price_toman_raw")
                 == "7000"
             ),
+            cursor=2,
+            timeout=10.0,
         )
         assert (
             res3.snapshot.sheets["خرید-فروش"].rows[0].raw_values["unit_price_toman_raw"]
@@ -340,7 +363,8 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
             assert not t.is_alive(), f"Thread {t.name} must be stopped"
     finally:
         runtime.request_stop()
-        run_thread.join(timeout=2.0)
+        run_thread.join(timeout=5.0)
+        assert not run_thread.is_alive()
 
 
 # ---------------------------------------------------------------------------
@@ -419,8 +443,12 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
                 and r.locations_by_uuid[u1].physical_row_number == 2
                 and r.locations_by_uuid[u2].physical_row_number == 3
             ),
+            cursor=0,
+            timeout=10.0,
         )
         snap1 = res1.snapshot
+        with lock:
+            assert len(results) == 1
 
         # Generation 2: Row sort (physical rows swapped: u2 on row 2, u1 on row 3)
         time.sleep(0.5)
@@ -454,10 +482,17 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
                 and r.locations_by_uuid[u1].physical_row_number == 3
                 and r.locations_by_uuid[u2].physical_row_number == 2
             ),
+            cursor=1,
+            timeout=10.0,
         )
         snap2 = res2.snapshot
+        assert res2 is not res1
+        assert snap2 is not snap1
+        with lock:
+            assert len(results) == 2
 
         # Generation 3: Formula and cache-only XML modification (identical raw values)
+        # Rows restored: row 2 (u1) and row 3 (u2) with formula row at 10
         time.sleep(0.5)
         formula_row = {
             "__row_num__": 10,
@@ -479,12 +514,27 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         )
         src.write_bytes(builder3.build_bytes())
 
-        # Formula row does not add active rows; wait for next delivered snapshot
-        time.sleep(1.0)
+        # Prove fresh Generation 3 delivery with bounded deadline and cursor
+        res3 = _wait_for_snapshot(
+            results,
+            lock,
+            result_event,
+            lambda r: (
+                r.locations_by_uuid.get(u1) is not None
+                and r.locations_by_uuid[u1].physical_row_number == 2
+                and r.locations_by_uuid[u2].physical_row_number == 3
+            ),
+            cursor=2,
+            timeout=10.0,
+        )
+        snap3 = res3.snapshot
+        assert res3 is not res2
+        assert snap3 is not snap2
         with lock:
-            snap3 = results[-1].snapshot
+            assert len(results) == 3
 
         # Generation 4: Raw edit (modifying amount on row1 from 100 to 999)
+        # Written only AFTER Generation 3 formula delivery is fully proven
         time.sleep(0.5)
         row1_edited = dict(row1)
         row1_edited["G"] = "999"
@@ -512,8 +562,14 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
                 row.raw_values.get("unit_price_toman_raw") == "999"
                 for row in r.snapshot.sheets["خرید-فروش"].rows
             ),
+            cursor=3,
+            timeout=10.0,
         )
         snap4 = res4.snapshot
+        assert res4 is not res3
+        assert snap4 is not snap3
+        with lock:
+            assert len(results) == 4
 
         # 1. Run WP-04 Change Planner from snap1
         plan1 = plan_source_changes(snap1)
@@ -568,4 +624,5 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         assert runner_err is None
     finally:
         runtime.request_stop()
-        run_thread.join(timeout=2.0)
+        run_thread.join(timeout=5.0)
+        assert not run_thread.is_alive()
