@@ -1,5 +1,7 @@
 # Handoff: WP-07 Save Debounce, Coalescing, and Import Coordination
 
+> Final Codex disposition (2026-09-02): accepted and merged in PR #25 after both CI jobs passed on reviewed head `83a8fac`. [Codex acceptance](codex-review.md) supersedes the implementer's pending-review/runtime statements below. The implementation log remains historical evidence; G1 stays OPEN / IN PROGRESS.
+
 ## Identity
 
 - **Work Package:** `WP-07: Save debounce, coalescing, and import coordination`

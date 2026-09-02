@@ -2,9 +2,14 @@
 
 - Phase: 1 — source and data-model foundation
 - Gate contribution: G1 scheduling boundary only; this package cannot close G1
-- Status: Issued — implementation and evidence pending
+- Status: Accepted and merged
 - Issued by: Codex Project Manager
 - Issued on: 2026-09-02
+- Accepted by: Codex Project Manager
+- Accepted on: 2026-09-02
+- Review evidence: PR #25 and final CI Run `33632031865`; [Codex acceptance](../../../handoffs/phase-01/wp-07-save-import-coordinator/codex-review.md)
+- Reviewed head: `83a8facb6f86e7971171953e3dfe88dafe33c957`
+- Merge commit: `fe7e19287e66d208124487b96087a1b85f60831f`
 - Required skill: `accounting-bot-implementer`
 - Branch: `antigravity/phase-01-save-import-coordinator`
 - Baseline: latest clean `origin/main` containing this Work Package and ADR-0010
