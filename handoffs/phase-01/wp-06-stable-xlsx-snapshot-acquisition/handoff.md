@@ -42,15 +42,18 @@
   - `0258c97` — `docs(handoff): update WP-06 handoff with Codex review round 9 evidence`
   - `7791133` — `docs(handoff): finalize exact commit list for round 9 handoff`
   - `e141bc8` — `fix(local_agent,tests): address Codex review round 10 R10-01 to R10-03`
+  - `3ba087a` — `docs(handoff): update WP-06 handoff with Codex review round 10 evidence`
+  - `89c40de` — `fix(local_agent,tests): address Codex review round 11 R11-01 to R11-04`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
 
 Delivers bounded, atomic XLSX snapshot acquisition, exclusive leased consumer access, post-lease integrity verification, and namespace-safe cleanup lifecycle under ADR-0009 and WP-06.
-Addresses all Round 10 Codex review remediation directives (R10-01 to R10-03):
-1. **R10-01 (Explicit & Independent WinAPI Loading):** Explicitly imported `wintypes` (`_ctypes_wintypes`) with robust `_get_wintypes()` resolution across `_create_and_anchor_lease_dir_windows`, `MoveFileExW`, and `_close_windows_handle`. No reliance on external or prior pytest imports. Verified via fresh subprocess test (`test_r10_01`).
-2. **R10-02 (Full 128-bit Identity via FileIdInfo):** Replaced 32-bit `GetFileInformationByHandle` with `GetFileInformationByHandleEx(FileIdInfo = 18)` and `FILE_ID_INFO`, extracting full 64-bit volume serial number and full 128-bit file ID matching `Path.lstat().st_dev` and `st_ino`. Failure paths close handle exactly once via `CloseHandle` and fail closed. Verified with fixtures (`VolumeSerialNumber > 2**32`, `FileId > 2**64`) and lifecycle tests (`test_r10_02`, `test_r9_10`).
-3. **R10-03 (Deterministic ENOSYS/EINVAL/Missing Symbol Oracles):** Rebuilt `test_r9_04` with callable mock function wrapper allowing `argtypes`/`restype` assignment, asserting syscall stub invocation count > 0 for `ENOSYS` and `EINVAL`, failure-closed error raising, and preservation of both source and destination contents.
+Addresses all Round 11 Codex review remediation directives (R11-01 to R11-04):
+1. **R11-01 (Windows Handle Close Error Visibility):** Checked return `BOOL` of `CloseHandle` and raised `OSError` with `get_last_error()` on failure; preserved chained causes on double failure; raised `XlsxSnapshotStorageError` in `finally` if `CloseHandle` fails, preventing yield. Tested with native `HANDLE_FLAG_PROTECT_FROM_CLOSE` test (`test_r11_01`).
+2. **R11-02 (Oracle Backend Alignment):** Aligned Linux `renameat2` dispatching on Windows via `_platform_override`; aligned anchor directory hooks after `mkdir()` and before `CreateFileW` / `GetFileInformationByHandleEx`; added dedicated candidate fstat seam `_fstat_candidate_fd`; unified provider fallback identity via `_extract_windows_handle_identity`; handled Windows open file locking vs replace outcome in `test_sa05`.
+3. **R11-03 (Honest Symlink Probing):** Probed environment symlink creation privilege honestly via `_can_create_symlinks(tmp_path)` across `test_sa02`, `test_sa05`, `test_sa07`, and `test_sa09`.
+4. **R11-04 (Full Benchmark Output):** Wrapped benchmark output with `capsys.disabled()`, outputting full 64-character SHA-256 string visible in standard CI execution.
 
 ## Roadmap traceability
 
@@ -61,8 +64,8 @@ Addresses all Round 10 Codex review remediation directives (R10-01 to R10-03):
 ## Changed files
 
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported `DEFAULT_COPY_CHUNK_SIZE`, `XLSX_SNAPSHOT_ACQUISITION_VERSION`, `StableXlsxSnapshot`, error taxonomy classes, and `open_stable_xlsx_snapshot`.
-- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Versioned context manager with Round 10 review fixes (R10-01 to R10-03).
-- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 71 tests covering SA-01 to SA-14 and all regression oracles.
+- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Versioned context manager with Round 11 review fixes (R11-01 to R11-04).
+- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 72 tests covering SA-01 to SA-14 and all regression oracles.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/acceptance-matrix.md`: Detailed requirement acceptance matrix.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/test-results.txt`: Verbatim command outputs, 3-run benchmark logs, and quality scan records.
@@ -77,16 +80,16 @@ Addresses all Round 10 Codex review remediation directives (R10-01 to R10-03):
 2. `uv run ruff check .` (Exit 0, all checks passed)
 3. `uv run mypy .` (Exit 0, 23 source files checked)
 4. `uv run mypy --platform win32 .` (Exit 0, 23 source files checked)
-5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 70 passed, 1 skipped in 14.36s)
-6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark" -s -vv` (Exit 0, 3 runs: 10.73s, 12.45s, 11.21s duration; 60.16 MiB, 59.85 MiB, 60.05 MiB peak RSS)
-7. `uv run pytest -v` (Exit 0, 270 passed, 1 skipped in 35.62s)
+5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 70 passed, 2 skipped in 15.61s)
+6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark"` (Exit 0, 3 runs: 12.22s, 11.87s, 11.68s duration; 59.82 MiB, 59.85 MiB, 59.82 MiB peak RSS)
+7. `uv run pytest -v` (Exit 0, 270 passed, 2 skipped in 38.34s)
 8. `git ls-files` check (Exit 0, 92 tracked files, 0 prohibited files)
 9. `git grep` sensitive patterns check (Exit 1 failure-on-match -> Exit 0 clean)
 
 ## Tests and evidence
 
-- Full repository suite: 270 tests passing cleanly (1 skipped Windows-runtime-only test).
-- SA-01 to SA-14 coverage: 71 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
+- Full repository suite: 270 tests passing cleanly (2 skipped Windows-runtime-only tests).
+- SA-01 to SA-14 coverage: 72 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
 - Verbatim execution logs and metrics recorded in `test-results.txt`.
 
 ## Assumptions and open items

@@ -7,19 +7,19 @@
 - **Component Version:** `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
 - **Baseline Commit:** `bc085acd8852e2293fdfcb786a7694fe96e93407`
 - **Current Branch:** `antigravity/phase-01-stable-xlsx-snapshot-acquisition`
-- **Remediation Scope:** Codex Round 10 Review Remediation (R10-01 to R10-03)
+- **Remediation Scope:** Codex Round 11 Review Remediation (R11-01 to R11-04)
 
 ---
 
-## Detailed Requirement Verification (SA-01 to SA-14 & R10-01 to R10-03)
+## Detailed Requirement Verification (SA-01 to SA-14 & R11-01 to R11-04)
 
 | Item ID | Requirement / Scope | Status | Verification & Evidence |
 | :--- | :--- | :--- | :--- |
 | **SA-01** | Public API, version export, typed taxonomy & reason strings, sanitized error formatting without path/member leaks | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa01_public_api_exports_and_version`, `test_sa01_stable_xlsx_snapshot_invariants`, `test_sa01_error_taxonomy_reasons_and_retryability`, `test_sa01_no_path_or_secret_leakage_in_messages_and_repr` |
-| **SA-02** | Two ordered observations; rejection of non-positive intervals, non-xlsx files, non-directory roots, string paths, and initial symlinks | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa02_two_observations_and_sleeper`, `test_sa02_invalid_arguments_and_policy_rejections`, `test_sa02_initial_source_symlink_rejection`, `test_sa02_non_regular_file_rejection_policy` |
+| **SA-02** | Two ordered observations; rejection of non-positive intervals, non-xlsx files, non-directory roots, string paths, and initial symlinks (with runtime symlink privilege probe) | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa02_two_observations_and_sleeper`, `test_sa02_invalid_arguments_and_policy_rejections`, `test_sa02_initial_source_symlink_rejection`, `test_sa02_non_regular_file_rejection_policy` |
 | **SA-03** | Source file read-only immutability (bytes, sha256, size, mtime_ns, permissions unchanged across all outcomes) | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa03_source_immutability_on_success_and_failures` |
 | **SA-04** | Missing, disappearing, or inaccessible source files raise retryable `XlsxSourceNotReadyError` | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa04_missing_and_disappearing_source_handling`, `test_sa04_inaccessible_file_permission_lock` |
-| **SA-05** | In-place mutation and atomic replacement via `os.replace` at every race window abort acquisition cleanly with retryable error; same-inode symlink swap detected | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[...]` (5 stages), `test_sa05_atomic_os_replace_at_every_race_point[...]` (5 stages), `test_sa05_source_symlink_race_mutation_with_same_inode` |
+| **SA-05** | In-place mutation and atomic replacement via `os.replace` at every race window abort acquisition cleanly with retryable error (or detect OS kernel file locking on Windows); same-inode symlink swap detected | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[...]` (5 stages), `test_sa05_atomic_os_replace_at_every_race_point[...]` (5 stages), `test_sa05_source_symlink_race_mutation_with_same_inode` |
 | **SA-06** | Streaming copy with bounded chunks (`_copy_chunk_size`), no unbounded `read(-1)`, exact byte count and SHA-256 computation | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa06_streaming_copy_bounded_chunks`, `test_sa06_bounded_stream_wrapper_verification` |
 | **SA-07** | Fast central directory structure and `[Content_Types].xml` verification on dedicated Candidate handle; candidate symlink rejection leaving external target untouched; pre-existing final snapshot not overwritten or deleted; real stream read/write/flush/fsync errors mapped with correct taxonomy | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa07_zip_central_directory_only_and_no_testzip_or_open_called`, `test_sa07_invalid_container_and_storage_faults`, `test_sa07_candidate_symlink_rejection_leaves_target_untouched`, `test_sa07_pre_existing_final_snapshot_not_overwritten_or_deleted`, `test_sa07_real_stream_io_faults_and_short_write` |
 | **SA-08** | Promoted snapshot `.xlsx` leased exclusively to consumer; original source mutation isolated; private 0700/0600 POSIX permissions; snapshot_path never resolves externally | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa08_promoted_path_and_source_mutation_isolation`, `test_sa08_posix_private_file_permissions`, `test_sa08_snapshot_path_never_resolves_externally` |
@@ -28,37 +28,38 @@
 | **SA-11** | Concurrent acquisitions: SHA equality for identical sources, distinct SHAs for different sources, disjoint paths, independent exit lifecycle without race interference | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa11_concurrent_disjoint_acquisitions` |
 | **SA-12** | Full 4-sheet synthetic workbook acquired and validated; 100% snapshot and hash parity against independent WP-04 / WP-03 oracle | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa12_end_to_end_reader_and_planner_oracle` |
 | **SA-13** | Source mutation prevents invalid/partial change plan construction or execution voids | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa13_source_change_prevents_partial_planner_voids` |
-| **SA-14** | Hypothesis property testing over arbitrary chunk sizes and intervals; combined 15,000-row streaming benchmark | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa14_hypothesis_chunk_and_interval_properties`, `test_sa14_combined_15000_row_benchmark` |
+| **SA-14** | Hypothesis property testing over arbitrary chunk sizes and intervals; combined 15,000-row streaming benchmark with full 64-char SHA256 and unbuffered output | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa14_hypothesis_chunk_and_interval_properties`, `test_sa14_combined_15000_row_benchmark` |
 
 ---
 
-## Round 10 Refinements & Deterministic Oracles (R10-01 to R10-03)
+## Round 11 Refinements & Deterministic Oracles (R11-01 to R11-04)
 
-1. **R10-01: Independent and Explicit WinAPI Loading (`test_r10_01`):**
-   - Submodule `ctypes.wintypes` is explicitly imported at product level (`_ctypes_wintypes`) and resolved via `_get_wintypes()`.
-   - No Windows execution path relies on prior imports from pytest, host applications, or external tests (`WINTYPES_EXPLICIT_IMPORT_STANDALONE = True`, `WINTYPES_PRELOAD_INDEPENDENT = True`).
-   - Covered across all three Windows WinAPI operations: `_create_and_anchor_lease_dir_windows`, `MoveFileExW` in `_atomic_move_no_replace`, and `_close_windows_handle`.
-   - WinAPI initialization errors are wrapped into typed acquisition error taxonomy with chained causes (`__cause__`).
-   - Verified via fresh subprocess test (`test_r10_01_fresh_subprocess_import_and_wintypes_independence`) using `sys.executable` with zero preloaded test fixtures.
+1. **R11-01: Windows Handle Close Error Visibility & Fail-Closed Behavior (`test_r10_02`, `test_r11_01`):**
+   - In `_close_windows_handle`, verified the return `BOOL` of `CloseHandle` and raised `OSError` with `get_last_error()` on failure (`WINDOWS_CLOSE_HANDLE_RETURN_BOOL_CHECKED = True`).
+   - In `_create_and_anchor_lease_dir_windows`, when both query and close fail, chained `close_exc.__cause__ = query_exc` and raised `query_exc` with `__cause__` set to `close_exc` (`WINDOWS_DOUBLE_FAILURE_CAUSES_PRESERVED = True`).
+   - In `open_stable_xlsx_snapshot`, when `CloseHandle` fails in `finally`, converted to `XlsxSnapshotStorageError("Failed to close lease directory anchor") from close_exc`, preventing yield (`WINDOWS_CLOSE_HANDLE_FINALLY_FAIL_CLOSED = True`).
+   - Added native test `test_r11_01_windows_handle_protect_from_close_native_oracle` using `HANDLE_FLAG_PROTECT_FROM_CLOSE = 2` on real Windows.
 
-2. **R10-02: Full 128-bit File ID and 64-bit Volume Identity from Windows Handle (`test_r10_02`, `test_r9_10`):**
-   - Implemented `FILE_ID_INFO` structure (`VolumeSerialNumber: ULONGLONG` [uint64], `FileId: FILE_ID_128` [16 bytes]) queried via `GetFileInformationByHandleEx(FileIdInfo = 18)`.
-   - Volume serial number is kept as full 64-bit integer (`WINDOWS_VOLUME_SERIAL_64BIT_EXACT = True`) and file ID as full 128-bit integer (`WINDOWS_FILE_ID_INFO_128BIT_EXACT = True`) without 32-bit/64-bit masking or truncation.
-   - Matches exact `Path.lstat().st_dev` and `st_ino` representation in CPython on Windows.
-   - Argtypes and restype accurately configured for all WinAPI calls, including `CloseHandle` in failure paths (`WINDOWS_HANDLE_CLOSE_EXACTLY_ONCE = True`).
-   - Tested for successful identity retrieval on fixture with `VolumeSerialNumber > 2**32` and `FileId > 2**64`, as well as `CreateFileW` and `GetFileInformationByHandleEx` failure paths.
+2. **R11-02: Oracle Alignment Across POSIX & Windows Backends:**
+   - **Linux renameat2 on Windows (`test_r9_04`):** Used module seam `_platform_override` to dispatch and assert Linux `renameat2` ENOSYS, EINVAL, and Missing Symbol on all platforms, as well as Windows `MoveFileExW` failure without replace (`WINDOWS_MOVEFILEEXW_FAIL_CLOSED = True`).
+   - **Anchor Directory Hook (`test_r8_01`, `test_r8_02`):** Hook `after_mkdir_before_anchor` called after `mkdir()` and before `CreateFileW`; hook `after_anchor_open_before_fstat` called after `CreateFileW` and before `GetFileInformationByHandleEx`. Tested on both POSIX (`os.fstat`) and Windows (`_query_file_id_info_windows`).
+   - **Candidate fstat (`test_r8_08`, `test_r8_09`):** Intercepted candidate fstat cleanly via `_fstat_candidate_fd` without guessing fds or reading `/proc/self/fd` (`CANDIDATE_FSTAT_TRANSIENT_RETRY_PASS = True`, `CANDIDATE_FSTAT_FAILURE_FOREIGN_SURVIVED = True`).
+   - **Identity Fallback (`test_r8_16`):** Mocked both `_extract_device_and_inode` and `_extract_windows_handle_identity` to `(None, None)` for hypothetical provider fallback (`FALLBACK_IDENTITY_UNAVAILABLE_PASS = True`).
+   - **Writer Replace & File Locking (`test_sa05`):** Tracked `attempted`, `succeeded`, and `blocked`. If writer is blocked by Windows kernel file locking, verified uncorrupted reader result and verified replacement succeeds after handle close.
 
-3. **R10-03: Deterministic ENOSYS/EINVAL and Missing Symbol Oracle (`test_r9_04`):**
-   - Built a callable mock function wrapper (`MockCtypesFunc`) that tracks call counts while allowing `argtypes` and `restype` assignment.
-   - Tested `ENOSYS` (errno 38) and `EINVAL` (errno 22) independently, verifying the syscall stub is invoked (`RENAME_NOREPLACE_STUB_INVOKED = True`), fails closed with `OSError` (`RENAME_NOREPLACE_ENOSYS_FAILED_CLOSED = True`, `RENAME_NOREPLACE_EINVAL_FAILED_CLOSED = True`), and leaves both source and destination untouched (`RENAME_NOREPLACE_SOURCE_PRESERVED = True`, `RENAME_NOREPLACE_FOREIGN_DEST_PRESERVED = True`).
-   - Tested missing `renameat2` symbol independently (`RENAME_NOREPLACE_MISSING_SYMBOL_FAILED_CLOSED = True`).
+3. **R11-03: Honest Environment Symlink Capability Probing:**
+   - Probed native symlink creation capability via `_can_create_symlinks(tmp_path)` across `test_sa02`, `test_sa05`, `test_sa07`, and `test_sa09` (`SYMLINK_PERMISSION_PROBED_HONESTLY = True`).
+   - If user account lacks `SeCreateSymbolicLinkPrivilege` (WinError 1314), skips with clear reason without masking product failures.
+
+4. **R11-04: Full Benchmark Output with Unbuffered Capture Escape (`test_sa14`):**
+   - Output wrapped with `capsys.disabled()`, printing full 64-character SHA-256 string visible in standard `uv run pytest` CI (`BENCHMARK_FULL_SHA256_UNBUFFERED_VISIBLE = True`).
 
 ---
 
 ## Coverage gaps
 
-- **Linux (Native Platform):** Full test suite (270/270 active tests passing, 3 benchmark runs under 13s and 61 MiB RSS).
-- **Windows Runtime Platform:** Platform-conditional runtime execution (`test_r9_10`) is recorded as **PENDING** independent Codex CI execution on PR. Static type compliance verified via `mypy --platform win32` (Exit 0).
+- **Linux (Native Platform):** Full test suite (270/270 active tests passing, 3 benchmark runs under 12.3s and 60 MiB RSS).
+- **Windows Runtime Platform:** Platform-conditional runtime execution (`test_r9_10`, `test_r11_01`) is recorded as **PENDING** independent Codex CI execution on PR. Static type compliance verified via `mypy --platform win32` (Exit 0).
 
 ---
 
