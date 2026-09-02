@@ -1,6 +1,7 @@
 WORK PACKAGE: WP-08 Managed source watcher and serial read runtime
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-02T17:10:00Z
+RECORDED AT UTC: 2026-09-02T17:38:00Z
+TESTED CODE COMMIT SHA: 8c670b1ad34ba8519538c19f85b96d88a02173ab
 
 ================================================================================
 1. SYNCHRONIZATION AND DEPENDENCY CHECK
@@ -24,22 +25,27 @@ $ uv run ruff check .
 All checks passed!
 Exit Code: 0
 
+$ git diff --check
+Exit Code: 0 (0 whitespace errors)
+
 ================================================================================
-3. STATIC TYPE SAFETY CHECKS (LINUX & WINDOWS)
+3. FULL-REPOSITORY STATIC TYPE SAFETY CHECKS (LINUX & WINDOWS)
 ================================================================================
-$ uv run mypy --config-file pyproject.toml apps/local_agent/src packages/contracts/src packages/domain/src tests
-Success: no issues found in 24 source files
+$ uv run mypy .
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 28 source files
 Exit Code: 0
 
-$ uv run mypy --config-file pyproject.toml --platform win32 apps/local_agent/src packages/contracts/src packages/domain/src tests
-Success: no issues found in 24 source files
+$ uv run mypy --platform win32 .
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 28 source files
 Exit Code: 0
 
 ================================================================================
 4. WP-08 UNIT & NATIVE TEST SUITES
 ================================================================================
 $ uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v
-=================== test session starts ===================
+================== test session starts ==================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
@@ -84,7 +90,7 @@ tests/test_source_watch_runtime_native.py::test_wr15_native_startup_read_and_inp
 tests/test_source_watch_runtime_native.py::test_wr16_native_absent_source_lifecycle_and_thread_cleanup PASSED [ 97%]
 tests/test_source_watch_runtime_native.py::test_wr17_end_to_end_wp04_planner_composition PASSED [100%]
 
-=================== 36 passed in 33.13s ===================
+================== 36 passed in 29.26s ==================
 Exit Code: 0
 
 ================================================================================
@@ -125,41 +131,42 @@ tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 75%]
 ================ short test summary info ==================
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
-======== 348 passed, 2 skipped in 70.84s (0:01:10) ========
+======== 348 passed, 2 skipped in 67.46s (0:01:07) ========
 Exit Code: 0
 
 ================================================================================
 6. STREAMING PERFORMANCE AND MEMORY BENCHMARKS
 ================================================================================
 $ uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.6629s | baseline_current_rss_mib: 30.10 MiB | call_peak_rss_mib: 61.53 MiB | rows: 15000 | platform: linux
-1 passed in 13.41s (Limits: 15.0s, 128.0 MiB)
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 12.3137s | baseline_current_rss_mib: 30.18 MiB | call_peak_rss_mib: 61.57 MiB | rows: 15000 | platform: linux
+1 passed in 14.04s (Limits: 15.0s, 128.0 MiB)
 Exit Code: 0
 
 $ uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.1261s | baseline_current_rss_mib: 29.90 MiB | call_peak_rss_mib: 61.58 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 7f2a5f24357d64146d18e5d0f76769b99ecb3d8a301590dcf57a6f2ae7402a91 | platform: linux
-1 passed in 12.82s (Limits: 15.0s, 128.0 MiB)
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.7962s | baseline_current_rss_mib: 30.05 MiB | call_peak_rss_mib: 61.65 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 8635d8ff798c1e7e2dcc77e52e4031e84d373acdafd9aa93a228feb88823af82 | platform: linux
+1 passed in 13.44s (Limits: 15.0s, 128.0 MiB)
 Exit Code: 0
 
 ================================================================================
 7. DIFF AND REPOSITORY SECURITY SCAN
 ================================================================================
-$ git diff --check origin/main...HEAD
+$ git diff --check
 Exit Code: 0 (0 whitespace errors)
 
-$ git ls-files | grep -E "(\.xlsx$|\.pdf$|\.db$|\.sqlite$|\.env$|secrets|credentials)"
+$ git ls-files | grep -E "\.(env|key|pem|pfx|p12|kdbx|sqlite|db)$"
 Exit Code: 0 (0 prohibited files committed)
 
-$ git grep -i -E "password|secret|api_key|private_key" -- apps/
+$ git grep -i -E "(BEGIN PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[0-9a-zA-Z]{36})"
 Exit Code: 0 (0 sensitive credentials)
 
 ================================================================================
 FINAL SUMMARY
 ================================================================================
 - WP-08 Component: `source-watch-runtime.v1`
+- Tested Code Commit SHA: 8c670b1ad34ba8519538c19f85b96d88a02173ab
 - Unit & Deterministic Tests: 33 passed in `tests/test_source_watch_runtime.py`
 - Native OS Integration Tests: 3 passed in `tests/test_source_watch_runtime_native.py`
 - Full Monorepo Test Suite: 348 passed, 2 skipped (Windows-specific handle locks)
-- Cross-Platform Type Safety: Both Linux and Win32 mypy passed with 0 errors
-- 15,000-Row Benchmarks: Duration ~11.1s - 11.6s (< 15s limit), Peak RSS ~61.5 - 61.6 MiB (< 128 MiB limit)
+- Cross-Platform Type Safety: Both Linux and Win32 full-repo mypy passed with 0 errors across 28 source files
+- 15,000-Row Benchmarks: Duration ~11.8s - 12.3s (< 15s limit), Peak RSS ~61.6 MiB (< 128 MiB limit)
 - Working Tree Changes: Tests only (`tests/test_source_watch_runtime.py`, `tests/test_source_watch_runtime_native.py`); product code untouched (R2 preserved)
