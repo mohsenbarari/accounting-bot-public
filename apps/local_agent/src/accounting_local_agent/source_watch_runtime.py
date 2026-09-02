@@ -361,7 +361,7 @@ class SourceWatchRuntime:
                 source_path,
                 _time_source=self._time_source,
             )
-        except BaseException as exc:
+        except Exception as exc:
             raise SourceWatchRuntimeError(
                 SourceWatchRuntimeReason.INVALID_POLICY,
                 "Failed to initialize coordinator",
@@ -722,7 +722,18 @@ class SourceWatchRuntime:
 
         except BaseException as loop_exc:
             if start_error is None and run_error is None:
-                run_error = loop_exc
+                if isinstance(loop_exc, SourceWatchRuntimeError):
+                    run_error = loop_exc
+                elif isinstance(loop_exc, Exception):
+                    wrap_err = SourceWatchRuntimeError(
+                        SourceWatchRuntimeReason.EVENT_DELIVERY_FAILED
+                        if loop_exc is self._async_error
+                        else SourceWatchRuntimeReason.SOURCE_READ_FAILED
+                    )
+                    wrap_err.__cause__ = loop_exc
+                    run_error = wrap_err
+                else:
+                    run_error = loop_exc
 
         finally:
             # 6. Teardown: stop event admission and observer, join all threads
@@ -824,15 +835,7 @@ class SourceWatchRuntime:
                     ordered_errors.append(final_async_err)
 
             for te in teardown_errors:
-                if not any(
-                    e is te
-                    or (
-                        getattr(e, "__cause__", None) is not None
-                        and getattr(e, "__cause__", None)
-                        is getattr(te, "__cause__", None)
-                    )
-                    for e in ordered_errors
-                ):
+                if not any(e is te for e in ordered_errors):
                     ordered_errors.append(te)
 
             # Update final terminal state

@@ -298,8 +298,8 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
     builder1 = SyntheticXlsxBuilder()
     row1 = _sample_buy_sell_row_data(u1, 2)
     row2 = _sample_buy_sell_row_data(u2, 3)
-    row1["G"] = "100"
-    row2["G"] = "200"
+    row1["G"] = 100
+    row2["G"] = 200
     builder1.add_sheet_rows("خرید-فروش", [row1, row2])
     builder1.add_sheet_rows(
         "دریافت-پرداخت",
@@ -363,12 +363,14 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         assert result_event.wait(timeout=10.0)
         result_event.clear()
 
-        # Generation 3: Raw edit (modifying amount on row1 from 100 to 999)
+        # Generation 3: Formula and cache-only XML modification (identical raw values)
         time.sleep(0.5)
-        row1_edited = dict(row1)
-        row1_edited["G"] = "999"
+        formula_row = {
+            "__row_num__": 10,
+            "F": {"f": "SUM(F2:F3)", "v": "300"},
+        }
         builder3 = SyntheticXlsxBuilder()
-        builder3.add_sheet_rows("خرید-فروش", [row1_edited, row2])
+        builder3.add_sheet_rows("خرید-فروش", [row1, row2, formula_row])
         builder3.add_sheet_rows(
             "دریافت-پرداخت",
             [_sample_receipts_payments_row_data(_make_uuid7(b"u_rp"), 2)],
@@ -386,10 +388,34 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         assert result_event.wait(timeout=10.0)
         result_event.clear()
 
+        # Generation 4: Raw edit (modifying amount on row1 from 100 to 999)
+        time.sleep(0.5)
+        row1_edited = dict(row1)
+        row1_edited["G"] = "999"
+        builder4 = SyntheticXlsxBuilder()
+        builder4.add_sheet_rows("خرید-فروش", [row1_edited, row2])
+        builder4.add_sheet_rows(
+            "دریافت-پرداخت",
+            [_sample_receipts_payments_row_data(_make_uuid7(b"u_rp"), 2)],
+        )
+        builder4.add_sheet_rows(
+            "ورود-خروج",
+            [_sample_inventory_movements_row_data(_make_uuid7(b"u_im"), 2)],
+        )
+        builder4.add_sheet_rows(
+            "لیست کسبه",
+            [_sample_business_parties_row_data(_make_uuid7(b"u_bp"), 2)],
+        )
+        src.write_bytes(builder4.build_bytes())
+
+        assert result_event.wait(timeout=10.0)
+        result_event.clear()
+
         with lock:
             snap1 = results[0].snapshot
             snap2 = results[1].snapshot
             snap3 = results[2].snapshot
+            snap4 = results[3].snapshot
 
         # 1. Run WP-04 Change Planner from snap1
         plan1 = plan_source_changes(snap1)
@@ -415,9 +441,19 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         for p_item in plan_same.items:
             assert p_item.action == PlanAction.UNCHANGED
 
-        # 3. Plan changes from snap3 (raw edit on row 1) against snap1
+        # 3. Plan changes from snap3 (formula/cache-only modification) against snap1
+        # prior state -> 0 changes
+        plan_formula = plan_source_changes(snap3, prior_states)
+        assert plan_formula.total_counts.unchanged_count == 5
+        assert plan_formula.total_counts.insert_count == 0
+        assert plan_formula.total_counts.edit_count == 0
+        assert plan_formula.total_counts.void_count == 0
+        for p_item in plan_formula.items:
+            assert p_item.action == PlanAction.UNCHANGED
+
+        # 4. Plan changes from snap4 (raw edit on row 1) against snap1
         # prior state -> 1 EDIT, 4 UNCHANGED
-        plan_edit = plan_source_changes(snap3, prior_states)
+        plan_edit = plan_source_changes(snap4, prior_states)
         assert plan_edit.total_counts.unchanged_count == 4
         assert plan_edit.total_counts.edit_count == 1
         assert plan_edit.total_counts.insert_count == 0

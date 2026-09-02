@@ -11,20 +11,30 @@
 
 ## Scope
 
-Delivers the managed source watcher and serial read runtime under ADR-0011 and WP-08:
+Delivers the managed source watcher and serial read runtime under ADR-0011 and WP-08, remediated for all review findings (R1 through R8):
 1. **Public API & Version:** Implemented and exported `SOURCE_WATCH_RUNTIME_VERSION = "source-watch-runtime.v1"`, `SourceWatchRuntime`, `SourceWatchRuntimeState`, `SourceWatchRuntimeReason`, `SourceWatchRuntimeError`, and frozen `SourceWatchRuntimeView`.
-2. **Lexical Validation & Non-Containment:** Strict constructor validation of `source_path` (.xlsx, non-lock `~$`, absolute, rejecting relative `'..'`/`'.'`) and `snapshot_root` with cross-platform containment enforcement ensuring `snapshot_root` is strictly outside the watched directory.
+2. **Lexical Validation & Non-Containment:** Strict constructor validation of `source_path` (.xlsx, non-lock `~$`, absolute, rejecting relative segments `'..'`/`'.'`) and `snapshot_root` with cross-platform containment enforcement.
 3. **Table-Driven Watchdog Event Adapter:** Single `dispatch()` handler mapping file creations, modifications, deletions, and moves to `SaveImportCoordinator` notices; safely ignores directory events, temporary files, conflict files, read-only events, and unknown events (`future_event`) without filesystem I/O.
-4. **Debounced Coordinator Runtime Loop:** Driver coordinates serial snapshot acquisition and reading through `read_due_source`; enqueues an initial `MODIFIED` hint upon startup to discover preexisting files; uses a 1.0s maximum idle wait for liveness checking.
+4. **Debounced Coordinator Runtime Loop:** Driver coordinates serial snapshot acquisition and reading through `read_due_source`; enqueues an initial `MODIFIED` hint upon startup; uses a 1.0s maximum idle wait for liveness checking.
 5. **Synchronous Caller-Thread Delivery:** Delivers successful reader snapshots synchronously to the consumer on the run caller's thread after clean lease exit; drains active cycles gracefully upon `request_stop()`.
-6. **Thread Lifecycle & Error Grouping:** Strict ownership, joining, and teardown of watchdog observer threads; multi-failure preservation via `ExceptionGroup` and `BaseExceptionGroup` preserving root causes, raw BaseExceptions, and ordered failure identities.
-7. **Native OS Integration:** Proves real filesystem watcher responsiveness under Linux and Windows directory structures for in-place saves, atomic replaces, missing-source creation, and composition with the independent WP-04 Planner oracle.
+6. **Thread Lifecycle & Multi-Failure Grouping (R1/R2):** Strict worker tracking and joined teardown; deduplication strictly on exact instance identities, preserving independent errors with shared causes in `[run_error, async_error, *teardown_errors]` order; raw `BaseException` (like `KeyboardInterrupt`) preserved without wrapping.
+7. **Native OS Integration & WP-04 Composition (WR-15..17):** Real filesystem watcher responsiveness for in-place saves, atomic replaces, missing-source creation, and 4 distinct generations including Generation 3 Formula/Cache XML verified against independent WP-04 Planner oracle (0 changes).
 
 ## Roadmap traceability
 
 - **Decisions Implemented:** O-31 (Isolated snapshot lifecycle), O-53 (Windows Local Agent stack / execution architecture), O-70 (Streaming XLSX source reader), O-71 (Bounded memory & linear copy), O-72 (Save debounce & coalescing state machine), O-73 (Managed source watcher & runtime lifecycle), ADR-0011 (Source watch runtime architecture).
 - **Roadmap Section 5.1 & 19.1:** Connects filesystem notifications to the save-import coordinator and read pipeline, establishing the native watcher runtime boundary for Phase 1.
 - **Evidence Status:** Recorded under `test-results.txt` and `acceptance-matrix.md`.
+
+## Review findings resolution summary (Round 2)
+
+| Review Item | Description & Root Cause | Resolution |
+| :--- | :--- | :--- |
+| **R2.a** | Independent failures with shared `__cause__` were dropped by cause equality check. | Deduplication in `source_watch_runtime.py` updated to check exact exception instances (`e is te`). Both `[driver_ki, stop_se]` preserved in `BaseExceptionGroup`. |
+| **R2.b** | Async error during start was returned raw instead of wrapped in `EVENT_DELIVERY_FAILED`. | `self._async_error` is wrapped in `SourceWatchRuntimeError(EVENT_DELIVERY_FAILED, __cause__=original_error)` and deduplicated against teardown stop failures. |
+| **R2.c** | Coordinator init constructor catch converted `KeyboardInterrupt` to `INVALID_POLICY`. | Catch boundary changed to `except Exception:`, passing `KeyboardInterrupt` and raw `BaseException` instances through raw. |
+| **R7** | Missing barrier synchronization, burst blocking phases, reader rejection retry semantics, and formula/cache XML generation. | `test_wr07` rewritten with `threading.Barrier`; `test_wr08` tests 2,000 burst notices across all 4 blocking phases; `test_wr09` tests reader rejection retry; `test_wr17` generates Generation 3 formula/cache XML and asserts 0 changes against WP-04 Planner oracle. |
+| **R8** | Reconstruct handoff bundle from raw execution logs, exact 21 node IDs, accurate git SHA via `git rev-parse HEAD`, separate native vs CI status. | Handoff regenerated with exact raw logs, node IDs, benchmark measurements, and precise file rollback instructions. |
 
 ## Changed files
 
@@ -49,10 +59,10 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 4. `uv run ruff check .` (Exit 0, all checks passed)
 5. `uv run mypy .` (Exit 0, 28 source files checked)
 6. `uv run mypy --platform win32 .` (Exit 0, 28 source files checked)
-7. `uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v` (Exit 0, 21 passed in 24.81s)
-8. `uv run pytest -v` (Exit 0, 333 passed, 2 skipped in 61.87s)
-9. `uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s` (Exit 0, 11.38s / 61.93 MiB)
-10. `uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s` (Exit 0, 11.41s / 61.61 MiB)
+7. `uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v` (Exit 0, 21 passed in 27.50s)
+8. `uv run pytest -v` (Exit 0, 333 passed, 2 skipped in 65.82s)
+9. `uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s` (Exit 0, 11.06s / 61.52 MiB)
+10. `uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s` (Exit 0, 12.08s / 61.40 MiB)
 11. `git diff --check origin/main...HEAD` (Exit 0, 0 whitespace errors)
 12. `git ls-files | grep -E "(\.xlsx$|\.pdf$|\.db$|\.sqlite$|\.env$|secrets|credentials)"` (Exit 0 on check, 0 prohibited files)
 13. `git grep -i -E "password|secret|api_key|private_key" -- apps/` (Exit 0 on check, 0 sensitive credentials)
@@ -62,7 +72,7 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 
 - **Full repository suite:** 333 tests passing cleanly on Linux native (2 platform-conditional skipped Windows-handle tests; 335 collected total).
 - **Watcher Runtime tests:** 21 dedicated unit, deterministic barrier, native OS observer, lifecycle race, and composition tests.
-- **15,000-row streaming benchmarks:** WP-05 Reader at 11.38s duration / 61.93 MiB peak RSS; WP-06 Acquisition at 11.41s duration / 61.61 MiB peak RSS (strictly within 15.0s / 128.0 MiB ceilings).
+- **15,000-row streaming benchmarks:** WP-05 Reader at 11.06s duration / 61.52 MiB peak RSS; WP-06 Acquisition at 12.08s duration / 61.40 MiB peak RSS (strictly within 15.0s / 128.0 MiB ceilings).
 - **Windows Platform:** Static type safety validated via `mypy --platform win32` (Exit 0); native runtime execution is pending independent Codex CI execution on PR.
 - Direct execution logs and metrics recorded in `test-results.txt`.
 
@@ -71,7 +81,7 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 - **Clock Source:** Default clock uses `time.monotonic_ns()`. `FakeClock` used in test fixtures for deterministic time control.
 - **Observer Ownership:** `SourceWatchRuntime` creates, schedules, starts, stops, and joins its private `watchdog.observers.Observer` instance and captured worker emitters. Construction performs zero thread allocations.
 - **Single-use Lifecycle:** Each `SourceWatchRuntime` instance supports exactly one execution of `run()`. Terminal instances (`STOPPED`, `FAILED`) reject subsequent `run()` invocations.
-- **Remediation R1-R8:** All items from the first Codex review round (worker tracking before start, raw BaseException preservation, expected worker liveness, watchdog dispatch override, lexical path relative segment rejection, atomic teardown view invariant, and full WR-01..18 test coverage) have been fully addressed and tested.
+- **Remediation R1-R8:** All items from Codex review rounds 1 and 2 (worker tracking before start, raw BaseException preservation, expected worker liveness, watchdog dispatch override, lexical path relative segment rejection, atomic teardown view invariant, shared cause deduplication, async start error wrapping, coordinator constructor cancellation, barrier tests, 2,000 notice burst blocking, reader rejection retry, formula/cache XML generation with WP-04 planner oracle, and full WR-01..18 test coverage) have been fully addressed and tested.
 
 ## Risks
 
@@ -80,8 +90,13 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 
 ## Rollback
 
-1. Revert changes on `antigravity/phase-01-source-watch-runtime` back to baseline `c7520c94606f37720f3e023b753e36d1c1f433a3`.
-2. Clean untracked runtime and test artifacts.
+To revert this work package without affecting unrelated files:
+1. Revert target files to baseline `c7520c94606f37720f3e023b753e36d1c1f433a3`:
+   - `git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/src/accounting_local_agent/source_watch_runtime.py`
+   - `git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/src/accounting_local_agent/__init__.py`
+   - `git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- apps/local_agent/README.md`
+   - `git rm -f tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py`
+   - `git rm -rf handoffs/phase-01/wp-08-source-watch-runtime/`
 
 ## Protected assets
 
@@ -93,4 +108,4 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 
 ## Stop state
 
-Implementation, remediation of review items R1 through R8, native OS observer tests, and test verification for WP-08 are completed and stopped for handoff review. Gate G1 remains `OPEN / IN PROGRESS`. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation, remediation of all review items (R1 through R8), native OS observer tests, and test verification for WP-08 are completed and stopped for handoff review. Gate G1 remains `OPEN / IN PROGRESS`. No Gate approval, merge, push, deploy, or next Work Package has been performed.

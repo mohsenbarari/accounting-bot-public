@@ -27,6 +27,7 @@ from typing import Any, cast
 import pytest
 from accounting_local_agent import (
     SOURCE_WATCH_RUNTIME_VERSION,
+    SaveCoordinatorState,
     SaveEventKind,
     SourceWatchRuntime,
     SourceWatchRuntimeError,
@@ -36,6 +37,9 @@ from accounting_local_agent import (
     XlsxSourceReadResult,
 )
 from accounting_local_agent.source_watch_runtime import _WatchdogEventAdapter
+from accounting_local_agent.xlsx_source_reader import (
+    XlsxSourceReadError,
+)
 from test_xlsx_source_reader import (
     SyntheticXlsxBuilder,
     _make_uuid7,
@@ -695,7 +699,16 @@ def test_wr06_fake_clock_deadline_boundaries_and_liveness_wait(
         results.append(r)
         runtime.request_stop()
 
-    run_thread = threading.Thread(target=lambda: runtime.run(consumer))
+    runner_err: BaseException | None = None
+
+    def runner() -> None:
+        nonlocal runner_err
+        try:
+            runtime.run(consumer)
+        except BaseException as e:
+            runner_err = e
+
+    run_thread = threading.Thread(target=runner)
     run_thread.start()
 
     try:
@@ -714,6 +727,7 @@ def test_wr06_fake_clock_deadline_boundaries_and_liveness_wait(
 
         run_thread.join(timeout=5.0)
         assert not run_thread.is_alive()
+        assert runner_err is None
         assert len(results) == 1
     finally:
         runtime.request_stop()
@@ -727,9 +741,9 @@ def test_wr06_fake_clock_deadline_boundaries_and_liveness_wait(
 
 
 def test_wr07_barrier_predicates_and_stop_race_resolution(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """WR-07: Predicate re-checking prevents lost wakes; stop race resolved."""
+    """WR-07: Barrier-synchronized stop vs admission races with active assertions."""
     src_dir = tmp_path / "watch_dir"
     src_dir.mkdir()
     src = src_dir / "workbook.xlsx"
@@ -737,30 +751,129 @@ def test_wr07_barrier_predicates_and_stop_race_resolution(
     snap_root = tmp_path / "snapshots"
     snap_root.mkdir()
 
-    clock = FakeClock()
-    mock_obs = MockObserver()
-    runtime = SourceWatchRuntime(
+    # -----------------------------------------------------------------------
+    # Case A: Stop wins before cycle admission
+    # -----------------------------------------------------------------------
+    clock_a = FakeClock()
+    mock_obs_a = MockObserver()
+    runtime_a = SourceWatchRuntime(
         src,
         snapshot_root=snap_root,
         observation_interval_seconds=0.001,
-        _observer_factory=lambda: mock_obs,
-        _time_source=clock,
+        _observer_factory=lambda: mock_obs_a,
+        _time_source=clock_a,
     )
 
-    run_thread = threading.Thread(target=lambda: runtime.run(lambda r: None))
-    run_thread.start()
+    barrier_pred = threading.Barrier(2)
+    original_view = runtime_a._coordinator.view
+
+    def hooked_view_a() -> Any:
+        view = original_view()
+        if view.state == SaveCoordinatorState.WAITING:
+            try:
+                barrier_pred.wait(timeout=2.0)
+            except threading.BrokenBarrierError:
+                pass
+        return view
+
+    monkeypatch.setattr(runtime_a._coordinator, "view", hooked_view_a)
+
+    delivered_a: list[XlsxSourceReadResult] = []
+    err_a: BaseException | None = None
+
+    def runner_a() -> None:
+        nonlocal err_a
+        try:
+            runtime_a.run(lambda r: delivered_a.append(r))
+        except BaseException as e:
+            err_a = e
+
+    thread_a = threading.Thread(target=runner_a)
+    thread_a.start()
+
+    try:
+        # Wait until runtime is about to inspect predicate
+        barrier_pred.wait(timeout=2.0)
+        # Request stop right between predicate inspection and wait
+        runtime_a.request_stop()
+
+        thread_a.join(timeout=5.0)
+        assert not thread_a.is_alive()
+        assert err_a is None
+        assert runtime_a.view().state == SourceWatchRuntimeState.STOPPED
+        assert len(delivered_a) == 0
+    finally:
+        runtime_a.request_stop()
+        thread_a.join(timeout=1.0)
+        mock_obs_a.stop()
+
+    # -----------------------------------------------------------------------
+    # Case B: Cycle admission wins; stop during cycle drains active delivery
+    # -----------------------------------------------------------------------
+    clock_b = FakeClock()
+    mock_obs_b = MockObserver()
+    runtime_b = SourceWatchRuntime(
+        src,
+        snapshot_root=snap_root,
+        observation_interval_seconds=0.001,
+        _observer_factory=lambda: mock_obs_b,
+        _time_source=clock_b,
+    )
+
+    barrier_cycle = threading.Barrier(2)
+    from accounting_local_agent.save_import_coordinator import read_due_source
+
+    orig_read_due = read_due_source
+
+    def hooked_read_due(*args: Any, **kwargs: Any) -> Any:
+        try:
+            barrier_cycle.wait(timeout=2.0)
+        except threading.BrokenBarrierError:
+            pass
+        return orig_read_due(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "accounting_local_agent.source_watch_runtime.read_due_source",
+        hooked_read_due,
+    )
+
+    delivered_b: list[XlsxSourceReadResult] = []
+    err_b: BaseException | None = None
+
+    def runner_b() -> None:
+        nonlocal err_b
+        try:
+            runtime_b.run(lambda r: delivered_b.append(r))
+        except BaseException as e:
+            err_b = e
+
+    thread_b = threading.Thread(target=runner_b)
+    thread_b.start()
 
     try:
         time.sleep(0.05)
-        # Request stop concurrent with condition wait
-        runtime.request_stop()
-        run_thread.join(timeout=5.0)
-        assert not run_thread.is_alive()
-        assert runtime.view().state == SourceWatchRuntimeState.STOPPED
+        clock_b.advance_seconds(3.0)
+        with runtime_b._lifecycle_lock:
+            runtime_b._condition.notify_all()
+
+        # Hold runner inside active admitted cycle
+        barrier_cycle.wait(timeout=2.0)
+        # While admitted cycle is held, assert active cycle is running
+        assert runtime_b._active_cycle_running is True
+
+        # Concurrently request stop
+        runtime_b.request_stop()
+        assert runtime_b.view().state == SourceWatchRuntimeState.STOPPING
+
+        thread_b.join(timeout=5.0)
+        assert not thread_b.is_alive()
+        assert err_b is None
+        assert len(delivered_b) == 1
+        assert runtime_b.view().state == SourceWatchRuntimeState.STOPPED
     finally:
-        runtime.request_stop()
-        run_thread.join(timeout=1.0)
-        mock_obs.stop()
+        runtime_b.request_stop()
+        thread_b.join(timeout=1.0)
+        mock_obs_b.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -798,7 +911,16 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
         consumer_entered.set()
         consumer_release.wait(timeout=5.0)
 
-    run_thread = threading.Thread(target=lambda: runtime.run(blocking_consumer))
+    runner_err: BaseException | None = None
+
+    def runner() -> None:
+        nonlocal runner_err
+        try:
+            runtime.run(blocking_consumer)
+        except BaseException as e:
+            runner_err = e
+
+    run_thread = threading.Thread(target=runner)
     run_thread.start()
 
     try:
@@ -825,6 +947,7 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
         runtime.request_stop()
         run_thread.join(timeout=5.0)
         assert not run_thread.is_alive()
+        assert runner_err is None
         # Exactly 2 deliveries: initial + 1 coalesced follow-up
         assert len(results) == 2
     finally:
@@ -840,15 +963,18 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
 
 
 def test_wr09_driver_error_handling_and_retry_preservation(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """WR-09: Direct NotReady retries; direct reader rejection waits."""
+    """WR-09: Direct NotReady retries; reader rejection preserves follow-up."""
     src_dir = tmp_path / "watch_dir"
     src_dir.mkdir()
     src = src_dir / "workbook.xlsx"
     snap_root = tmp_path / "snapshots"
     snap_root.mkdir()
 
+    # -----------------------------------------------------------------------
+    # Case 1: Direct NotReady retries automatically
+    # -----------------------------------------------------------------------
     clock = FakeClock()
     mock_obs = MockObserver()
     runtime = SourceWatchRuntime(
@@ -892,6 +1018,69 @@ def test_wr09_driver_error_handling_and_retry_preservation(
         runtime.request_stop()
         run_thread.join(timeout=1.0)
         mock_obs.stop()
+
+    # -----------------------------------------------------------------------
+    # Case 2: Reader rejection with follow-up notice preserves follow-up
+    # -----------------------------------------------------------------------
+    clock2 = FakeClock()
+    mock_obs2 = MockObserver()
+    runtime2 = SourceWatchRuntime(
+        src,
+        snapshot_root=snap_root,
+        observation_interval_seconds=0.001,
+        _observer_factory=lambda: mock_obs2,
+        _time_source=clock2,
+    )
+
+    attempt_count = 0
+    from accounting_local_agent.xlsx_source_reader import (
+        read_xlsx_source_snapshot,
+    )
+
+    orig_read_snap = read_xlsx_source_snapshot
+
+    def hooked_read_snap(path: Path) -> Any:
+        nonlocal attempt_count
+        attempt_count += 1
+        if attempt_count == 1:
+            raise XlsxSourceReadError("XLSX_CORRUPT_ZIP_CONTAINER")
+        return orig_read_snap(path)
+
+    monkeypatch.setattr(
+        "accounting_local_agent.save_import_coordinator.read_xlsx_source_snapshot",
+        hooked_read_snap,
+    )
+
+    results2: list[XlsxSourceReadResult] = []
+    run_thread2 = threading.Thread(
+        target=lambda: runtime2.run(lambda r: results2.append(r))
+    )
+    run_thread2.start()
+
+    try:
+        time.sleep(0.05)
+        # Trigger 1st attempt (fails with reader error)
+        clock2.advance_seconds(3.0)
+        with runtime2._lifecycle_lock:
+            runtime2._condition.notify_all()
+        time.sleep(0.05)
+        assert len(results2) == 0
+
+        # Send fresh notice for follow-up
+        runtime2._on_adapter_event(SaveEventKind.MODIFIED, src, None)
+        clock2.advance_seconds(3.0)
+        with runtime2._lifecycle_lock:
+            runtime2._condition.notify_all()
+
+        time.sleep(0.05)
+        runtime2.request_stop()
+        run_thread2.join(timeout=5.0)
+        assert not run_thread2.is_alive()
+        assert len(results2) == 1
+    finally:
+        runtime2.request_stop()
+        run_thread2.join(timeout=1.0)
+        mock_obs2.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -1045,6 +1234,7 @@ def test_wr12_partial_startup_failure_teardown(tmp_path: Path) -> None:
     src = tmp_path / "non_existent_dir" / "workbook.xlsx"
     snap_root = tmp_path / "snapshots"
 
+    # 1. Observer factory failure
     def crashing_factory() -> MockObserver:
         raise OSError("Injected observer allocation failure")
 
@@ -1063,6 +1253,40 @@ def test_wr12_partial_startup_failure_teardown(tmp_path: Path) -> None:
     assert exc_info.value.reason == SourceWatchRuntimeReason.OBSERVER_START_FAILED
     assert isinstance(exc_info.value.__cause__, OSError)
     assert runtime.view().state == SourceWatchRuntimeState.FAILED
+
+    # 2. Partial start with worker thread started before failure
+    started_worker = MockEmitter()
+
+    class PartialFailingObserver(MockObserver):
+        def schedule(self, *args: Any, **kwargs: Any) -> Any:
+            super().schedule(*args, **kwargs)
+            self._mock_emitters.add(started_worker)
+            return "mock_watch"
+
+        def start(self) -> None:
+            started_worker.start()
+            self._mock_emitters.clear()
+            raise OSError("Injected start failure after worker started")
+
+    runtime_partial = SourceWatchRuntime(
+        src,
+        snapshot_root=snap_root,
+        observation_interval_seconds=0.05,
+        _observer_factory=PartialFailingObserver,
+    )
+
+    try:
+        with pytest.raises(
+            SourceWatchRuntimeError, match="Failed to start observer"
+        ) as exc_info2:
+            runtime_partial.run(lambda r: None)
+
+        assert exc_info2.value.reason == SourceWatchRuntimeReason.OBSERVER_START_FAILED
+        assert runtime_partial.view().state == SourceWatchRuntimeState.FAILED
+        assert not started_worker.is_alive()
+    finally:
+        started_worker.stop()
+        started_worker.join(timeout=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1147,7 +1371,7 @@ def test_wr14_multi_failure_preservation_and_exception_groups(
     snap_root.mkdir()
 
     # -----------------------------------------------------------------------
-    # 1. Raw BaseException (KeyboardInterrupt) in factory, consumer, and stop
+    # 1. Raw BaseException (KeyboardInterrupt) in factory, coordinator init, consumer
     # -----------------------------------------------------------------------
     # 1a. KeyboardInterrupt in factory raises raw KeyboardInterrupt directly
     runtime_ki_fac = SourceWatchRuntime(
@@ -1199,150 +1423,110 @@ def test_wr14_multi_failure_preservation_and_exception_groups(
         em.join(timeout=1.0)
 
     # -----------------------------------------------------------------------
-    # 2. Multiple simultaneous standard Exception failures -> ExceptionGroup
+    # 2. Shared cause between run error and teardown error (R2.a verification)
     # -----------------------------------------------------------------------
-    clock_multi = FakeClock()
-    mock_obs_multi = MockObserver()
-    runtime_multi = SourceWatchRuntime(
+    clock_shared = FakeClock()
+    mock_obs_shared = MockObserver()
+    runtime_shared = SourceWatchRuntime(
         src,
         snapshot_root=snap_root,
         observation_interval_seconds=0.001,
-        _observer_factory=lambda: mock_obs_multi,
-        _time_source=clock_multi,
+        _observer_factory=lambda: mock_obs_shared,
+        _time_source=clock_shared,
     )
 
-    consumer_entered = threading.Event()
-    consumer_release = threading.Event()
+    shared_cause = OSError("Shared mock OS cause")
+    driver_ki = KeyboardInterrupt("Driver cancellation")
+    driver_ki.__cause__ = shared_cause
+    stop_se = SystemExit("Stop exit failure")
+    stop_se.__cause__ = shared_cause
 
-    # Injected consumer failure
-    def crashing_consumer(r: XlsxSourceReadResult) -> None:
-        consumer_entered.set()
-        consumer_release.wait(timeout=5.0)
-        raise ValueError("Injected consumer failure")
+    import accounting_local_agent.source_watch_runtime
 
-    # Injected teardown stop failure
-    def failing_stop() -> None:
-        mock_obs_multi._stop_event.set()
-        raise RuntimeError("Injected observer stop failure")
+    def failing_read_due_shared(*args: Any, **kwargs: Any) -> Any:
+        raise driver_ki
 
-    monkeypatch.setattr(mock_obs_multi, "stop", failing_stop)
+    monkeypatch.setattr(
+        accounting_local_agent.source_watch_runtime,
+        "read_due_source",
+        failing_read_due_shared,
+    )
 
-    captured_group: BaseException | None = None
+    def failing_stop_shared() -> None:
+        mock_obs_shared._stop_event.set()
+        raise stop_se
 
-    def multi_runner() -> None:
-        nonlocal captured_group
+    monkeypatch.setattr(mock_obs_shared, "stop", failing_stop_shared)
+
+    captured_shared_group: BaseException | None = None
+
+    def shared_runner() -> None:
+        nonlocal captured_shared_group
         try:
-            runtime_multi.run(crashing_consumer)
+            runtime_shared.run(lambda r: None)
         except BaseException as e:
-            captured_group = e
+            captured_shared_group = e
 
-    run_thread_multi = threading.Thread(target=multi_runner)
-    run_thread_multi.start()
+    run_thread_shared = threading.Thread(target=shared_runner)
+    run_thread_shared.start()
 
     try:
         time.sleep(0.05)
-        # Advance clock to due deadline -> consumer enters
-        clock_multi.advance_seconds(3.0)
-        with runtime_multi._lifecycle_lock:
-            runtime_multi._condition.notify_all()
+        clock_shared.advance_seconds(3.0)
+        with runtime_shared._lifecycle_lock:
+            runtime_shared._condition.notify_all()
 
-        assert consumer_entered.wait(timeout=5.0)
+        run_thread_shared.join(timeout=5.0)
+        assert not run_thread_shared.is_alive()
 
-        # While consumer is running, inject async adapter error
-        async_err = OSError("Injected async background error")
-        runtime_multi._on_adapter_error(async_err)
+        assert captured_shared_group is not None
+        assert isinstance(captured_shared_group, BaseExceptionGroup)
+        assert len(captured_shared_group.exceptions) == 2
 
-        # Release consumer to crash
-        consumer_release.set()
-        run_thread_multi.join(timeout=5.0)
-        assert not run_thread_multi.is_alive()
-
-        assert captured_group is not None
-        assert isinstance(captured_group, ExceptionGroup)
-        assert len(captured_group.exceptions) == 3
-
-        # Order must be: run_error (consumer), async_error, teardown_error (stop)
-        e0 = captured_group.exceptions[0]
-        e1 = captured_group.exceptions[1]
-        e2 = captured_group.exceptions[2]
-
-        assert isinstance(e0, SourceWatchRuntimeError)
-        assert e0.reason == SourceWatchRuntimeReason.CONSUMER_FAILED
-        assert isinstance(e0.__cause__, ValueError)
-
-        assert isinstance(e1, SourceWatchRuntimeError)
-        assert e1.reason == SourceWatchRuntimeReason.EVENT_DELIVERY_FAILED
-        assert isinstance(e1.__cause__, OSError)
-
-        assert isinstance(e2, SourceWatchRuntimeError)
-        assert e2.reason == SourceWatchRuntimeReason.SHUTDOWN_FAILED
-        assert isinstance(e2.__cause__, RuntimeError)
-
-        assert runtime_multi.view().state == SourceWatchRuntimeState.FAILED
+        # Both independent exceptions preserved in order despite shared cause
+        assert captured_shared_group.exceptions[0] is driver_ki
+        assert captured_shared_group.exceptions[1] is stop_se
+        assert captured_shared_group.exceptions[0].__cause__ is shared_cause
+        assert captured_shared_group.exceptions[1].__cause__ is shared_cause
+        assert runtime_shared.view().state == SourceWatchRuntimeState.FAILED
     finally:
-        consumer_release.set()
-        mock_obs_multi._stop_event.set()
-        for em in mock_obs_multi.emitters:
+        mock_obs_shared._stop_event.set()
+        for em in mock_obs_shared.emitters:
             em.stop()
             em.join(timeout=1.0)
-            assert not em.is_alive()
 
     # -----------------------------------------------------------------------
-    # 3. Mixed BaseExceptionGroup (KeyboardInterrupt in consumer + Stop error)
+    # 3. Async error during Start wrapped properly (R2.b verification)
     # -----------------------------------------------------------------------
-    clock_mixed = FakeClock()
-    mock_obs_mixed = MockObserver()
-    runtime_mixed = SourceWatchRuntime(
+    class StartAsyncErrorObserver(MockObserver):
+        def start(self) -> None:
+            super().start()
+            # Dispatch event during start where coordinator raises RuntimeError
+            if self.scheduled_handlers:
+                handler = self.scheduled_handlers[0][0]
+                handler.on_any_event(FileModifiedEvent(str(src)))
+
+    runtime_async_start = SourceWatchRuntime(
         src,
         snapshot_root=snap_root,
-        observation_interval_seconds=0.001,
-        _observer_factory=lambda: mock_obs_mixed,
-        _time_source=clock_mixed,
+        observation_interval_seconds=0.05,
+        _observer_factory=StartAsyncErrorObserver,
     )
 
-    def failing_stop_mixed() -> None:
-        mock_obs_mixed._stop_event.set()
-        raise RuntimeError("Injected observer stop failure in mixed")
+    custom_async_cause = RuntimeError("Custom coordinator callback marker")
 
-    monkeypatch.setattr(mock_obs_mixed, "stop", failing_stop_mixed)
+    def failing_coordinator_notify(*args: Any, **kwargs: Any) -> Any:
+        raise custom_async_cause
 
-    captured_mixed_group: BaseException | None = None
+    monkeypatch.setattr(
+        runtime_async_start._coordinator, "notify", failing_coordinator_notify
+    )
 
-    def mixed_runner() -> None:
-        nonlocal captured_mixed_group
-        try:
-            runtime_mixed.run(ki_consumer)
-        except BaseException as e:
-            captured_mixed_group = e
+    with pytest.raises(SourceWatchRuntimeError) as async_start_info:
+        runtime_async_start.run(lambda r: None)
 
-    run_thread_mixed = threading.Thread(target=mixed_runner)
-    run_thread_mixed.start()
-
-    try:
-        time.sleep(0.05)
-        clock_mixed.advance_seconds(3.0)
-        with runtime_mixed._lifecycle_lock:
-            runtime_mixed._condition.notify_all()
-        run_thread_mixed.join(timeout=5.0)
-        assert not run_thread_mixed.is_alive()
-
-        assert captured_mixed_group is not None
-        assert isinstance(captured_mixed_group, BaseExceptionGroup)
-        assert len(captured_mixed_group.exceptions) == 2
-
-        # 1st is raw KeyboardInterrupt, 2nd is SourceWatchRuntimeError(SHUTDOWN_FAILED)
-        m0 = captured_mixed_group.exceptions[0]
-        m1 = captured_mixed_group.exceptions[1]
-
-        assert isinstance(m0, KeyboardInterrupt)
-        assert isinstance(m1, SourceWatchRuntimeError)
-        assert m1.reason == SourceWatchRuntimeReason.SHUTDOWN_FAILED
-        assert isinstance(m1.__cause__, RuntimeError)
-
-        assert runtime_mixed.view().state == SourceWatchRuntimeState.FAILED
-    finally:
-        mock_obs_mixed._stop_event.set()
-        for em in mock_obs_mixed.emitters:
-            em.stop()
-            em.join(timeout=1.0)
-            assert not em.is_alive()
+    assert (
+        async_start_info.value.reason == SourceWatchRuntimeReason.EVENT_DELIVERY_FAILED
+    )
+    assert async_start_info.value.__cause__ is custom_async_cause
+    assert runtime_async_start.view().state == SourceWatchRuntimeState.FAILED

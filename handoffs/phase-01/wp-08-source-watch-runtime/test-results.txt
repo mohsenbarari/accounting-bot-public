@@ -1,6 +1,6 @@
 WORK PACKAGE: WP-08 Managed source watcher and serial read runtime
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-02T14:24:00Z
+RECORDED AT UTC: 2026-09-02T15:37:30Z
 
 ================================================================================
 1. SYNCHRONIZATION AND DEPENDENCY CHECK
@@ -39,7 +39,7 @@ Exit Code: 0
 4. WP-08 UNIT & NATIVE TEST SUITES
 ================================================================================
 $ uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v
-=================== test session starts ====================
+=================== test session starts ===================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
@@ -69,14 +69,14 @@ tests/test_source_watch_runtime_native.py::test_wr15_native_startup_read_and_inp
 tests/test_source_watch_runtime_native.py::test_wr16_native_absent_source_lifecycle_and_thread_cleanup PASSED [ 95%]
 tests/test_source_watch_runtime_native.py::test_wr17_end_to_end_wp04_planner_composition PASSED [100%]
 
-=================== 21 passed in 24.81s ====================
+=================== 21 passed in 27.50s ===================
 Exit Code: 0
 
 ================================================================================
 5. FULL REPOSITORY TEST SUITE REGRESSION RUN
 ================================================================================
 $ uv run pytest -v
-=================== test session starts ====================
+=================== test session starts ===================
 platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
@@ -85,45 +85,46 @@ plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
 collected 335 items
 
-tests/test_architecture_guard.py ..............      [  4%]
-tests/test_canonical_date.py ..........              [  7%]
-tests/test_canonical_hashing.py ..................   [ 12%]
-tests/test_imports.py .......                        [ 14%]
-tests/test_raw_input_contracts.py ...............    [ 19%]
-tests/test_save_import_coordinator.py .............. [ 23%]
-..........................                           [ 31%]
-tests/test_source_change_plan.py ................... [ 36%]
-......                                               [ 38%]
-tests/test_source_watch_runtime.py ................. [ 43%]
-.                                                    [ 43%]
-tests/test_source_watch_runtime_native.py ...        [ 44%]
-tests/test_xlsx_snapshot_acquisition.py ............ [ 48%]
-..................................................ss [ 66%]
-tests/test_xlsx_source_reader.py ................... [ 72%]
-..........................                           [ 80%]
+tests/test_architecture_guard.py ..............     [  4%]
+tests/test_canonical_date.py ..........             [  7%]
+tests/test_canonical_hashing.py ..................  [ 12%]
+tests/test_imports.py .......                       [ 14%]
+tests/test_raw_input_contracts.py ...............   [ 19%]
+tests/test_save_import_coordinator.py ............. [ 22%]
+...........................                         [ 31%]
+tests/test_source_change_plan.py .................. [ 36%]
+.......                                             [ 38%]
+tests/test_source_watch_runtime.py ................ [ 43%]
+..                                                  [ 43%]
+tests/test_source_watch_runtime_native.py ...       [ 44%]
+tests/test_xlsx_snapshot_acquisition.py ........... [ 48%]
+...............................                     [ 63%]
+..........ss                                        [ 66%]
+tests/test_xlsx_source_reader.py .................. [ 72%]
+....................                                [ 80%]
 tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 80%]
-......                                               [ 82%]
+......                                              [ 82%]
 tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 82%]
-.................................................... [ 98%]
-......                                               [100%]
+................................................... [ 97%]
+.......                                             [100%]
 
 ================= short test summary info ==================
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
-======== 333 passed, 2 skipped in 61.87s (0:01:01) =========
+======== 333 passed, 2 skipped in 65.82s (0:01:05) ========
 Exit Code: 0
 
 ================================================================================
 6. STREAMING PERFORMANCE AND MEMORY BENCHMARKS
 ================================================================================
 $ uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.3777s | baseline_current_rss_mib: 30.30 MiB | call_peak_rss_mib: 61.93 MiB | rows: 15000 | platform: linux
-1 passed in 13.02s (Limits: 15.0s, 128.0 MiB)
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.0609s | baseline_current_rss_mib: 30.16 MiB | call_peak_rss_mib: 61.52 MiB | rows: 15000 | platform: linux
+1 passed in 12.59s (Limits: 15.0s, 128.0 MiB)
 Exit Code: 0
 
 $ uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.4104s | baseline_current_rss_mib: 30.11 MiB | call_peak_rss_mib: 61.61 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 3164a73138642cca6a20a026b8c20239eb2357372f9af5c19fbd9306c0320e34 | platform: linux
-1 passed in 12.94s (Limits: 15.0s, 128.0 MiB)
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 12.0750s | baseline_current_rss_mib: 29.94 MiB | call_peak_rss_mib: 61.40 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 5651215e337471b6ff9b9830236b48347ed1b8b27defe27f19736614dcffa56d | platform: linux
+1 passed in 13.79s (Limits: 15.0s, 128.0 MiB)
 Exit Code: 0
 
 ================================================================================
@@ -146,5 +147,5 @@ FINAL SUMMARY
 - Native OS Integration Tests: 3 passed in `tests/test_source_watch_runtime_native.py`
 - Full Monorepo Test Suite: 333 passed, 2 skipped (Windows-specific handle locks)
 - Cross-Platform Type Safety: Both Linux and Win32 mypy passed with 0 errors
-- 15,000-Row Benchmarks: Duration ~11.4s (< 15s limit), Peak RSS ~62 MiB (< 128 MiB limit)
-- Verification Status: All WR-01 through WR-18 requirements verified and passing
+- 15,000-Row Benchmarks: Duration ~11.1s - 12.1s (< 15s limit), Peak RSS ~61.5 MiB (< 128 MiB limit)
+- Verification Status: All WR-01 through WR-18 and review items R1 through R8 verified and passing
