@@ -338,7 +338,7 @@ def _atomic_move_no_replace(src: Path, dst: Path) -> None:
         except (AttributeError, OSError) as exc:
             if isinstance(exc, FileExistsError):
                 raise
-            raise OSError(f"Linux atomic move failed: {exc}") from exc
+            raise OSError("Linux atomic move failed") from exc
     elif current_platform == "win32":
         try:
             wintypes = _get_wintypes()
@@ -366,7 +366,7 @@ def _atomic_move_no_replace(src: Path, dst: Path) -> None:
         except (AttributeError, OSError) as exc:
             if isinstance(exc, FileExistsError):
                 raise
-            raise OSError(f"Windows atomic move failed: {exc}") from exc
+            raise OSError("Windows atomic move failed") from exc
     else:
         raise OSError("Atomic no-replace move is not supported on this platform")
 
@@ -407,7 +407,7 @@ def _query_file_id_info_windows(kernel32: Any, handle: int) -> tuple[int, int]:
             ctypes.sizeof(info),
         )
     except Exception as exc:
-        raise OSError(f"GetFileInformationByHandleEx failed: {exc}") from exc
+        raise OSError("GetFileInformationByHandleEx failed") from exc
 
     if not success:
         err = _ctypes_provider.get_last_error()
@@ -452,7 +452,7 @@ def _create_and_anchor_lease_dir_windows(
         create_file_w.restype = wintypes.HANDLE
     except Exception as exc:
         raise XlsxSnapshotStorageError(
-            f"Failed to initialize WinAPI CreateFileW: {exc}"
+            "Failed to initialize WinAPI CreateFileW"
         ) from exc
 
     generic_read = 0x80000000
@@ -480,14 +480,15 @@ def _create_and_anchor_lease_dir_windows(
         )
     except Exception as exc:
         raise XlsxSnapshotStorageError(
-            f"CreateFileW invocation failed on lease directory: {exc}"
+            "CreateFileW invocation failed on lease directory"
         ) from exc
 
     if handle in (-1, invalid_handle_value, None) or handle == 0:
         err = _ctypes_provider.get_last_error()
-        raise XlsxSnapshotStorageError(
-            f"CreateFileW failed on lease directory with error {err}"
-        )
+        raw_err = OSError(f"CreateFileW failed on lease directory with error {err}")
+        storage_err = XlsxSnapshotStorageError("CreateFileW failed on lease directory")
+        storage_err.__cause__ = raw_err
+        raise storage_err from raw_err
 
     handle_int = int(handle)
     try:
@@ -499,21 +500,28 @@ def _create_and_anchor_lease_dir_windows(
         query_exc = (
             exc
             if isinstance(exc, XlsxSnapshotAcquisitionError)
-            else XlsxSnapshotStorageError(
-                f"Failed to query lease directory identity: {exc}"
-            )
+            else XlsxSnapshotStorageError("Failed to query lease directory identity")
         )
+        if query_exc is not exc:
+            query_exc.__cause__ = exc
+
         try:
             _close_windows_handle(handle_int)
         except Exception as close_exc:
             cln_err = (
                 close_exc
                 if isinstance(close_exc, XlsxSnapshotAcquisitionError)
-                else XlsxSnapshotCleanupError(
-                    f"Failed to close Windows handle {handle_int}: {close_exc}"
-                )
+                else XlsxSnapshotCleanupError("Failed to close lease directory anchor")
             )
-            cln_err.__cause__ = exc
+            if cln_err is not close_exc:
+                cln_err.__cause__ = close_exc
+
+            combined = _combine_exceptions(
+                "Failed to establish lease directory anchor",
+                [query_exc, cln_err],
+            )
+            if combined is not None:
+                raise combined from None
             raise query_exc from cln_err
         raise query_exc from exc
 
@@ -541,17 +549,18 @@ def _close_windows_handle(handle: int) -> None:
         close_h.restype = wintypes.BOOL
         ret = close_h(wintypes.HANDLE(handle))
     except Exception as exc:
-        cln_err = XlsxSnapshotCleanupError(
-            f"CloseHandle failed on handle {handle}: {exc}"
-        )
+        cln_err = XlsxSnapshotCleanupError("CloseHandle failed on handle")
         cln_err.__cause__ = exc
         raise cln_err from exc
 
     if not ret:
         err = _ctypes_provider.get_last_error()
-        raise XlsxSnapshotCleanupError(
-            f"CloseHandle failed on handle {handle} with error {err}"
+        raw_err = OSError(
+            f"CloseHandle WinAPI returned FALSE on handle with error {err}"
         )
+        cln_err = XlsxSnapshotCleanupError("CloseHandle failed on handle")
+        cln_err.__cause__ = raw_err
+        raise cln_err from raw_err
 
 
 def _get_path_observation(path: Path) -> _FileToken:
@@ -1473,7 +1482,7 @@ def open_stable_xlsx_snapshot(
                 _check_fd_observation(src_f.fileno(), obs2)
 
                 # We manage the descriptor lifecycle explicitly for candidate fstat
-                dst_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                dst_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
                 if hasattr(os, "O_NOFOLLOW"):
                     dst_flags |= os.O_NOFOLLOW
                 if hasattr(os, "O_BINARY"):

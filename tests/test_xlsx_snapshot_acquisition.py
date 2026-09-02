@@ -2480,31 +2480,51 @@ def test_r8_08_candidate_fstat_transient_failure_no_replacement_oracle(
 def test_r8_09_candidate_fstat_failure_with_path_replacement_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test 9: Candidate fstat fails & path swapped; foreign survives."""
+    """Test 9 (R8-09 & R13-03): Candidate fstat fails & path swapped via os.replace;
+    foreign replacement identity and bytes survive cleanup untouched.
+    """
     src = tmp_path / "source.xlsx"
-    src.write_bytes(_build_valid_test_xlsx())
+    orig_bytes = _build_valid_test_xlsx()
+    src.write_bytes(orig_bytes)
+    src_stat_before = src.stat()
+    src_sha_before = hashlib.sha256(orig_bytes).hexdigest().lower()
+
     root = tmp_path / "root"
     root.mkdir()
 
     import accounting_local_agent.xlsx_snapshot_acquisition as mod
 
-    foreign_bytes = b"FOREIGN_CANDIDATE_REPLACEMENT_R8"
-    foreign_path: Path | None = None
+    foreign_bytes = b"FOREIGN_INDEPENDENT_CANDIDATE_REPLACEMENT_R13"
+    prepared_foreign = tmp_path / "prepared_foreign.xlsx"
+    prepared_foreign.write_bytes(foreign_bytes)
+    prepared_stat = prepared_foreign.stat()
+    prep_dev, prep_ino = mod._extract_device_and_inode(prepared_stat)
+
+    target_candidate_path: Path | None = None
+    orig_candidate_stat: os.stat_result | None = None
+    swap_succeeded = False
     fstat_call_count = 0
     snap_yielded = False
 
+    orig_candidate_fstat = mod._fstat_candidate_fd
+
     def mock_candidate_fstat(fd: int) -> os.stat_result:
-        nonlocal fstat_call_count
+        nonlocal fstat_call_count, orig_candidate_stat
         fstat_call_count += 1
+        orig_candidate_stat = orig_candidate_fstat(fd)
         raise OSError("Persistent candidate fstat error")
 
-    def inject_foreign_after_candidate_close(
+    def inject_foreign_replace_after_candidate_close(
         stage: str, s: Path, t: Path | None
     ) -> None:
-        nonlocal foreign_path
+        nonlocal target_candidate_path, swap_succeeded
         if stage == "after_candidate_close_before_cleanup" and t is not None:
-            t.write_bytes(foreign_bytes)
-            foreign_path = t
+            target_candidate_path = t
+            try:
+                os.replace(prepared_foreign, t)
+                swap_succeeded = True
+            except OSError:
+                pass
 
     monkeypatch.setattr(mod, "_fstat_candidate_fd", mock_candidate_fstat)
 
@@ -2517,26 +2537,53 @@ def test_r8_09_candidate_fstat_failure_with_path_replacement_oracle(
                 root,
                 0.001,
                 _sleeper=lambda _: None,
-                _fault_hook=inject_foreign_after_candidate_close,
+                _fault_hook=inject_foreign_replace_after_candidate_close,
             ):
                 snap_yielded = True
 
         flat = _flatten_exceptions(exc_info.value)
         assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+        assert any(isinstance(e, XlsxSnapshotCleanupError) for e in flat)
         assert fstat_call_count >= 1
         assert snap_yielded is False
+        assert swap_succeeded is True, "os.replace must succeed in hook"
 
         # Invariants unconditionally checked:
-        assert foreign_path is not None, "Foreign replacement must be created"
-        assert foreign_path.exists(), "Foreign replacement must survive cleanup"
-        assert foreign_path.read_bytes() == foreign_bytes, "Foreign bytes unchanged"
+        assert target_candidate_path is not None, "Foreign replacement must be created"
+        assert target_candidate_path.exists(), (
+            "Foreign replacement must survive cleanup"
+        )
+        assert target_candidate_path.read_bytes() == foreign_bytes, (
+            "Foreign bytes unchanged"
+        )
+
+        # Identity verification: must match prepared foreign file and differ
+        # from candidate
+        post_stat = target_candidate_path.stat()
+        post_dev, post_ino = mod._extract_device_and_inode(post_stat)
+        if prep_ino is not None and post_ino is not None:
+            assert post_ino == prep_ino, "Identity must match prepared foreign file"
+        if orig_candidate_stat is not None:
+            orig_dev, orig_ino = mod._extract_device_and_inode(orig_candidate_stat)
+            if orig_ino is not None and post_ino is not None:
+                assert post_ino != orig_ino, (
+                    "Identity must differ from original candidate"
+                )
+
+        # Source immutability
+        assert src.read_bytes() == orig_bytes
+        assert src.stat().st_size == src_stat_before.st_size
+        assert src.stat().st_mtime_ns == src_stat_before.st_mtime_ns
+        assert hashlib.sha256(src.read_bytes()).hexdigest().lower() == src_sha_before
     finally:
-        if foreign_path is not None and foreign_path.exists():
-            foreign_path.unlink()
+        if target_candidate_path is not None and target_candidate_path.exists():
+            target_candidate_path.unlink()
             try:
-                foreign_path.parent.rmdir()
+                target_candidate_path.parent.rmdir()
             except OSError:
                 pass
+        if prepared_foreign.exists():
+            prepared_foreign.unlink()
 
 
 def test_r8_10_first_lease_lstat_transient_failure_no_replacement_oracle(
@@ -3490,14 +3537,27 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesFailCreate())
 
     lease_dir_fail = tmp_path / "test_lease_win_fail"
-    with pytest.raises((XlsxSnapshotStorageError, OSError), match="CreateFileW failed"):
+    with pytest.raises(XlsxSnapshotStorageError) as exc_info_create:
         mod._create_and_anchor_lease_dir_windows(lease_dir_fail)
 
-    # 3. Test GetFileInformationByHandleEx failure (returns False)
+    assert (
+        exc_info_create.value.reason
+        == XlsxSnapshotAcquisitionReason.SNAPSHOT_STORAGE_FAILURE
+    )
+    assert "CreateFileW failed on lease directory" in str(exc_info_create.value)
+    assert str(lease_dir_fail) not in str(exc_info_create.value)
+
+    # 3. Test GetFileInformationByHandleEx failure (returns False / raises)
+    raw_query_err = OSError("RAW_QUERY_FAIL_MARKER: /secret/dir/path")
+
     class MockKernel32FailGetInfo:
         def __init__(self) -> None:
             self.CreateFileW = MockFunc(lambda *args: 0x1234)
-            self.GetFileInformationByHandleEx = MockFunc(lambda *args: False)
+
+            def mock_fail_info(*args: Any) -> bool:
+                raise raw_query_err
+
+            self.GetFileInformationByHandleEx = MockFunc(mock_fail_info)
             self.CloseHandle = MockFunc(lambda *args: True)
 
     mock_k32_info = MockKernel32FailGetInfo()
@@ -3514,12 +3574,17 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesFailGetInfo())
 
     lease_dir_fail2 = tmp_path / "test_lease_win_fail2"
-    with pytest.raises(
-        (XlsxSnapshotStorageError, OSError),
-        match="Failed to query lease directory identity",
-    ):
+    with pytest.raises(XlsxSnapshotStorageError) as exc_info_query:
         mod._create_and_anchor_lease_dir_windows(lease_dir_fail2)
 
+    assert (
+        exc_info_query.value.reason
+        == XlsxSnapshotAcquisitionReason.SNAPSHOT_STORAGE_FAILURE
+    )
+    assert "Failed to query lease directory identity" in str(exc_info_query.value)
+    assert str(lease_dir_fail2) not in str(exc_info_query.value)
+    assert "RAW_QUERY_FAIL_MARKER" not in str(exc_info_query.value)
+    assert exc_info_query.value.__cause__ is not None
     assert mock_k32_info.CloseHandle.call_count == 1, (
         "CloseHandle must be called exactly once on query failure"
     )
@@ -3542,24 +3607,32 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
 
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesCloseFail())
 
-    with pytest.raises(
-        (XlsxSnapshotCleanupError, OSError), match="CloseHandle failed on handle"
-    ) as exc_info_close:
+    with pytest.raises(XlsxSnapshotCleanupError) as exc_info_close:
         mod._close_windows_handle(0x5555)
 
+    assert (
+        exc_info_close.value.reason
+        == XlsxSnapshotAcquisitionReason.SNAPSHOT_CLEANUP_FAILURE
+    )
+    assert "CloseHandle failed on handle" in str(exc_info_close.value)
     assert mock_k32_close.CloseHandle.call_count == 1
-    if isinstance(exc_info_close.value, XlsxSnapshotCleanupError):
-        assert (
-            exc_info_close.value.reason
-            == XlsxSnapshotAcquisitionReason.SNAPSHOT_CLEANUP_FAILURE
-        )
 
-    # 5. Test Query failure + CloseHandle failure preserves both causes
+    # 5. Test Query failure + CloseHandle failure preserves both independent causes
+    raw_query_fail = OSError("RAW_QUERY_DOUBLE_FAIL_MARKER: /secret/query/path")
+    raw_close_fail = OSError("RAW_CLOSE_DOUBLE_FAIL_MARKER: /secret/close/path")
+
     class MockKernel32DoubleFail:
         def __init__(self) -> None:
             self.CreateFileW = MockFunc(lambda *args: 0x7777)
-            self.GetFileInformationByHandleEx = MockFunc(lambda *args: False)
-            self.CloseHandle = MockFunc(lambda *args: False)
+
+            def mock_get_info_fail(*args: Any) -> bool:
+                raise raw_query_fail
+
+            def mock_close_fail(*args: Any) -> bool:
+                raise raw_close_fail
+
+            self.GetFileInformationByHandleEx = MockFunc(mock_get_info_fail)
+            self.CloseHandle = MockFunc(mock_close_fail)
 
     mock_k32_double = MockKernel32DoubleFail()
 
@@ -3575,17 +3648,42 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesDoubleFail())
 
     lease_dir_fail3 = tmp_path / "test_lease_win_fail3"
-    with pytest.raises((XlsxSnapshotStorageError, OSError)) as exc_info_double:
+    with pytest.raises(
+        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+    ) as exc_info_double:
         mod._create_and_anchor_lease_dir_windows(lease_dir_fail3)
 
-    assert "Failed to query lease directory identity" in str(exc_info_double.value)
-    assert exc_info_double.value.__cause__ is not None
-    assert "CloseHandle failed on handle" in str(exc_info_double.value.__cause__)
+    flat_double = _flatten_exceptions(exc_info_double.value)
+    storage_excs = [e for e in flat_double if isinstance(e, XlsxSnapshotStorageError)]
+    cleanup_excs = [e for e in flat_double if isinstance(e, XlsxSnapshotCleanupError)]
+    assert len(storage_excs) == 1
+    assert len(cleanup_excs) == 1
+    assert (
+        storage_excs[0].reason == XlsxSnapshotAcquisitionReason.SNAPSHOT_STORAGE_FAILURE
+    )
+    assert (
+        cleanup_excs[0].reason == XlsxSnapshotAcquisitionReason.SNAPSHOT_CLEANUP_FAILURE
+    )
+    assert "Failed to query lease directory identity" in str(storage_excs[0])
+    assert "CloseHandle failed on handle" in str(cleanup_excs[0])
+    assert "RAW_QUERY_DOUBLE_FAIL_MARKER" not in str(storage_excs[0])
+    assert "RAW_CLOSE_DOUBLE_FAIL_MARKER" not in str(cleanup_excs[0])
+    assert str(lease_dir_fail3) not in str(storage_excs[0])
+    assert (
+        storage_excs[0].__cause__ is raw_query_fail
+        or getattr(storage_excs[0].__cause__, "__cause__", None) is raw_query_fail
+    )
+    assert cleanup_excs[0].__cause__ is raw_close_fail
     assert mock_k32_double.CloseHandle.call_count == 1
 
-    # 6. Test CloseHandle Lookup failure (AttributeError) converts to cleanup error
+    # 6. Test CloseHandle Lookup failure (AttributeError with raw secret marker)
+    raw_lookup_err = AttributeError("RAW_LOOKUP_FAIL_MARKER: /secret/path")
+
     class MockKernel32MissingCloseHandle:
-        pass
+        def __getattr__(self, name: str) -> Any:
+            if name == "CloseHandle":
+                raise raw_lookup_err
+            return getattr(super(), name)
 
     class MockCtypesMissingClose:
         wintypes = MockWintypes()
@@ -3595,18 +3693,24 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
 
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesMissingClose())
 
-    with pytest.raises(
-        (XlsxSnapshotCleanupError, OSError), match="CloseHandle failed on handle"
-    ) as exc_info_lookup:
+    with pytest.raises(XlsxSnapshotCleanupError) as exc_info_lookup:
         mod._close_windows_handle(0x6666)
 
-    assert isinstance(exc_info_lookup.value.__cause__, AttributeError)
+    assert (
+        exc_info_lookup.value.reason
+        == XlsxSnapshotAcquisitionReason.SNAPSHOT_CLEANUP_FAILURE
+    )
+    assert "CloseHandle failed on handle" in str(exc_info_lookup.value)
+    assert "RAW_LOOKUP_FAIL_MARKER" not in str(exc_info_lookup.value)
+    assert exc_info_lookup.value.__cause__ is raw_lookup_err
 
-    # 7. Test CloseHandle Call failure (ArgumentError / TypeError)
+    # 7. Test CloseHandle Call failure (ArgumentError with raw secret marker)
+    raw_arg_err = ctypes.ArgumentError("RAW_ARG_FAIL_MARKER: /secret/path")
+
     class MockKernel32ArgumentErrorClose:
         def __init__(self) -> None:
             def raise_arg_error(*args: Any) -> Any:
-                raise ctypes.ArgumentError("Invalid argument types")
+                raise raw_arg_err
 
             self.CloseHandle = MockFunc(raise_arg_error)
 
@@ -3618,12 +3722,16 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
 
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesArgErrorClose())
 
-    with pytest.raises(
-        (XlsxSnapshotCleanupError, OSError), match="CloseHandle failed on handle"
-    ) as exc_info_arg:
+    with pytest.raises(XlsxSnapshotCleanupError) as exc_info_arg:
         mod._close_windows_handle(0x7777)
 
-    assert isinstance(exc_info_arg.value.__cause__, (ctypes.ArgumentError, TypeError))
+    assert (
+        exc_info_arg.value.reason
+        == XlsxSnapshotAcquisitionReason.SNAPSHOT_CLEANUP_FAILURE
+    )
+    assert "CloseHandle failed on handle" in str(exc_info_arg.value)
+    assert "RAW_ARG_FAIL_MARKER" not in str(exc_info_arg.value)
+    assert exc_info_arg.value.__cause__ is raw_arg_err
 
     # 8. Test CloseHandle failure in open_stable_xlsx_snapshot finally
     # aborts before yield
@@ -3655,7 +3763,6 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
         (
             ExceptionGroup,
             BaseExceptionGroup,
-            XlsxSnapshotStorageError,
             XlsxSnapshotCleanupError,
         )
     ) as exc_info_exit:
@@ -3663,12 +3770,133 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
             win_yielded = True
 
     assert win_yielded is False, "Failure to close anchor must prevent yield"
-    flat = _flatten_exceptions(exc_info_exit.value)
+    flat_exit = _flatten_exceptions(exc_info_exit.value)
     assert any(
-        isinstance(e, (XlsxSnapshotStorageError, XlsxSnapshotCleanupError))
+        isinstance(e, XlsxSnapshotCleanupError)
+        and e.reason == XlsxSnapshotAcquisitionReason.SNAPSHOT_CLEANUP_FAILURE
         and "Failed to close lease directory anchor" in str(e)
-        for e in flat
+        for e in flat_exit
     )
+
+
+def test_r13_01_pre_existing_candidate_file_fail_closed_oracle(
+    tmp_path: Path,
+) -> None:
+    """R13-01 Oracle: Pre-existing candidate file aborts with storage error;
+    foreign file and source are preserved untouched.
+    """
+    src = tmp_path / "source.xlsx"
+    orig_bytes = _build_valid_test_xlsx()
+    src.write_bytes(orig_bytes)
+    src_stat_before = src.stat()
+    src_sha_before = hashlib.sha256(orig_bytes).hexdigest().lower()
+
+    root = tmp_path / "root"
+    root.mkdir()
+
+    foreign_candidate_bytes = b"PRE_EXISTING_FOREIGN_CANDIDATE_DATA_R13"
+    injected_part: Path | None = None
+    snap_yielded = False
+
+    def inject_pre_existing_candidate(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal injected_part
+        if stage == "before_copy_open" and t is not None:
+            t.write_bytes(foreign_candidate_bytes)
+            injected_part = t
+
+    with pytest.raises(
+        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+    ) as exc_info:
+        with open_stable_xlsx_snapshot(
+            src,
+            root,
+            0.001,
+            _sleeper=lambda _: None,
+            _fault_hook=inject_pre_existing_candidate,
+        ):
+            snap_yielded = True
+
+    flat = _flatten_exceptions(exc_info.value)
+    assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+    assert snap_yielded is False
+
+    # Invariants:
+    # 1. Foreign candidate file must NOT have been overwritten or truncated or deleted
+    assert injected_part is not None
+    assert injected_part.exists()
+    assert injected_part.read_bytes() == foreign_candidate_bytes
+
+    # 2. Source file must be completely untouched
+    src_stat_after = src.stat()
+    assert src.read_bytes() == orig_bytes
+    assert src_stat_after.st_size == src_stat_before.st_size
+    assert src_stat_after.st_mtime_ns == src_stat_before.st_mtime_ns
+    assert hashlib.sha256(src.read_bytes()).hexdigest().lower() == src_sha_before
+
+
+def test_r13_01_candidate_hardlink_to_source_immutability_oracle(
+    tmp_path: Path,
+) -> None:
+    """R13-01 Oracle: Candidate hardlinked to source aborts without
+    truncating source.
+    """
+    if not hasattr(os, "link"):
+        pytest.skip("os.link is not supported on this platform")
+
+    src = tmp_path / "source.xlsx"
+    orig_bytes = _build_valid_test_xlsx()
+    src.write_bytes(orig_bytes)
+    src_stat_before = src.stat()
+    src_sha_before = hashlib.sha256(orig_bytes).hexdigest().lower()
+
+    root = tmp_path / "root"
+    root.mkdir()
+
+    hardlink_created = False
+    snap_yielded = False
+
+    def inject_hardlink_candidate(stage: str, s: Path, t: Path | None) -> None:
+        nonlocal hardlink_created
+        if stage == "before_copy_open" and t is not None:
+            try:
+                os.link(s, t)
+                hardlink_created = True
+            except OSError:
+                pass
+
+    try:
+        with pytest.raises(
+            (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
+        ) as exc_info:
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=inject_hardlink_candidate,
+            ):
+                snap_yielded = True
+
+        if not hardlink_created:
+            pytest.skip("Filesystem does not support cross-directory hard links in tmp")
+
+        flat = _flatten_exceptions(exc_info.value)
+        assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
+        assert snap_yielded is False
+
+        # Critical Invariant: Source must NOT be truncated to 0 bytes
+        src_stat_after = src.stat()
+        assert len(src.read_bytes()) == len(orig_bytes)
+        assert src.read_bytes() == orig_bytes
+        assert src_stat_after.st_size == src_stat_before.st_size
+        assert src_stat_after.st_mtime_ns == src_stat_before.st_mtime_ns
+        assert hashlib.sha256(src.read_bytes()).hexdigest().lower() == src_sha_before
+    finally:
+        for p in root.glob("acq-*/snapshot.part"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
 
 def test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle(
