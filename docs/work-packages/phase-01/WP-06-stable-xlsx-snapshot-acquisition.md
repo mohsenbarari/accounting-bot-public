@@ -2,9 +2,13 @@
 
 - Phase: 1 — source and data-model foundation
 - Gate contribution: G1 stable-file acquisition boundary only; this package cannot close G1
-- Status: Issued — implementation and evidence pending
+- Status: Accepted and merged
 - Issued by: Codex Project Manager
 - Issued on: 2026-09-01
+- Accepted by: Codex Project Manager
+- Accepted on: 2026-09-02
+- Review evidence: PR #22 and final CI Run `33616797405`
+- Merge commit: `1346abf8b0bda329e6df452bc16a0a0f7d9ed9f7`
 - Required skill: `accounting-bot-implementer`
 - Branch: `antigravity/phase-01-stable-xlsx-snapshot-acquisition`
 - Baseline: latest clean `origin/main` containing this Work Package and ADR-0009
@@ -231,3 +235,42 @@ files, API/error taxonomy, observation/copy/verification/cleanup strategy, focus
 full tests, benchmark measurements, residual risks and protected-asset checks. Stop for
 independent Codex review. Do not Push, create a PR, Merge, deploy, edit Roadmap, access
 real Excel or start WP-07.
+
+## Independent acceptance record
+
+Codex Project Manager accepted this package after independently reviewing candidate
+`503fe2c9635bf268c91c720462413ac75e568efc` against baseline
+`bc085acd8852e2293fdfcb786a7694fe96e93407`, replaying the previously failing
+candidate-creation, Windows error-lifecycle and foreign-file replacement scenarios,
+and merging [PR #22](https://github.com/mohsenbarari/accounting-bot-public/pull/22)
+with the Owner's explicit authorization.
+
+- [CI Run 33616797405](https://github.com/mohsenbarari/accounting-bot-public/actions/runs/33616797405)
+  passed both quality/test jobs on the reviewed HEAD. Linux: 272 passed and 2
+  Windows-only skips. Windows: 273 passed and 1 POSIX-only skip; all four symlink
+  scenarios executed successfully.
+- Independent full-suite replay passed on Linux (272 passed, 2 Windows-only skips)
+  and local Windows (269 passed, 4 symlink privilege skips and 1 POSIX-only skip).
+  Native Windows handle protection and ordinary lease lifecycle tests executed.
+- Independent pre-existing-candidate and hardlink probes confirmed no snapshot was
+  yielded, foreign bytes survived and the source remained unchanged. A normal fresh
+  Windows process yielded a valid four-sheet snapshot and closed its handle after
+  integrity verification and cleanup.
+- Independent injected Create/Query/Close failures confirmed safe public typed
+  messages, preservation of both original causes for simultaneous Query/Close
+  failure, and exactly one close attempt. The replacement oracle demonstrated an
+  actual file-identity change rather than only editing bytes in the same file.
+- The complete 15,000-active-row acquisition/Reader benchmark measured
+  `12.8081s / 59.83 MiB` on Linux and `2.8819s / 56.52 MiB` on local Windows,
+  below the unchanged 15-second and 128-MiB limits. Normal CI also passed this
+  benchmark on both platforms.
+- Lock/frozen sync, Ruff format/lint, strict typing, Handoff validation and diff
+  checks passed. The defined prohibited-asset and credential-pattern scan found no
+  matches across 92 tracked files and 89 branch blobs. Review and test fixtures
+  used generated synthetic workbooks only.
+
+Acceptance covers stable snapshot acquisition, lease integrity and ownership-checked
+cleanup only. Save/OneDrive monitoring, debounce/coalescing, real workbook behavior,
+COM/UUID writes, fiscal/archive selection, SQLite/import commits, Outbox and crash
+recovery remain outside this package. G1 remains open. This acceptance does not issue
+WP-07 or authorize protected real-data or production actions.
