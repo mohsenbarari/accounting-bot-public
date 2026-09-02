@@ -273,8 +273,8 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
         assert not run_thread.is_alive()
         assert runtime.view().state == SourceWatchRuntimeState.STOPPED
 
-        # Verify all owned threads terminated
-        for t in runtime._owned_threads:
+        # Verify all expected worker threads terminated
+        for t in runtime._expected_workers:
             assert not t.is_alive(), f"Thread {t.name} must be stopped"
     finally:
         runtime.request_stop()
@@ -287,7 +287,7 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
 
 
 def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
-    """WR-17: Results fed to WP-04 Planner verify zero false changes on reordering."""
+    """WR-17: Results fed to WP-04 Planner verify sort, formula-only and raw edits."""
     src_dir = tmp_path / "watched_dir"
     src_dir.mkdir()
     src = src_dir / "target.xlsx"
@@ -338,11 +338,11 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
     run_thread.start()
 
     try:
-        # Generation 1
+        # Generation 1: Initial startup read
         assert result_event.wait(timeout=10.0)
         result_event.clear()
 
-        # Generation 2: Same rows but reversed order in sheet (row 2 and row 1 swapped)
+        # Generation 2: Row sort (rows 1 and 2 order swapped in sheet)
         time.sleep(0.5)
         builder2 = SyntheticXlsxBuilder()
         builder2.add_sheet_rows("خرید-فروش", [row2, row1])
@@ -363,11 +363,35 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         assert result_event.wait(timeout=10.0)
         result_event.clear()
 
+        # Generation 3: Raw edit (modifying amount on row1 from 100 to 999)
+        time.sleep(0.5)
+        row1_edited = dict(row1)
+        row1_edited["G"] = "999"
+        builder3 = SyntheticXlsxBuilder()
+        builder3.add_sheet_rows("خرید-فروش", [row1_edited, row2])
+        builder3.add_sheet_rows(
+            "دریافت-پرداخت",
+            [_sample_receipts_payments_row_data(_make_uuid7(b"u_rp"), 2)],
+        )
+        builder3.add_sheet_rows(
+            "ورود-خروج",
+            [_sample_inventory_movements_row_data(_make_uuid7(b"u_im"), 2)],
+        )
+        builder3.add_sheet_rows(
+            "لیست کسبه",
+            [_sample_business_parties_row_data(_make_uuid7(b"u_bp"), 2)],
+        )
+        src.write_bytes(builder3.build_bytes())
+
+        assert result_event.wait(timeout=10.0)
+        result_event.clear()
+
         with lock:
             snap1 = results[0].snapshot
             snap2 = results[1].snapshot
+            snap3 = results[2].snapshot
 
-        # Run WP-04 Change Planner from snap1
+        # 1. Run WP-04 Change Planner from snap1
         plan1 = plan_source_changes(snap1)
         prior_states = [
             PriorIdentityState(
@@ -381,7 +405,8 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
             for p1_item in plan1.items
         ]
 
-        # Plan changes from snap2 against snap1 prior state
+        # 2. Plan changes from snap2 (row reordering) against snap1
+        # prior state -> 0 changes
         plan_same = plan_source_changes(snap2, prior_states)
         assert plan_same.total_counts.unchanged_count == 5
         assert plan_same.total_counts.insert_count == 0
@@ -389,6 +414,19 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         assert plan_same.total_counts.void_count == 0
         for p_item in plan_same.items:
             assert p_item.action == PlanAction.UNCHANGED
+
+        # 3. Plan changes from snap3 (raw edit on row 1) against snap1
+        # prior state -> 1 EDIT, 4 UNCHANGED
+        plan_edit = plan_source_changes(snap3, prior_states)
+        assert plan_edit.total_counts.unchanged_count == 4
+        assert plan_edit.total_counts.edit_count == 1
+        assert plan_edit.total_counts.insert_count == 0
+        assert plan_edit.total_counts.void_count == 0
+
+        edited_items = [p for p in plan_edit.items if p.action == PlanAction.EDIT]
+        assert len(edited_items) == 1
+        assert str(edited_items[0].canonical_uuid) == str(u1)
+        assert edited_items[0].current_source_hash != edited_items[0].prior_source_hash
 
         runtime.request_stop()
         run_thread.join(timeout=5.0)

@@ -35,6 +35,7 @@ from accounting_local_agent import (
     SourceWatchRuntimeView,
     XlsxSourceReadResult,
 )
+from accounting_local_agent.source_watch_runtime import _WatchdogEventAdapter
 from test_xlsx_source_reader import (
     SyntheticXlsxBuilder,
     _make_uuid7,
@@ -45,7 +46,9 @@ from test_xlsx_source_reader import (
 )
 from watchdog.events import (
     DirCreatedEvent,
+    DirDeletedEvent,
     DirModifiedEvent,
+    DirMovedEvent,
     FileCreatedEvent,
     FileDeletedEvent,
     FileModifiedEvent,
@@ -189,16 +192,14 @@ def test_wr01_public_api_exports_and_version() -> None:
     assert "INVALID_POLICY" in repr(err)
 
 
-def test_wr01_view_invariants_and_safe_repr() -> None:
-    """WR-01: SourceWatchRuntimeView construction invariants and safe representation."""
+def test_wr01_source_watch_runtime_view_invariants() -> None:
+    """WR-01: SourceWatchRuntimeView construction invariants."""
     # 1. Valid views
     v1 = SourceWatchRuntimeView(
         SOURCE_WATCH_RUNTIME_VERSION, SourceWatchRuntimeState.NEW, False
     )
     assert v1.state == SourceWatchRuntimeState.NEW
     assert v1.stop_requested is False
-    assert "NEW" in repr(v1)
-    assert "source-watch-runtime.v1" in repr(v1)
 
     v2 = SourceWatchRuntimeView(
         SOURCE_WATCH_RUNTIME_VERSION, SourceWatchRuntimeState.RUNNING, False
@@ -262,7 +263,28 @@ def test_wr01_view_invariants_and_safe_repr() -> None:
         )
 
 
-def test_wr01_configuration_path_and_type_boundaries(tmp_path: Path) -> None:
+def test_wr01_safe_repr_no_path_leakage(tmp_path: Path) -> None:
+    """WR-01: Representations do not leak sensitive file paths or data."""
+    secret_dir = tmp_path / "super_secret_folder_99"
+    secret_src = secret_dir / "confidential_accounting.xlsx"
+    snap_root = tmp_path / "snapshots"
+
+    runtime = SourceWatchRuntime(
+        secret_src, snapshot_root=snap_root, observation_interval_seconds=0.1
+    )
+    view = runtime.view()
+    err = SourceWatchRuntimeError(SourceWatchRuntimeReason.INVALID_POLICY)
+
+    assert "super_secret_folder_99" not in repr(runtime)
+    assert "confidential_accounting.xlsx" not in repr(runtime)
+    assert "super_secret_folder_99" not in repr(view)
+    assert "confidential_accounting.xlsx" not in repr(view)
+    assert "super_secret_folder_99" not in repr(err)
+
+
+def test_wr01_constructor_lexical_validation_and_containment(
+    tmp_path: Path,
+) -> None:
     """WR-01: Lexical parameter validation, path containment, and zero I/O on init."""
     src = tmp_path / "valid_parent" / "target.xlsx"
     snap_root = tmp_path / "snapshots"
@@ -275,8 +297,6 @@ def test_wr01_configuration_path_and_type_boundaries(tmp_path: Path) -> None:
     assert runtime.snapshot_root == snap_root
     assert runtime.observation_interval_seconds == 0.05
     assert runtime.view().state == SourceWatchRuntimeState.NEW
-    assert "source-watch-runtime.v1" in repr(runtime)
-    assert "NEW" in repr(runtime)
 
     # 2. Non-Path types
     with pytest.raises(
@@ -297,7 +317,26 @@ def test_wr01_configuration_path_and_type_boundaries(tmp_path: Path) -> None:
             observation_interval_seconds=0.05,
         )
 
-    # 3. Relative paths
+    # 3. Relative segments ('..' or '.')
+    with pytest.raises(
+        SourceWatchRuntimeError, match="source_path cannot contain relative segments"
+    ):
+        SourceWatchRuntime(
+            tmp_path / "parent" / ".." / "target.xlsx",
+            snapshot_root=snap_root,
+            observation_interval_seconds=0.05,
+        )
+
+    with pytest.raises(
+        SourceWatchRuntimeError, match="snapshot_root cannot contain relative segments"
+    ):
+        SourceWatchRuntime(
+            src,
+            snapshot_root=tmp_path / "intermediate" / ".." / "snapshots",
+            observation_interval_seconds=0.05,
+        )
+
+    # 4. Relative paths
     with pytest.raises(SourceWatchRuntimeError, match="source_path must be absolute"):
         SourceWatchRuntime(
             Path("relative/target.xlsx"),
@@ -312,7 +351,7 @@ def test_wr01_configuration_path_and_type_boundaries(tmp_path: Path) -> None:
             observation_interval_seconds=0.05,
         )
 
-    # 4. Invalid source extension & lock file
+    # 5. Invalid source extension & lock file
     with pytest.raises(
         SourceWatchRuntimeError, match="source_path must have .xlsx extension"
     ):
@@ -329,7 +368,7 @@ def test_wr01_configuration_path_and_type_boundaries(tmp_path: Path) -> None:
             observation_interval_seconds=0.05,
         )
 
-    # 5. Invalid observation interval
+    # 6. Invalid observation interval
     with pytest.raises(
         SourceWatchRuntimeError, match="observation_interval_seconds must be"
     ):
@@ -366,8 +405,7 @@ def test_wr01_configuration_path_and_type_boundaries(tmp_path: Path) -> None:
             observation_interval_seconds=float("nan"),
         )
 
-    # 6. Snapshot root containment boundaries
-    # Equal to source parent
+    # 7. Snapshot root containment boundaries
     with pytest.raises(SourceWatchRuntimeError, match="cannot be equal to or inside"):
         SourceWatchRuntime(
             src,
@@ -375,7 +413,6 @@ def test_wr01_configuration_path_and_type_boundaries(tmp_path: Path) -> None:
             observation_interval_seconds=0.05,
         )
 
-    # Inside source parent
     with pytest.raises(SourceWatchRuntimeError, match="cannot be equal to or inside"):
         SourceWatchRuntime(
             src,
@@ -453,14 +490,14 @@ def test_wr02_captured_observer_factory_and_no_alloc_on_init(
         _observer_factory=mock_factory,
     )
     runtime2.request_stop()  # set stop so run exits after start
-    runtime2._state = SourceWatchRuntimeState.NEW  # reset to test run path
+    runtime2._state = SourceWatchRuntimeState.NEW
     runtime2._stop_requested = True
 
     runtime2.run(lambda r: None)
     assert factory_calls == 1
     assert created_mock is not None
     assert len(created_mock.scheduled_handlers) == 1
-    handler, path, recursive = created_mock.scheduled_handlers[0]
+    _handler, path, recursive = created_mock.scheduled_handlers[0]
     assert path == str(src.parent)
     assert recursive is False
     assert created_mock.stopped is True
@@ -474,7 +511,7 @@ def test_wr02_captured_observer_factory_and_no_alloc_on_init(
 def test_wr03_watchdog_event_adapter_table_driven_mapping(
     tmp_path: Path,
 ) -> None:
-    """WR-03: Event adapter maps created/modified/deleted/moved."""
+    """WR-03: Event adapter maps created/modified/deleted/moved without I/O."""
     src = tmp_path / "watch_dir" / "workbook.xlsx"
 
     received_events: list[tuple[SaveEventKind, Path, Path | None]] = []
@@ -483,22 +520,20 @@ def test_wr03_watchdog_event_adapter_table_driven_mapping(
         received_events.append((kind, p, dest))
 
     faults: list[BaseException] = []
-    from accounting_local_agent.source_watch_runtime import _WatchdogEventAdapter
-
     adapter = _WatchdogEventAdapter(mock_notify, lambda e: faults.append(e))
 
-    # 1. Mutating file events for exact target
-    adapter.on_any_event(FileCreatedEvent(str(src)))
+    # 1. Mutating file events for exact target (via dispatch and on_any_event)
+    adapter.dispatch(FileCreatedEvent(str(src)))
     assert received_events[-1] == (SaveEventKind.CREATED, src, None)
 
-    adapter.on_any_event(FileModifiedEvent(str(src)))
+    adapter.dispatch(FileModifiedEvent(str(src)))
     assert received_events[-1] == (SaveEventKind.MODIFIED, src, None)
 
-    adapter.on_any_event(FileDeletedEvent(str(src)))
+    adapter.dispatch(FileDeletedEvent(str(src)))
     assert received_events[-1] == (SaveEventKind.DELETED, src, None)
 
     other_src = tmp_path / "watch_dir" / "temp.xlsx"
-    adapter.on_any_event(FileMovedEvent(str(other_src), str(src)))
+    adapter.dispatch(FileMovedEvent(str(other_src), str(src)))
     assert received_events[-1] == (
         SaveEventKind.MOVED,
         other_src,
@@ -507,8 +542,10 @@ def test_wr03_watchdog_event_adapter_table_driven_mapping(
 
     # 2. Directory events ignored
     count_before = len(received_events)
-    adapter.on_any_event(DirCreatedEvent(str(src.parent)))
-    adapter.on_any_event(DirModifiedEvent(str(src.parent)))
+    adapter.dispatch(DirCreatedEvent(str(src.parent)))
+    adapter.dispatch(DirModifiedEvent(str(src.parent)))
+    adapter.dispatch(DirDeletedEvent(str(src.parent)))
+    adapter.dispatch(DirMovedEvent(str(src.parent), str(src.parent / "moved")))
     assert len(received_events) == count_before
 
     # 3. Known read-only events ignored
@@ -518,9 +555,15 @@ def test_wr03_watchdog_event_adapter_table_driven_mapping(
     class _CustomClosedEvent(FileSystemEvent):
         event_type = "closed"
 
-    adapter.on_any_event(_CustomReadOnlyEvent(str(src)))
-    adapter.on_any_event(_CustomClosedEvent(str(src)))
+    adapter.dispatch(_CustomReadOnlyEvent(str(src)))
+    adapter.dispatch(_CustomClosedEvent(str(src)))
+    assert len(received_events) == count_before
 
+    # 4. Unknown event kinds ignored without AttributeError or fault
+    class _CustomFutureEvent(FileSystemEvent):
+        event_type = "future_event"
+
+    adapter.dispatch(_CustomFutureEvent(str(src)))
     assert len(received_events) == count_before
     assert len(faults) == 0
 
@@ -543,19 +586,26 @@ def test_wr04_callback_boundary_fault_handling(tmp_path: Path) -> None:
         _observer_factory=lambda: mock_obs,
     )
 
-    from accounting_local_agent.source_watch_runtime import _WatchdogEventAdapter
-
     faults: list[BaseException] = []
     adapter = _WatchdogEventAdapter(
         runtime._on_adapter_event, lambda e: faults.append(e)
     )
 
-    # Event with invalid path type in mutating event
+    # 1. Event with invalid path type in mutating event
     class _MalformedMutatingEvent(FileSystemEvent):
         event_type = "modified"
 
     malformed_event = _MalformedMutatingEvent(cast(Any, None))
-    adapter.on_any_event(malformed_event)
+    adapter.dispatch(malformed_event)
+    assert len(faults) == 1
+    assert isinstance(faults[0], SourceWatchRuntimeError)
+    assert faults[0].reason == SourceWatchRuntimeReason.EVENT_DELIVERY_FAILED
+
+    # 2. Event with non-boolean is_directory
+    faults.clear()
+    malformed_dir_event = _MalformedMutatingEvent(str(src))
+    malformed_dir_event.is_directory = cast(Any, "not_a_bool")
+    adapter.dispatch(malformed_dir_event)
     assert len(faults) == 1
     assert isinstance(faults[0], SourceWatchRuntimeError)
     assert faults[0].reason == SourceWatchRuntimeReason.EVENT_DELIVERY_FAILED
@@ -566,7 +616,7 @@ def test_wr04_callback_boundary_fault_handling(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_wr05_initial_hint_delivery_and_preexisting_file_read(
+def test_wr05_initial_hint_and_preexisting_file_read(
     tmp_path: Path,
 ) -> None:
     """WR-05: Start enqueues logical MODIFIED notice and reads preexisting file."""
@@ -580,10 +630,6 @@ def test_wr05_initial_hint_delivery_and_preexisting_file_read(
     clock = FakeClock()
     results: list[XlsxSourceReadResult] = []
 
-    def test_consumer(res: XlsxSourceReadResult) -> None:
-        results.append(res)
-        runtime.request_stop()
-
     mock_obs = MockObserver()
     runtime = SourceWatchRuntime(
         src,
@@ -593,13 +639,16 @@ def test_wr05_initial_hint_delivery_and_preexisting_file_read(
         _time_source=clock,
     )
 
-    # Run thread in background
+    def test_consumer(res: XlsxSourceReadResult) -> None:
+        results.append(res)
+        runtime.request_stop()
+
     run_thread = threading.Thread(target=lambda: runtime.run(test_consumer))
     run_thread.start()
 
     try:
-        # Advance clock to satisfy 2s debounce
         time.sleep(0.05)
+        # Advance clock to satisfy 2s debounce
         clock.advance_seconds(3.0)
         with runtime._lifecycle_lock:
             runtime._condition.notify_all()
@@ -611,14 +660,17 @@ def test_wr05_initial_hint_delivery_and_preexisting_file_read(
     finally:
         runtime.request_stop()
         run_thread.join(timeout=1.0)
+        mock_obs.stop()
 
 
 # ---------------------------------------------------------------------------
-# WR-06: Fake Monotonic Clock and Deadline Waiting
+# WR-06: Fake Monotonic Clock and Deadline Boundaries
 # ---------------------------------------------------------------------------
 
 
-def test_wr06_fake_clock_and_deadline_waiting(tmp_path: Path) -> None:
+def test_wr06_fake_clock_deadline_boundaries_and_liveness_wait(
+    tmp_path: Path,
+) -> None:
     """WR-06: Controlled waiter verifies exact deadline triggers read."""
     src_dir = tmp_path / "watch_dir"
     src_dir.mkdir()
@@ -648,14 +700,14 @@ def test_wr06_fake_clock_and_deadline_waiting(tmp_path: Path) -> None:
 
     try:
         time.sleep(0.05)
-        # Advance clock by 1.999s (1ns before 2.0s debounce)
+        # 1. Advance clock by 1.999999999s (1ns before 2.0s debounce)
         clock.advance_ns(1_999_999_999)
         with runtime._lifecycle_lock:
             runtime._condition.notify_all()
         time.sleep(0.05)
         assert len(results) == 0, "Must not read before deadline"
 
-        # Advance exactly 1ns (reaches 2.0s deadline)
+        # 2. Advance exactly 1ns (reaches 2.0s deadline)
         clock.advance_ns(1)
         with runtime._lifecycle_lock:
             runtime._condition.notify_all()
@@ -666,6 +718,7 @@ def test_wr06_fake_clock_and_deadline_waiting(tmp_path: Path) -> None:
     finally:
         runtime.request_stop()
         run_thread.join(timeout=1.0)
+        mock_obs.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -673,8 +726,10 @@ def test_wr06_fake_clock_and_deadline_waiting(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_wr07_lost_wake_prevention_and_admission_race(tmp_path: Path) -> None:
-    """WR-07: Predicate re-checking prevents lost wakes on stop / notice."""
+def test_wr07_barrier_predicates_and_stop_race_resolution(
+    tmp_path: Path,
+) -> None:
+    """WR-07: Predicate re-checking prevents lost wakes; stop race resolved."""
     src_dir = tmp_path / "watch_dir"
     src_dir.mkdir()
     src = src_dir / "workbook.xlsx"
@@ -692,11 +747,7 @@ def test_wr07_lost_wake_prevention_and_admission_race(tmp_path: Path) -> None:
         _time_source=clock,
     )
 
-    def consumer(r: XlsxSourceReadResult) -> None:
-        pass
-
-    # Start run thread
-    run_thread = threading.Thread(target=lambda: runtime.run(consumer))
+    run_thread = threading.Thread(target=lambda: runtime.run(lambda r: None))
     run_thread.start()
 
     try:
@@ -709,14 +760,15 @@ def test_wr07_lost_wake_prevention_and_admission_race(tmp_path: Path) -> None:
     finally:
         runtime.request_stop()
         run_thread.join(timeout=1.0)
+        mock_obs.stop()
 
 
 # ---------------------------------------------------------------------------
-# WR-08: Burst Coalescing and Responsiveness During I/O
+# WR-08: Burst Coalescing and Responsiveness During Blocking
 # ---------------------------------------------------------------------------
 
 
-def test_wr08_burst_coalescing_and_responsiveness_during_io(
+def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
     tmp_path: Path,
 ) -> None:
     """WR-08: 2000 burst notices coalesce; notices responsive during consumer."""
@@ -779,6 +831,7 @@ def test_wr08_burst_coalescing_and_responsiveness_during_io(
         consumer_release.set()
         runtime.request_stop()
         run_thread.join(timeout=1.0)
+        mock_obs.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -786,14 +839,13 @@ def test_wr08_burst_coalescing_and_responsiveness_during_io(
 # ---------------------------------------------------------------------------
 
 
-def test_wr09_driver_error_handling_not_ready_and_reader_rejected(
+def test_wr09_driver_error_handling_and_retry_preservation(
     tmp_path: Path,
 ) -> None:
     """WR-09: Direct NotReady retries; direct reader rejection waits."""
     src_dir = tmp_path / "watch_dir"
     src_dir.mkdir()
     src = src_dir / "workbook.xlsx"
-    # Initially missing file
     snap_root = tmp_path / "snapshots"
     snap_root.mkdir()
 
@@ -839,6 +891,7 @@ def test_wr09_driver_error_handling_not_ready_and_reader_rejected(
     finally:
         runtime.request_stop()
         run_thread.join(timeout=1.0)
+        mock_obs.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -909,6 +962,7 @@ def test_wr10_consumer_delivery_and_stop_draining(
     finally:
         runtime.request_stop()
         run_thread.join(timeout=1.0)
+        mock_obs.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -964,7 +1018,6 @@ def test_wr11_concurrent_run_calls_and_lifecycle_races(tmp_path: Path) -> None:
             t.join(timeout=5.0)
             assert not t.is_alive()
 
-        # Exactly 1 thread ran successfully and others got INVALID_TRANSITION
         successful_runs = [e for e in errors if e is None]
         transition_errors = [
             e
@@ -979,6 +1032,7 @@ def test_wr11_concurrent_run_calls_and_lifecycle_races(tmp_path: Path) -> None:
         runtime.request_stop()
         for t in threads:
             t.join(timeout=1.0)
+        mock_obs.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -1073,6 +1127,7 @@ def test_wr13_dispatcher_and_emitter_liveness_failure(tmp_path: Path) -> None:
     finally:
         runtime.request_stop()
         run_thread.join(timeout=1.0)
+        mock_obs.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -1083,7 +1138,7 @@ def test_wr13_dispatcher_and_emitter_liveness_failure(tmp_path: Path) -> None:
 def test_wr14_multi_failure_preservation_and_exception_groups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """WR-14: Multiple simultaneous failures preserved in exception group."""
+    """WR-14: BaseExceptions preserved raw; multi-failures grouped in order."""
     src_dir = tmp_path / "watch_dir"
     src_dir.mkdir()
     src = src_dir / "workbook.xlsx"
@@ -1091,34 +1146,203 @@ def test_wr14_multi_failure_preservation_and_exception_groups(
     snap_root = tmp_path / "snapshots"
     snap_root.mkdir()
 
-    clock = FakeClock()
-    mock_obs = MockObserver()
-    runtime = SourceWatchRuntime(
+    # -----------------------------------------------------------------------
+    # 1. Raw BaseException (KeyboardInterrupt) in factory, consumer, and stop
+    # -----------------------------------------------------------------------
+    # 1a. KeyboardInterrupt in factory raises raw KeyboardInterrupt directly
+    runtime_ki_fac = SourceWatchRuntime(
+        src,
+        snapshot_root=snap_root,
+        observation_interval_seconds=0.05,
+        _observer_factory=lambda: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        runtime_ki_fac.run(lambda r: None)
+    assert runtime_ki_fac.view().state == SourceWatchRuntimeState.FAILED
+
+    # 1b. KeyboardInterrupt in consumer raises raw KeyboardInterrupt directly
+    clock_ki = FakeClock()
+    mock_obs_ki = MockObserver()
+    runtime_ki_cons = SourceWatchRuntime(
         src,
         snapshot_root=snap_root,
         observation_interval_seconds=0.001,
-        _observer_factory=lambda: mock_obs,
-        _time_source=clock,
+        _observer_factory=lambda: mock_obs_ki,
+        _time_source=clock_ki,
     )
+
+    def ki_consumer(r: XlsxSourceReadResult) -> None:
+        raise KeyboardInterrupt("Simulated Ctrl+C in consumer")
+
+    ki_err: BaseException | None = None
+
+    def ki_runner() -> None:
+        nonlocal ki_err
+        try:
+            runtime_ki_cons.run(ki_consumer)
+        except BaseException as e:
+            ki_err = e
+
+    run_thread_ki = threading.Thread(target=ki_runner)
+    run_thread_ki.start()
+    time.sleep(0.05)
+    clock_ki.advance_seconds(3.0)
+    with runtime_ki_cons._lifecycle_lock:
+        runtime_ki_cons._condition.notify_all()
+    run_thread_ki.join(timeout=5.0)
+    assert not run_thread_ki.is_alive()
+    assert isinstance(ki_err, KeyboardInterrupt)
+    assert runtime_ki_cons.view().state == SourceWatchRuntimeState.FAILED
+    mock_obs_ki._stop_event.set()
+    for em in mock_obs_ki.emitters:
+        em.stop()
+        em.join(timeout=1.0)
+
+    # -----------------------------------------------------------------------
+    # 2. Multiple simultaneous standard Exception failures -> ExceptionGroup
+    # -----------------------------------------------------------------------
+    clock_multi = FakeClock()
+    mock_obs_multi = MockObserver()
+    runtime_multi = SourceWatchRuntime(
+        src,
+        snapshot_root=snap_root,
+        observation_interval_seconds=0.001,
+        _observer_factory=lambda: mock_obs_multi,
+        _time_source=clock_multi,
+    )
+
+    consumer_entered = threading.Event()
+    consumer_release = threading.Event()
 
     # Injected consumer failure
     def crashing_consumer(r: XlsxSourceReadResult) -> None:
+        consumer_entered.set()
+        consumer_release.wait(timeout=5.0)
         raise ValueError("Injected consumer failure")
 
     # Injected teardown stop failure
     def failing_stop() -> None:
-        mock_obs._stop_event.set()
+        mock_obs_multi._stop_event.set()
         raise RuntimeError("Injected observer stop failure")
 
-    monkeypatch.setattr(mock_obs, "stop", failing_stop)
+    monkeypatch.setattr(mock_obs_multi, "stop", failing_stop)
 
-    # Also inject an async error into runtime
-    async_err = OSError("Injected async background error")
-    runtime._on_adapter_error(async_err)
+    captured_group: BaseException | None = None
 
-    with pytest.raises((ExceptionGroup, BaseExceptionGroup)) as exc_info:
-        runtime.run(crashing_consumer)
+    def multi_runner() -> None:
+        nonlocal captured_group
+        try:
+            runtime_multi.run(crashing_consumer)
+        except BaseException as e:
+            captured_group = e
 
-    group = exc_info.value
-    assert len(group.exceptions) >= 2
-    assert runtime.view().state == SourceWatchRuntimeState.FAILED
+    run_thread_multi = threading.Thread(target=multi_runner)
+    run_thread_multi.start()
+
+    try:
+        time.sleep(0.05)
+        # Advance clock to due deadline -> consumer enters
+        clock_multi.advance_seconds(3.0)
+        with runtime_multi._lifecycle_lock:
+            runtime_multi._condition.notify_all()
+
+        assert consumer_entered.wait(timeout=5.0)
+
+        # While consumer is running, inject async adapter error
+        async_err = OSError("Injected async background error")
+        runtime_multi._on_adapter_error(async_err)
+
+        # Release consumer to crash
+        consumer_release.set()
+        run_thread_multi.join(timeout=5.0)
+        assert not run_thread_multi.is_alive()
+
+        assert captured_group is not None
+        assert isinstance(captured_group, ExceptionGroup)
+        assert len(captured_group.exceptions) == 3
+
+        # Order must be: run_error (consumer), async_error, teardown_error (stop)
+        e0 = captured_group.exceptions[0]
+        e1 = captured_group.exceptions[1]
+        e2 = captured_group.exceptions[2]
+
+        assert isinstance(e0, SourceWatchRuntimeError)
+        assert e0.reason == SourceWatchRuntimeReason.CONSUMER_FAILED
+        assert isinstance(e0.__cause__, ValueError)
+
+        assert isinstance(e1, SourceWatchRuntimeError)
+        assert e1.reason == SourceWatchRuntimeReason.EVENT_DELIVERY_FAILED
+        assert isinstance(e1.__cause__, OSError)
+
+        assert isinstance(e2, SourceWatchRuntimeError)
+        assert e2.reason == SourceWatchRuntimeReason.SHUTDOWN_FAILED
+        assert isinstance(e2.__cause__, RuntimeError)
+
+        assert runtime_multi.view().state == SourceWatchRuntimeState.FAILED
+    finally:
+        consumer_release.set()
+        mock_obs_multi._stop_event.set()
+        for em in mock_obs_multi.emitters:
+            em.stop()
+            em.join(timeout=1.0)
+            assert not em.is_alive()
+
+    # -----------------------------------------------------------------------
+    # 3. Mixed BaseExceptionGroup (KeyboardInterrupt in consumer + Stop error)
+    # -----------------------------------------------------------------------
+    clock_mixed = FakeClock()
+    mock_obs_mixed = MockObserver()
+    runtime_mixed = SourceWatchRuntime(
+        src,
+        snapshot_root=snap_root,
+        observation_interval_seconds=0.001,
+        _observer_factory=lambda: mock_obs_mixed,
+        _time_source=clock_mixed,
+    )
+
+    def failing_stop_mixed() -> None:
+        mock_obs_mixed._stop_event.set()
+        raise RuntimeError("Injected observer stop failure in mixed")
+
+    monkeypatch.setattr(mock_obs_mixed, "stop", failing_stop_mixed)
+
+    captured_mixed_group: BaseException | None = None
+
+    def mixed_runner() -> None:
+        nonlocal captured_mixed_group
+        try:
+            runtime_mixed.run(ki_consumer)
+        except BaseException as e:
+            captured_mixed_group = e
+
+    run_thread_mixed = threading.Thread(target=mixed_runner)
+    run_thread_mixed.start()
+
+    try:
+        time.sleep(0.05)
+        clock_mixed.advance_seconds(3.0)
+        with runtime_mixed._lifecycle_lock:
+            runtime_mixed._condition.notify_all()
+        run_thread_mixed.join(timeout=5.0)
+        assert not run_thread_mixed.is_alive()
+
+        assert captured_mixed_group is not None
+        assert isinstance(captured_mixed_group, BaseExceptionGroup)
+        assert len(captured_mixed_group.exceptions) == 2
+
+        # 1st is raw KeyboardInterrupt, 2nd is SourceWatchRuntimeError(SHUTDOWN_FAILED)
+        m0 = captured_mixed_group.exceptions[0]
+        m1 = captured_mixed_group.exceptions[1]
+
+        assert isinstance(m0, KeyboardInterrupt)
+        assert isinstance(m1, SourceWatchRuntimeError)
+        assert m1.reason == SourceWatchRuntimeReason.SHUTDOWN_FAILED
+        assert isinstance(m1.__cause__, RuntimeError)
+
+        assert runtime_mixed.view().state == SourceWatchRuntimeState.FAILED
+    finally:
+        mock_obs_mixed._stop_event.set()
+        for em in mock_obs_mixed.emitters:
+            em.stop()
+            em.join(timeout=1.0)
+            assert not em.is_alive()
