@@ -116,15 +116,8 @@ class SourceRequirednessIssue:
                 "Invalid required field name for requiredness issue."
             )
 
-        try:
-            valid_reason = SourceRequirednessIssueReason(self.reason)
-        except (ValueError, TypeError) as exc:
-            raise SourceRequirednessInputError(
-                "Invalid reason for requiredness issue."
-            ) from exc
-
-        if self.reason is not valid_reason:
-            object.__setattr__(self, "reason", valid_reason)
+        if type(self.reason) is not SourceRequirednessIssueReason:
+            raise SourceRequirednessInputError("Invalid reason for requiredness issue.")
 
         if self.reason == SourceRequirednessIssueReason.BLANK_TEXT:
             if self.field_name not in _REQUIRED_TEXT_FIELDS_BY_SHEET[self.sheet_name]:

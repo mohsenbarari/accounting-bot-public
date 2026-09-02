@@ -24,6 +24,7 @@ import time
 import uuid
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 import pytest
@@ -40,12 +41,11 @@ from accounting_contracts import (
     build_source_workbook_snapshot,
     evaluate_source_requiredness,
 )
-from accounting_contracts.source_requiredness import (
-    REQUIRED_FIELDS_BY_SHEET,
-)
 from accounting_local_agent.xlsx_source_reader import (
     read_xlsx_source_snapshot,
 )
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from test_xlsx_source_reader import (
     SyntheticXlsxBuilder,
     _make_uuid7,
@@ -54,6 +54,52 @@ from test_xlsx_source_reader import (
     _sample_inventory_movements_row_data,
     _sample_receipts_payments_row_data,
 )
+
+# ---------------------------------------------------------------------------
+# Independent Required-Field Matrix & Text Fields (Authored Independently)
+# ---------------------------------------------------------------------------
+
+INDEPENDENT_APPROVED_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "خرید-فروش": (
+        "date_raw",
+        "party_name_raw",
+        "transaction_type_raw",
+        "item_name_raw",
+        "quantity_raw",
+        "unit_price_toman_raw",
+    ),
+    "دریافت-پرداخت": (
+        "date_raw",
+        "party_name_raw",
+        "entry_type_raw",
+        "amount_toman_raw",
+    ),
+    "ورود-خروج": (
+        "date_raw",
+        "party_name_raw",
+        "movement_type_raw",
+        "item_name_raw",
+        "quantity_raw",
+    ),
+    "لیست کسبه": ("party_name_raw",),
+}
+
+INDEPENDENT_TEXT_FIELDS: dict[str, frozenset[str]] = {
+    "خرید-فروش": frozenset(
+        {"date_raw", "party_name_raw", "transaction_type_raw", "item_name_raw"}
+    ),
+    "دریافت-پرداخت": frozenset({"date_raw", "party_name_raw", "entry_type_raw"}),
+    "ورود-خروج": frozenset(
+        {"date_raw", "party_name_raw", "movement_type_raw", "item_name_raw"}
+    ),
+    "لیست کسبه": frozenset({"party_name_raw"}),
+}
+
+ALL_16_REQUIRED_SHEET_FIELDS: list[tuple[str, str]] = [
+    (sheet, field)
+    for sheet, fields in INDEPENDENT_APPROVED_REQUIRED_FIELDS.items()
+    for field in fields
+]
 
 # ---------------------------------------------------------------------------
 # Test Fixture Helpers
@@ -177,46 +223,82 @@ def test_sr01_version_exports_and_inert_pure_library() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sr02_missing_value_for_every_required_field_across_all_four_sheets() -> None:
-    """SR-02: For every required field of each sheet, None emits MISSING_VALUE."""
+@pytest.mark.parametrize("sheet_name,req_field", ALL_16_REQUIRED_SHEET_FIELDS)
+def test_sr02_missing_value_for_every_required_field_across_all_four_sheets(
+    sheet_name: str, req_field: str
+) -> None:
+    """SR-02: For every of the 16 required fields, None emits MISSING_VALUE."""
     sheet_defaults = {
         "خرید-فروش": _valid_buy_sell_row,
         "دریافت-پرداخت": _valid_receipts_payments_row,
         "ورود-خروج": _valid_inventory_movements_row,
         "لیست کسبه": _valid_business_parties_row,
     }
+    row_data = dict(sheet_defaults[sheet_name]())
+    row_data[req_field] = None
+    u = _make_uuid7(f"sr02_{sheet_name}_{req_field}".encode())
 
-    # Test each required field in isolation
-    for sheet_name, req_fields in REQUIRED_FIELDS_BY_SHEET.items():
-        for req_field in req_fields:
-            row_data = dict(sheet_defaults[sheet_name]())
-            row_data[req_field] = None
-            u = _make_uuid7(f"sr02_{sheet_name}_{req_field}".encode())
+    kwargs: dict[str, Any] = {}
+    if sheet_name == "خرید-فروش":
+        kwargs["buy_sell_rows"] = [(u, row_data)]
+    elif sheet_name == "دریافت-پرداخت":
+        kwargs["receipts_payments_rows"] = [(u, row_data)]
+    elif sheet_name == "ورود-خروج":
+        kwargs["inventory_movements_rows"] = [(u, row_data)]
+    elif sheet_name == "لیست کسبه":
+        kwargs["business_parties_rows"] = [(u, row_data)]
 
-            kwargs: dict[str, Any] = {}
-            if sheet_name == "خرید-فروش":
-                kwargs["buy_sell_rows"] = [(u, row_data)]
-            elif sheet_name == "دریافت-پرداخت":
-                kwargs["receipts_payments_rows"] = [(u, row_data)]
-            elif sheet_name == "ورود-خروج":
-                kwargs["inventory_movements_rows"] = [(u, row_data)]
-            elif sheet_name == "لیست کسبه":
-                kwargs["business_parties_rows"] = [(u, row_data)]
+    snap = _build_snapshot_with_rows(**kwargs)
+    report = evaluate_source_requiredness(snap)
 
-            snap = _build_snapshot_with_rows(**kwargs)
-            report = evaluate_source_requiredness(snap)
+    assert report.passes_requiredness is False
+    assert report.checked_row_count == 1
+    assert report.failed_row_count == 1
+    assert report.issue_count == 1
+    assert len(report.issues) == 1
 
-            assert report.passes_requiredness is False
-            assert report.checked_row_count == 1
-            assert report.failed_row_count == 1
-            assert report.issue_count == 1
-            assert len(report.issues) == 1
+    issue = report.issues[0]
+    assert issue.sheet_name == sheet_name
+    assert issue.stable_id == u
+    assert issue.field_name == req_field
+    assert issue.reason is SourceRequirednessIssueReason.MISSING_VALUE
 
-            issue = report.issues[0]
-            assert issue.sheet_name == sheet_name
-            assert issue.stable_id == u
-            assert issue.field_name == req_field
-            assert issue.reason == SourceRequirednessIssueReason.MISSING_VALUE
+
+def test_sr02_multiple_rows_and_fields_aggregate_all_missing_issues() -> None:
+    """SR-02: Multiple rows and missing fields aggregate expected issues."""
+    u1 = _make_uuid7(b"sr02_multi_row1")
+    r1 = _valid_buy_sell_row()
+    r1["date_raw"] = None
+    r1["quantity_raw"] = None
+
+    u2 = _make_uuid7(b"sr02_multi_row2")
+    r2 = _valid_buy_sell_row()
+    r2["unit_price_toman_raw"] = None
+
+    snap = _build_snapshot_with_rows(buy_sell_rows=[(u1, r1), (u2, r2)])
+    report = evaluate_source_requiredness(snap)
+
+    assert report.checked_row_count == 2
+    assert report.failed_row_count == 2
+    assert report.issue_count == 3
+    assert report.passes_requiredness is False
+
+
+def test_sr02_omission_of_transaction_type_raw_is_detected() -> None:
+    """SR-02: Prove omission of transaction_type_raw causes failure."""
+    u = _make_uuid7(b"sr02_omission_check")
+    row_data = _valid_buy_sell_row()
+    row_data["transaction_type_raw"] = None
+    snap = _build_snapshot_with_rows(buy_sell_rows=[(u, row_data)])
+
+    report = evaluate_source_requiredness(snap)
+    assert report.passes_requiredness is False
+    assert any(
+        iss.sheet_name == "خرید-فروش"
+        and iss.field_name == "transaction_type_raw"
+        and iss.reason is SourceRequirednessIssueReason.MISSING_VALUE
+        for iss in report.issues
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +347,10 @@ def test_sr03_required_text_presence_null_blank_whitespace_and_unicode() -> None
 
     issues_by_id = {iss.stable_id: iss for iss in report.issues}
 
-    assert issues_by_id[u1].reason == SourceRequirednessIssueReason.MISSING_VALUE
-    assert issues_by_id[u2].reason == SourceRequirednessIssueReason.BLANK_TEXT
-    assert issues_by_id[u3].reason == SourceRequirednessIssueReason.BLANK_TEXT
-    assert issues_by_id[u4].reason == SourceRequirednessIssueReason.BLANK_TEXT
+    assert issues_by_id[u1].reason is SourceRequirednessIssueReason.MISSING_VALUE
+    assert issues_by_id[u2].reason is SourceRequirednessIssueReason.BLANK_TEXT
+    assert issues_by_id[u3].reason is SourceRequirednessIssueReason.BLANK_TEXT
+    assert issues_by_id[u4].reason is SourceRequirednessIssueReason.BLANK_TEXT
     assert u5 not in issues_by_id
 
     # Verify exact raw value and whitespace preservation in retained snapshot
@@ -284,7 +366,7 @@ def test_sr03_required_text_presence_null_blank_whitespace_and_unicode() -> None
     )
     rep_date_none = evaluate_source_requiredness(snap_date_none)
     assert len(rep_date_none.issues) == 1
-    assert rep_date_none.issues[0].reason == SourceRequirednessIssueReason.MISSING_VALUE
+    assert rep_date_none.issues[0].reason is SourceRequirednessIssueReason.MISSING_VALUE
     assert rep_date_none.issues[0].field_name == "date_raw"
 
     # Non-null invalid date is rejected upstream during snapshot construction
@@ -301,7 +383,11 @@ def test_sr03_required_text_presence_null_blank_whitespace_and_unicode() -> None
 
 
 def test_sr04_numeric_zero_signed_values_and_type_preservation() -> None:
-    """SR-04: Numeric zero, negative numbers, and Decimal formats count as present."""
+    """SR-04: Numeric zero, negative numbers, and Decimal formats count as present.
+
+    Cites upstream canonicalization test for Boolean, Float, and nonfinite rejection:
+    - tests/test_canonical_hashing.py::test_number_canonicalization_and_type_rejections
+    """
     u1 = _make_uuid7(b"sr04_zero_int")
     u2 = _make_uuid7(b"sr04_zero_str")
     u3 = _make_uuid7(b"sr04_zero_decimal")
@@ -344,11 +430,17 @@ def test_sr04_numeric_zero_signed_values_and_type_preservation() -> None:
     assert snap_r4.raw_values["amount_toman_raw"] == "-50000"
 
     # Upstream constructor rejects Float and Boolean
-    u_bad = _make_uuid7(b"sr04_bad_float")
-    r_bad = _valid_buy_sell_row()
-    r_bad["quantity_raw"] = 10.5  # float is forbidden by raw contracts
+    u_bad_float = _make_uuid7(b"sr04_bad_float")
+    r_bad_float = _valid_buy_sell_row()
+    r_bad_float["quantity_raw"] = 10.5
     with pytest.raises(ContractError):
-        _build_snapshot_with_rows(buy_sell_rows=[(u_bad, r_bad)])
+        _build_snapshot_with_rows(buy_sell_rows=[(u_bad_float, r_bad_float)])
+
+    u_bad_bool = _make_uuid7(b"sr04_bad_bool")
+    r_bad_bool = _valid_buy_sell_row()
+    r_bad_bool["unit_price_toman_raw"] = True
+    with pytest.raises(ContractError):
+        _build_snapshot_with_rows(buy_sell_rows=[(u_bad_bool, r_bad_bool)])
 
 
 # ---------------------------------------------------------------------------
@@ -357,41 +449,129 @@ def test_sr04_numeric_zero_signed_values_and_type_preservation() -> None:
 
 
 def test_sr05_optional_fields_null_and_blank_permitted() -> None:
-    """SR-05: Optional fields may be null/blank without emitting any issue."""
-    u1 = _make_uuid7(b"sr05_bs_opt_none")
-    r1 = _valid_buy_sell_row()
-    r1["discount_toman_raw"] = None
-    r1["notes_raw"] = None
+    """SR-05: Optional fields null/blank; C/D/H/HA/HS and unresolved rows retained."""
+    # 1. Individual optional null fields across all 4 sheets
+    u_bs_disc = _make_uuid7(b"sr05_bs_disc")
+    r_bs_disc = _valid_buy_sell_row()
+    r_bs_disc["discount_toman_raw"] = None
 
-    u2 = _make_uuid7(b"sr05_rp_opt_blank")
-    r2 = _valid_receipts_payments_row()
-    r2["notes_raw"] = ""
-    r2["account_code_raw"] = "   "
-    r2["customer_flag_raw"] = None
+    u_bs_notes = _make_uuid7(b"sr05_bs_notes")
+    r_bs_notes = _valid_buy_sell_row()
+    r_bs_notes["notes_raw"] = None
 
-    u3 = _make_uuid7(b"sr05_im_purity_none")
-    r3 = _valid_inventory_movements_row()
-    r3["purity_raw"] = None
-    r3["notes_raw"] = ""
-    r3["customer_flag_raw"] = " "
+    u_bs_all_opt = _make_uuid7(b"sr05_bs_all_opt")
+    r_bs_all_opt = _valid_buy_sell_row()
+    r_bs_all_opt["discount_toman_raw"] = None
+    r_bs_all_opt["notes_raw"] = None
 
-    u4 = _make_uuid7(b"sr05_bp_phone_none")
-    r4 = _valid_business_parties_row()
-    r4["phone_number_raw"] = None
+    u_rp_notes = _make_uuid7(b"sr05_rp_notes")
+    r_rp_notes = _valid_receipts_payments_row()
+    r_rp_notes["notes_raw"] = None
 
-    snap = _build_snapshot_with_rows(
-        buy_sell_rows=[(u1, r1)],
-        receipts_payments_rows=[(u2, r2)],
-        inventory_movements_rows=[(u3, r3)],
-        business_parties_rows=[(u4, r4)],
+    u_rp_acc = _make_uuid7(b"sr05_rp_acc")
+    r_rp_acc = _valid_receipts_payments_row()
+    r_rp_acc["account_code_raw"] = None
+
+    u_rp_cust = _make_uuid7(b"sr05_rp_cust")
+    r_rp_cust = _valid_receipts_payments_row()
+    r_rp_cust["customer_flag_raw"] = None
+
+    u_rp_all_opt = _make_uuid7(b"sr05_rp_all_opt")
+    r_rp_all_opt = _valid_receipts_payments_row()
+    r_rp_all_opt["notes_raw"] = None
+    r_rp_all_opt["account_code_raw"] = None
+    r_rp_all_opt["customer_flag_raw"] = None
+
+    u_im_purity = _make_uuid7(b"sr05_im_purity")
+    r_im_purity = _valid_inventory_movements_row()
+    r_im_purity["purity_raw"] = None
+
+    u_im_notes = _make_uuid7(b"sr05_im_notes")
+    r_im_notes = _valid_inventory_movements_row()
+    r_im_notes["notes_raw"] = None
+
+    u_im_cust = _make_uuid7(b"sr05_im_cust")
+    r_im_cust = _valid_inventory_movements_row()
+    r_im_cust["customer_flag_raw"] = None
+
+    u_im_all_opt = _make_uuid7(b"sr05_im_all_opt")
+    r_im_all_opt = _valid_inventory_movements_row()
+    r_im_all_opt["purity_raw"] = None
+    r_im_all_opt["notes_raw"] = None
+    r_im_all_opt["customer_flag_raw"] = None
+
+    u_bp_phone = _make_uuid7(b"sr05_bp_phone")
+    r_bp_phone = _valid_business_parties_row()
+    r_bp_phone["phone_number_raw"] = None
+
+    snap_opts = _build_snapshot_with_rows(
+        buy_sell_rows=[
+            (u_bs_disc, r_bs_disc),
+            (u_bs_notes, r_bs_notes),
+            (u_bs_all_opt, r_bs_all_opt),
+        ],
+        receipts_payments_rows=[
+            (u_rp_notes, r_rp_notes),
+            (u_rp_acc, r_rp_acc),
+            (u_rp_cust, r_rp_cust),
+            (u_rp_all_opt, r_rp_all_opt),
+        ],
+        inventory_movements_rows=[
+            (u_im_purity, r_im_purity),
+            (u_im_notes, r_im_notes),
+            (u_im_cust, r_im_cust),
+            (u_im_all_opt, r_im_all_opt),
+        ],
+        business_parties_rows=[(u_bp_phone, r_bp_phone)],
     )
-    report = evaluate_source_requiredness(snap)
+    rep_opts = evaluate_source_requiredness(snap_opts)
+    assert rep_opts.passes_requiredness is True
+    assert rep_opts.issue_count == 0
 
-    assert report.checked_row_count == 4
-    assert report.failed_row_count == 0
-    assert report.issue_count == 0
-    assert report.passes_requiredness is True
-    assert report.issues == ()
+    # 2. C/D/H/HA/HS with blank notes in دریافت-پرداخت
+    cd_rows = []
+    for code in ("C", "D", "H", "HA", "HS"):
+        u_empty = _make_uuid7(f"sr05_code_{code}_empty".encode())
+        r_empty = _valid_receipts_payments_row()
+        r_empty["entry_type_raw"] = code
+        r_empty["notes_raw"] = ""
+        cd_rows.append((u_empty, r_empty))
+
+        u_spaces = _make_uuid7(f"sr05_code_{code}_spaces".encode())
+        r_spaces = _valid_receipts_payments_row()
+        r_spaces["entry_type_raw"] = code
+        r_spaces["notes_raw"] = "   \t\n "
+        cd_rows.append((u_spaces, r_spaces))
+
+    snap_cd = _build_snapshot_with_rows(receipts_payments_rows=cd_rows)
+    rep_cd = evaluate_source_requiredness(snap_cd)
+    assert rep_cd.passes_requiredness is True
+    assert rep_cd.checked_row_count == 10
+    assert rep_cd.issue_count == 0
+
+    # 3. Nonblank unknown names/items/codes and RS rows preserved
+    u_unknown = _make_uuid7(b"sr05_unknown_fields")
+    r_unknown_bs = _valid_buy_sell_row()
+    r_unknown_bs["party_name_raw"] = "شخص_ناشناخته_در_مستر_۱"
+    r_unknown_bs["item_name_raw"] = "کالای_ناشناخته_در_مستر_۲"
+    r_unknown_bs["transaction_type_raw"] = "کد_نامشخص_۳"
+
+    u_rs = _make_uuid7(b"sr05_unpaired_rs")
+    r_rs = _valid_receipts_payments_row()
+    r_rs["entry_type_raw"] = "RS"
+
+    snap_unres = _build_snapshot_with_rows(
+        buy_sell_rows=[(u_unknown, r_unknown_bs)],
+        receipts_payments_rows=[(u_rs, r_rs)],
+    )
+    rep_unres = evaluate_source_requiredness(snap_unres)
+    assert rep_unres.passes_requiredness is True
+    assert rep_unres.issue_count == 0
+    assert (
+        rep_unres.snapshot.all_rows_by_id[u_unknown].raw_values["party_name_raw"]
+        == "شخص_ناشناخته_در_مستر_۱"
+    )
+    assert rep_unres.snapshot.all_rows_by_id[u_rs].raw_values["entry_type_raw"] == "RS"
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +647,13 @@ def test_sr06_mixed_four_sheet_snapshot_issue_aggregation_and_counts() -> None:
 
 
 def test_sr07_four_empty_sheets_and_upstream_structure_rejection() -> None:
-    """SR-07: Four present empty sheets produce passes_requiredness=True."""
+    """SR-07: Four present empty sheets produce passes_requiredness=True.
+
+    Cites upstream structural rejection tests:
+    - tests/test_source_change_plan.py::test_full_snapshot_duplicate_sheet_rejected
+    - tests/test_source_change_plan.py::test_full_snapshot_unknown_sheet_rejected
+    - tests/test_source_change_plan.py::test_invalid_uuid_rejected_in_row_input
+    """
     snap = _build_snapshot_with_rows()
     report = evaluate_source_requiredness(snap)
 
@@ -482,7 +668,6 @@ def test_sr07_four_empty_sheets_and_upstream_structure_rejection() -> None:
     sheets_incomplete = [
         SourceSheetInput(sheet_name="خرید-فروش", rows=[]),
         SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[]),
-        # missing ورود-خروج and لیست کسبه
     ]
     with pytest.raises(ContractError):
         build_source_workbook_snapshot(sheets_incomplete)
@@ -494,7 +679,7 @@ def test_sr07_four_empty_sheets_and_upstream_structure_rejection() -> None:
 
 
 def test_sr08_constructor_invariants_immutability_and_tamper_resistance() -> None:
-    """SR-08: Validate issue and report constructor invariants and immutability."""
+    """SR-08: Validate constructor invariants, immutability, and reason types."""
     u = _make_uuid7(b"sr08_valid_id")
 
     # Valid issue construction
@@ -506,6 +691,7 @@ def test_sr08_constructor_invariants_immutability_and_tamper_resistance() -> Non
     )
     assert iss.sheet_name == "خرید-فروش"
     assert iss.field_name == "date_raw"
+    assert iss.reason is SourceRequirednessIssueReason.MISSING_VALUE
 
     # Immutability: setting attributes fails
     with pytest.raises((FrozenInstanceError, AttributeError)):
@@ -548,14 +734,63 @@ def test_sr08_constructor_invariants_immutability_and_tamper_resistance() -> Non
             reason=SourceRequirednessIssueReason.MISSING_VALUE,
         )
 
-    # Invalid reason
+    # R1: Four invalid reason type cases
+    class ForeignReason(StrEnum):
+        MISSING_VALUE = "missing_value"
+        BLANK_TEXT = "blank_text"
+
+    # 1. Canonical string "missing_value"
     with pytest.raises(SourceRequirednessInputError):
         SourceRequirednessIssue(
             sheet_name="خرید-فروش",
             stable_id=u,
             field_name="date_raw",
-            reason="not_a_valid_reason",  # type: ignore[arg-type]
+            reason="missing_value",  # type: ignore[arg-type]
         )
+
+    # 2. Canonical string "blank_text"
+    with pytest.raises(SourceRequirednessInputError):
+        SourceRequirednessIssue(
+            sheet_name="خرید-فروش",
+            stable_id=u,
+            field_name="date_raw",
+            reason="blank_text",  # type: ignore[arg-type]
+        )
+
+    # 3. Foreign StrEnum member "missing_value"
+    with pytest.raises(SourceRequirednessInputError):
+        SourceRequirednessIssue(
+            sheet_name="خرید-فروش",
+            stable_id=u,
+            field_name="date_raw",
+            reason=ForeignReason.MISSING_VALUE,  # type: ignore[arg-type]
+        )
+
+    # 4. Foreign StrEnum member "blank_text"
+    with pytest.raises(SourceRequirednessInputError):
+        SourceRequirednessIssue(
+            sheet_name="خرید-فروش",
+            stable_id=u,
+            field_name="date_raw",
+            reason=ForeignReason.BLANK_TEXT,  # type: ignore[arg-type]
+        )
+
+    # Genuine member identity retention
+    iss_mv = SourceRequirednessIssue(
+        sheet_name="خرید-فروش",
+        stable_id=u,
+        field_name="date_raw",
+        reason=SourceRequirednessIssueReason.MISSING_VALUE,
+    )
+    assert iss_mv.reason is SourceRequirednessIssueReason.MISSING_VALUE
+
+    iss_bt = SourceRequirednessIssue(
+        sheet_name="خرید-فروش",
+        stable_id=u,
+        field_name="party_name_raw",
+        reason=SourceRequirednessIssueReason.BLANK_TEXT,
+    )
+    assert iss_bt.reason is SourceRequirednessIssueReason.BLANK_TEXT
 
     # BLANK_TEXT on non-text field
     with pytest.raises(SourceRequirednessInputError):
@@ -566,27 +801,49 @@ def test_sr08_constructor_invariants_immutability_and_tamper_resistance() -> Non
             reason=SourceRequirednessIssueReason.BLANK_TEXT,
         )
 
-    # Report construction validation
-    snap = _build_snapshot_with_rows()
-    report = SourceRequirednessReport(snap)
-    assert report.passes_requiredness is True
+    # Report direct construction on an ACTUALLY FAILING snapshot
+    u_fail = _make_uuid7(b"sr08_failing_row")
+    r_fail = _valid_buy_sell_row()
+    r_fail["date_raw"] = None
+    r_fail["party_name_raw"] = "   "
+    failing_snap = _build_snapshot_with_rows(buy_sell_rows=[(u_fail, r_fail)])
+
+    # Construct directly
+    failing_report = SourceRequirednessReport(failing_snap)
+    assert failing_report.passes_requiredness is False
+    assert failing_report.checked_row_count == 1
+    assert failing_report.failed_row_count == 1
+    assert failing_report.issue_count == 2
+    assert len(failing_report.issues) == 2
+    assert failing_report.issues[0].field_name == "date_raw"
+    assert (
+        failing_report.issues[0].reason is SourceRequirednessIssueReason.MISSING_VALUE
+    )
+    assert failing_report.issues[1].field_name == "party_name_raw"
+    assert failing_report.issues[1].reason is SourceRequirednessIssueReason.BLANK_TEXT
 
     # Report immutability
     with pytest.raises((FrozenInstanceError, AttributeError)):
-        report.passes_requiredness = False  # type: ignore[misc]
+        failing_report.passes_requiredness = True  # type: ignore[misc]
 
-    # Reject extra args or kwargs attempting to forge passing status or issues
+    # Reject attempts to inject passing flags, omit issues, or supply fabricated counts
     with pytest.raises(SourceRequirednessInputError):
-        SourceRequirednessReport(
-            snap,
-            passes_requiredness=True,
-        )
+        SourceRequirednessReport(failing_snap, passes_requiredness=True)
 
     with pytest.raises(SourceRequirednessInputError):
-        SourceRequirednessReport(
-            snap,
-            issues=(),
-        )
+        SourceRequirednessReport(failing_snap, issues=())
+
+    with pytest.raises(SourceRequirednessInputError):
+        SourceRequirednessReport(failing_snap, checked_row_count=0)
+
+    with pytest.raises(SourceRequirednessInputError):
+        SourceRequirednessReport(failing_snap, failed_row_count=0)
+
+    with pytest.raises(SourceRequirednessInputError):
+        SourceRequirednessReport(failing_snap, issue_count=0)
+
+    with pytest.raises(SourceRequirednessInputError):
+        SourceRequirednessReport(failing_snap, "unsupported_positional_arg")
 
 
 # ---------------------------------------------------------------------------
@@ -598,24 +855,62 @@ def test_sr09_error_messages_and_repr_masking_without_raw_leakage() -> None:
     """SR-09: Error messages and repr must not reveal raw cell values or notes."""
     secret_marker = "SECRET_CREDENTIAL_DATA_007"
 
-    # Input error with marker in argument must not leak marker
-    with pytest.raises(SourceRequirednessInputError) as exc_info:
+    # 1. Invalid supplied snapshot arguments to both public entry points
+    for bad_snap in (None, "not_a_snapshot", 12345, {"sheet": "fake"}):
+        with pytest.raises(SourceRequirednessInputError) as exc1:
+            evaluate_source_requiredness(bad_snap)  # type: ignore[arg-type]
+        assert str(bad_snap) not in str(exc1.value)
+
+        with pytest.raises(SourceRequirednessInputError) as exc2:
+            SourceRequirednessReport(bad_snap)  # type: ignore[arg-type]
+        assert str(bad_snap) not in str(exc2.value)
+
+    # 2. Ordinary signature errors remain TypeError
+    with pytest.raises(TypeError):
+        evaluate_source_requiredness()  # type: ignore[call-arg]
+
+    with pytest.raises(TypeError):
+        SourceRequirednessReport()  # type: ignore[call-arg]
+
+    # 3. Invalid Issue metadata with marker-bearing values
+    with pytest.raises(SourceRequirednessInputError) as exc_sheet:
         SourceRequirednessIssue(
             sheet_name=f"خرید-فروش_{secret_marker}",
             stable_id=_make_uuid7(b"sr09_id"),
             field_name="date_raw",
             reason=SourceRequirednessIssueReason.MISSING_VALUE,
         )
-    assert secret_marker not in str(exc_info.value)
+    assert secret_marker not in str(exc_sheet.value)
 
-    # Snapshot containing sensitive data in raw values
+    with pytest.raises(SourceRequirednessInputError) as exc_field:
+        SourceRequirednessIssue(
+            sheet_name="خرید-فروش",
+            stable_id=_make_uuid7(b"sr09_id"),
+            field_name=f"field_{secret_marker}",
+            reason=SourceRequirednessIssueReason.MISSING_VALUE,
+        )
+    assert secret_marker not in str(exc_field.value)
+
+    # 4. Snapshot with a REAL ISSUE and synthetic markers in names/notes/contact
     u = _make_uuid7(b"sr09_secret")
-    r = _valid_buy_sell_row()
-    r["notes_raw"] = secret_marker
-    r["party_name_raw"] = f"Party_{secret_marker}"
-    snap = _build_snapshot_with_rows(buy_sell_rows=[(u, r)])
+    r_bs = _valid_buy_sell_row()
+    r_bs["notes_raw"] = f"Note_{secret_marker}"
+    r_bs["party_name_raw"] = f"Party_{secret_marker}"
+    r_bs["unit_price_toman_raw"] = None  # REAL ISSUE!
+
+    u_bp = _make_uuid7(b"sr09_secret_bp")
+    r_bp = _valid_business_parties_row()
+    r_bp["phone_number_raw"] = f"Phone_{secret_marker}"
+
+    snap = _build_snapshot_with_rows(
+        buy_sell_rows=[(u, r_bs)],
+        business_parties_rows=[(u_bp, r_bp)],
+    )
 
     report = evaluate_source_requiredness(snap)
+    assert len(report.issues) > 0  # Assert non-empty issues tuple!
+    assert report.passes_requiredness is False
+
     report_repr = repr(report)
     report_str = str(report)
 
@@ -636,32 +931,62 @@ def test_sr09_error_messages_and_repr_masking_without_raw_leakage() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sr10_purity_repeatability_and_raw_preservation() -> None:
-    """SR-10: Repeated evaluation gives identical issues and preserves raw data."""
+def test_sr10_purity_repeatability_and_raw_preservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SR-10: Repeated evaluation gives identical issues without seams."""
     u1 = _make_uuid7(b"sr10_u1")
     r1 = _valid_buy_sell_row()
     r1["date_raw"] = None
 
+    # 1. Build fixtures BEFORE applying the side-effect guard
     snap = _build_snapshot_with_rows(buy_sell_rows=[(u1, r1)])
 
     orig_row = snap.all_rows_by_id[u1]
     orig_hash = orig_row.source_hash
     orig_raw_vals = dict(orig_row.raw_values)
 
+    # 2. Forbid filesystem I/O, network, clock, and UUID generation during evaluation
+    def _forbidden_call(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(
+            "Forbidden side-effect invoked during pure requiredness evaluation!"
+        )
+
+    import builtins
+    import socket
+    from pathlib import Path
+
+    monkeypatch.setattr(time, "time", _forbidden_call)
+    monkeypatch.setattr(time, "monotonic", _forbidden_call)
+    monkeypatch.setattr(time, "monotonic_ns", _forbidden_call)
+    monkeypatch.setattr(uuid, "uuid4", _forbidden_call)
+    if hasattr(uuid, "uuid7"):
+        monkeypatch.setattr(uuid, "uuid7", _forbidden_call)
+    monkeypatch.setattr(socket, "socket", _forbidden_call)
+    monkeypatch.setattr(builtins, "open", _forbidden_call)
+    monkeypatch.setattr(Path, "read_bytes", _forbidden_call)
+    monkeypatch.setattr(Path, "write_bytes", _forbidden_call)
+    monkeypatch.setattr(Path, "read_text", _forbidden_call)
+    monkeypatch.setattr(Path, "write_text", _forbidden_call)
+
+    # 3. Evaluate and directly construct reports under the guard
     rep1 = evaluate_source_requiredness(snap)
-    rep2 = evaluate_source_requiredness(snap)
+    rep2 = SourceRequirednessReport(snap)
 
     assert rep1.issues == rep2.issues
-    assert rep1.checked_row_count == rep2.checked_row_count
-    assert rep1.failed_row_count == rep2.failed_row_count
-    assert rep1.issue_count == rep2.issue_count
-    assert rep1.passes_requiredness == rep2.passes_requiredness
+    assert rep1.checked_row_count == rep2.checked_row_count == 1
+    assert rep1.failed_row_count == rep2.failed_row_count == 1
+    assert rep1.issue_count == rep2.issue_count == 1
+    assert rep1.passes_requiredness == rep2.passes_requiredness is False
 
-    # Assert row object and values in snapshot are untouched
-    after_row = rep1.snapshot.all_rows_by_id[u1]
-    assert after_row is orig_row
-    assert after_row.source_hash == orig_hash
-    assert dict(after_row.raw_values) == orig_raw_vals
+    # Assert exact identities and raw preservation
+    after_row1 = rep1.snapshot.all_rows_by_id[u1]
+    after_row2 = rep2.snapshot.all_rows_by_id[u1]
+    assert after_row1 is orig_row
+    assert after_row2 is orig_row
+    assert after_row1.raw_values is orig_row.raw_values
+    assert after_row1.source_hash == orig_hash
+    assert dict(after_row1.raw_values) == orig_raw_vals
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +997,12 @@ def test_sr10_purity_repeatability_and_raw_preservation() -> None:
 def test_sr11_xlsx_reader_integration_synthetic_workbooks(
     tmp_path: Any,
 ) -> None:
-    """SR-11: Synthetic XLSX -> Reader -> Preflight with missing & formula exclusion."""
+    """SR-11: Synthetic XLSX -> Reader -> Preflight with missing & formula exclusion.
+
+    Cites existing accepted Reader failure/preservation tests:
+    - tests/test_xlsx_source_reader.py::test_r6_all_or_nothing_fourth_sheet_late_failure
+    - tests/test_xlsx_source_reader.py::test_r6_read_only_integrity_and_clean_cleanup
+    """
     from pathlib import Path
 
     p_dir = Path(tmp_path)
@@ -689,27 +1019,21 @@ def test_sr11_xlsx_reader_integration_synthetic_workbooks(
     u4 = _make_uuid7(b"sr11_bs_r5")
 
     r2 = _sample_buy_sell_row_data(u1, 2)
-
     r3 = _sample_buy_sell_row_data(u2, 3)
     r3["B"] = None  # Date cell missing
-
     r4 = _sample_buy_sell_row_data(u3, 4)
     r4["C"] = "   "  # Party name blank text
-
     r5 = _sample_buy_sell_row_data(u4, 5)
     r5["G"] = {"f": "1000*2", "v": "2000"}  # Formula in required unit price column
 
     builder.add_sheet_rows("خرید-فروش", [r2, r3, r4, r5])
 
-    # 2. Other 3 sheets: 1 valid row each
     u_rp = _make_uuid7(b"sr11_rp_r2")
     builder.add_sheet_rows(
         "دریافت-پرداخت", [_sample_receipts_payments_row_data(u_rp, 2)]
     )
-
     u_im = _make_uuid7(b"sr11_im_r2")
     builder.add_sheet_rows("ورود-خروج", [_sample_inventory_movements_row_data(u_im, 2)])
-
     u_bp = _make_uuid7(b"sr11_bp_r2")
     builder.add_sheet_rows("لیست کسبه", [_sample_business_parties_row_data(u_bp, 2)])
 
@@ -717,12 +1041,13 @@ def test_sr11_xlsx_reader_integration_synthetic_workbooks(
     wb_bytes = builder.build_bytes()
     wb_path.write_bytes(wb_bytes)
 
-    # Run WP-05 Reader
+    # Assert read-only byte preservation across Reader -> Preflight
+    orig_bytes_gen1 = wb_path.read_bytes()
     read_res = read_xlsx_source_snapshot(wb_path)
     assert isinstance(read_res.snapshot, ValidatedSourceWorkbookSnapshot)
 
-    # Evaluate requiredness over Reader snapshot
     report = evaluate_source_requiredness(read_res.snapshot)
+    assert wb_path.read_bytes() == orig_bytes_gen1  # Read-only bytes unchanged!
 
     assert report.checked_row_count == 7
     assert report.failed_row_count == 3
@@ -731,16 +1056,15 @@ def test_sr11_xlsx_reader_integration_synthetic_workbooks(
 
     issues_by_id = {iss.stable_id: iss for iss in report.issues}
     assert issues_by_id[u2].field_name == "date_raw"
-    assert issues_by_id[u2].reason == SourceRequirednessIssueReason.MISSING_VALUE
+    assert issues_by_id[u2].reason is SourceRequirednessIssueReason.MISSING_VALUE
 
     assert issues_by_id[u3].field_name == "party_name_raw"
-    assert issues_by_id[u3].reason == SourceRequirednessIssueReason.BLANK_TEXT
+    assert issues_by_id[u3].reason is SourceRequirednessIssueReason.BLANK_TEXT
 
     assert issues_by_id[u4].field_name == "unit_price_toman_raw"
-    assert issues_by_id[u4].reason == SourceRequirednessIssueReason.MISSING_VALUE
+    assert issues_by_id[u4].reason is SourceRequirednessIssueReason.MISSING_VALUE
 
-    # Verify that changing only derived formula/cache column I (total_amount)
-    # does NOT change raw values, source hash, or requiredness issues
+    # Generation 2: Changing only derived formula/cache column I (total_amount)
     builder_mod = SyntheticXlsxBuilder()
     r2_mod = dict(r2)
     r2_mod["I"] = {"f": "9999", "v": "9999"}  # Derived column formula
@@ -754,12 +1078,16 @@ def test_sr11_xlsx_reader_integration_synthetic_workbooks(
     builder_mod.add_sheet_rows(
         "لیست کسبه", [_sample_business_parties_row_data(u_bp, 2)]
     )
+
     wb_mod_path = p_dir / "sr11_source_mod.xlsx"
     wb_mod_path.write_bytes(builder_mod.build_bytes())
 
+    orig_bytes_gen2 = wb_mod_path.read_bytes()
     read_res_mod = read_xlsx_source_snapshot(wb_mod_path)
     assert isinstance(read_res_mod.snapshot, ValidatedSourceWorkbookSnapshot)
+
     report_mod = evaluate_source_requiredness(read_res_mod.snapshot)
+    assert wb_mod_path.read_bytes() == orig_bytes_gen2  # Read-only bytes unchanged!
 
     assert report_mod.issues == report.issues
     assert report_mod.checked_row_count == report.checked_row_count
@@ -771,120 +1099,249 @@ def test_sr11_xlsx_reader_integration_synthetic_workbooks(
 
 
 # ---------------------------------------------------------------------------
-# SR-12: Independent Property Oracle Under Permutations
+# SR-12: Independent Property Oracle Under Permutations & Transitions
 # ---------------------------------------------------------------------------
 
 
 def _independent_oracle(
-    snapshot: ValidatedSourceWorkbookSnapshot,
+    sheet_rows_map: dict[str, list[tuple[uuid.UUID, dict[str, Any]]]],
 ) -> tuple[tuple[tuple[str, uuid.UUID, str, str], ...], int, int, int, bool]:
-    """Independent oracle for required-field evaluation without production helpers."""
-    oracle_required = {
-        "خرید-فروش": (
-            "date_raw",
-            "party_name_raw",
-            "transaction_type_raw",
-            "item_name_raw",
-            "quantity_raw",
-            "unit_price_toman_raw",
-        ),
-        "دریافت-پرداخت": (
-            "date_raw",
-            "party_name_raw",
-            "entry_type_raw",
-            "amount_toman_raw",
-        ),
-        "ورود-خروج": (
-            "date_raw",
-            "party_name_raw",
-            "movement_type_raw",
-            "item_name_raw",
-            "quantity_raw",
-        ),
-        "لیست کسبه": ("party_name_raw",),
-    }
-    oracle_text_fields = {
-        "خرید-فروش": {
-            "date_raw",
-            "party_name_raw",
-            "transaction_type_raw",
-            "item_name_raw",
-        },
-        "دریافت-پرداخت": {"date_raw", "party_name_raw", "entry_type_raw"},
-        "ورود-خروج": {
-            "date_raw",
-            "party_name_raw",
-            "movement_type_raw",
-            "item_name_raw",
-        },
-        "لیست کسبه": {"party_name_raw"},
-    }
+    """Independent oracle deriving expected issues directly from input specs."""
     approved_sheets = (
         "خرید-فروش",
         "دریافت-پرداخت",
         "ورود-خروج",
         "لیست کسبه",
     )
-
     issues: list[tuple[str, uuid.UUID, str, str]] = []
     failing_rows: set[uuid.UUID] = set()
+    total_rows = sum(len(rows) for rows in sheet_rows_map.values())
 
     for s_name in approved_sheets:
-        sheet = snapshot.sheets[s_name]
-        for row in sheet.rows:
+        rows = sheet_rows_map.get(s_name, [])
+        # In snapshot, rows are sorted by UUID bytes
+        sorted_rows = sorted(rows, key=lambda pair: pair[0].bytes)
+        req_fields = INDEPENDENT_APPROVED_REQUIRED_FIELDS[s_name]
+        text_fields = INDEPENDENT_TEXT_FIELDS[s_name]
+
+        for u, raw_vals in sorted_rows:
             has_issue = False
-            for f_name in oracle_required[s_name]:
-                val = row.raw_values[f_name]
+            for f_name in req_fields:
+                val = raw_vals.get(f_name)
                 if val is None:
-                    issues.append((s_name, row.stable_id, f_name, "missing_value"))
+                    issues.append((s_name, u, f_name, "missing_value"))
                     has_issue = True
                 elif (
-                    f_name in oracle_text_fields[s_name]
-                    and isinstance(val, str)
-                    and val.strip() == ""
+                    f_name in text_fields and isinstance(val, str) and val.strip() == ""
                 ):
-                    issues.append((s_name, row.stable_id, f_name, "blank_text"))
+                    issues.append((s_name, u, f_name, "blank_text"))
                     has_issue = True
             if has_issue:
-                failing_rows.add(row.stable_id)
+                failing_rows.add(u)
 
     issues_tuple = tuple(issues)
     passes = len(issues_tuple) == 0
     return (
         issues_tuple,
-        snapshot.total_row_count,
+        total_rows,
         len(failing_rows),
         len(issues_tuple),
         passes,
     )
 
 
-def test_sr12_independent_property_oracle_and_permutations() -> None:
-    """SR-12: Compare against independent oracle under sheet and row permutations."""
-    u1 = _make_uuid7(b"sr12_u1")
-    u2 = _make_uuid7(b"sr12_u2")
-    u3 = _make_uuid7(b"sr12_u3")
+def test_sr12_property_permutations_and_independent_oracle() -> None:
+    """SR-12: Sheet, row, and mapping-key permutations with inverted UUID order."""
+    # Create UUIDs whose input order is reverse of their byte order
+    u_low_byte = uuid.UUID("01955f00-0000-7000-8000-000000000001")
+    u_high_byte = uuid.UUID("01955f00-0000-7000-8000-000000000009")
 
+    # Scramble mapping key order deliberately
+    r_low: dict[str, Any] = {
+        "notes_raw": "یادداشت ۱",
+        "unit_price_toman_raw": None,  # Issue!
+        "quantity_raw": "10",
+        "item_name_raw": "طلا",
+        "transaction_type_raw": "خرید",
+        "party_name_raw": "علی",
+        "discount_toman_raw": "0",
+        "date_raw": "1403/01/01",
+    }
+    r_high: dict[str, Any] = {
+        "unit_price_toman_raw": "2000",
+        "discount_toman_raw": "0",
+        "date_raw": "1403/01/02",
+        "party_name_raw": "   ",  # Issue!
+        "transaction_type_raw": "فروش",
+        "item_name_raw": "سکه",
+        "quantity_raw": "5",
+        "notes_raw": "یادداشت ۲",
+    }
+
+    # Input rows supplied in high-byte first order
+    bs_input_rows: list[tuple[uuid.UUID, dict[str, Any]]] = [
+        (u_high_byte, r_high),
+        (u_low_byte, r_low),
+    ]
+
+    u_rp = _make_uuid7(b"sr12_rp_u")
+    r_rp: dict[str, Any] = {
+        "customer_flag_raw": None,
+        "account_code_raw": "10",
+        "notes_raw": None,
+        "amount_toman_raw": "5000",
+        "entry_type_raw": "C",
+        "party_name_raw": "رضا",
+        "date_raw": "1403/01/03",
+    }
+
+    u_im = _make_uuid7(b"sr12_im_u")
+    r_im = _valid_inventory_movements_row()
+
+    u_bp = _make_uuid7(b"sr12_bp_u")
+    r_bp = _valid_business_parties_row()
+
+    sheet_specs: dict[str, list[tuple[uuid.UUID, dict[str, Any]]]] = {
+        "خرید-فروش": bs_input_rows,
+        "دریافت-پرداخت": [(u_rp, r_rp)],
+        "ورود-خروج": [(u_im, r_im)],
+        "لیست کسبه": [(u_bp, r_bp)],
+    }
+
+    # Permute sheet input order: provide sheets in reverse approved order
+    permuted_sheet_inputs = [
+        SourceSheetInput(sheet_name="لیست کسبه", rows=[(u_bp, r_bp)]),
+        SourceSheetInput(sheet_name="ورود-خروج", rows=[(u_im, r_im)]),
+        SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[(u_rp, r_rp)]),
+        SourceSheetInput(sheet_name="خرید-فروش", rows=bs_input_rows),
+    ]
+
+    snap = build_source_workbook_snapshot(permuted_sheet_inputs)
+    report = evaluate_source_requiredness(snap)
+
+    oracle_issues, oracle_checked, oracle_failed, oracle_count, oracle_passes = (
+        _independent_oracle(sheet_specs)
+    )
+
+    assert report.checked_row_count == oracle_checked == 5
+    assert report.failed_row_count == oracle_failed == 2
+    assert report.issue_count == oracle_count == 2
+    assert report.passes_requiredness == oracle_passes is False
+
+    prod_issue_tuples = tuple(
+        (iss.sheet_name, iss.stable_id, iss.field_name, iss.reason.value)
+        for iss in report.issues
+    )
+    assert prod_issue_tuples == oracle_issues
+
+
+def test_sr12_property_single_value_mutation_transitions() -> None:
+    """SR-12: Mutating one required value changes only that issue."""
+    u = _make_uuid7(b"sr12_mutation_target")
+
+    # State 1: Present (valid nonblank text)
+    r_present = _valid_buy_sell_row()
+    r_present["party_name_raw"] = "  شرکت نمونه معتبر  "  # nonblank surrounding ws
+    snap1 = _build_snapshot_with_rows(buy_sell_rows=[(u, r_present)])
+    rep1 = evaluate_source_requiredness(snap1)
+    assert rep1.passes_requiredness is True
+    assert rep1.issue_count == 0
+
+    # State 2: None (missing)
+    r_none = dict(r_present)
+    r_none["party_name_raw"] = None
+    snap2 = _build_snapshot_with_rows(buy_sell_rows=[(u, r_none)])
+    rep2 = evaluate_source_requiredness(snap2)
+    assert rep2.passes_requiredness is False
+    assert rep2.issue_count == 1
+    assert rep2.issues[0].field_name == "party_name_raw"
+    assert rep2.issues[0].reason is SourceRequirednessIssueReason.MISSING_VALUE
+
+    # State 3: Blank text ("   \t")
+    r_blank = dict(r_present)
+    r_blank["party_name_raw"] = "   \t"
+    snap3 = _build_snapshot_with_rows(buy_sell_rows=[(u, r_blank)])
+    rep3 = evaluate_source_requiredness(snap3)
+    assert rep3.passes_requiredness is False
+    assert rep3.issue_count == 1
+    assert rep3.issues[0].field_name == "party_name_raw"
+    assert rep3.issues[0].reason is SourceRequirednessIssueReason.BLANK_TEXT
+
+
+def test_sr12_property_exact_snapshot_raw_and_hash_retention() -> None:
+    """SR-12: Snapshot, raw values, UUID, zero/signed values, and hashes retained."""
+    u1 = _make_uuid7(b"sr12_ret_u1")
     r1 = _valid_buy_sell_row()
-    r1["quantity_raw"] = None
+    r1["unit_price_toman_raw"] = 0  # Numeric zero
+    r1["quantity_raw"] = Decimal("0")  # Decimal zero
+    r1["party_name_raw"] = "  شرکت بازرگانی پارس  "  # Surrounding whitespace
 
+    u2 = _make_uuid7(b"sr12_ret_u2")
     r2 = _valid_receipts_payments_row()
-    r2["entry_type_raw"] = "   "
+    r2["amount_toman_raw"] = "-1500000"  # Signed value
 
-    r3 = _valid_inventory_movements_row()
-
-    # Create snapshot
     snap = _build_snapshot_with_rows(
         buy_sell_rows=[(u1, r1)],
         receipts_payments_rows=[(u2, r2)],
-        inventory_movements_rows=[(u3, r3)],
-    )
-
-    oracle_issues, oracle_checked, oracle_failed, oracle_count, oracle_passes = (
-        _independent_oracle(snap)
     )
 
     report = evaluate_source_requiredness(snap)
+    assert report.passes_requiredness is True
+    assert report.snapshot is snap
+
+    row1 = report.snapshot.all_rows_by_id[u1]
+    assert row1.raw_values["unit_price_toman_raw"] == 0
+    assert row1.raw_values["quantity_raw"] == Decimal("0")
+    assert row1.raw_values["party_name_raw"] == "  شرکت بازرگانی پارس  "
+    assert row1.source_hash == snap.all_rows_by_id[u1].source_hash
+
+    row2 = report.snapshot.all_rows_by_id[u2]
+    assert row2.raw_values["amount_toman_raw"] == "-1500000"
+    assert row2.source_hash == snap.all_rows_by_id[u2].source_hash
+
+
+@given(
+    st.lists(
+        st.tuples(
+            st.sampled_from(["present", "none", "blank"]),
+            st.sampled_from(["present", "none"]),
+        ),
+        min_size=1,
+        max_size=5,
+    )
+)
+@settings(max_examples=15, deadline=None)
+def test_sr12_hypothesis_randomized_presence_combinations(
+    row_specs: list[tuple[str, str]],
+) -> None:
+    """SR-12: Hypothesis property test verifying independent oracle on mixtures."""
+    bs_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for idx, (party_mode, price_mode) in enumerate(row_specs):
+        u = _make_uuid7(f"sr12_hypo_{idx}".encode())
+        data = _valid_buy_sell_row()
+        if party_mode == "none":
+            data["party_name_raw"] = None
+        elif party_mode == "blank":
+            data["party_name_raw"] = "   "
+
+        if price_mode == "none":
+            data["unit_price_toman_raw"] = None
+
+        bs_rows.append((u, data))
+
+    sheet_specs = {
+        "خرید-فروش": bs_rows,
+        "دریافت-پرداخت": [],
+        "ورود-خروج": [],
+        "لیست کسبه": [],
+    }
+
+    snap = _build_snapshot_with_rows(buy_sell_rows=bs_rows)
+    report = evaluate_source_requiredness(snap)
+
+    oracle_issues, oracle_checked, oracle_failed, oracle_count, oracle_passes = (
+        _independent_oracle(sheet_specs)
+    )
 
     assert report.checked_row_count == oracle_checked
     assert report.failed_row_count == oracle_failed
@@ -905,9 +1362,6 @@ def test_sr12_independent_property_oracle_and_permutations() -> None:
 
 def test_sr13_scale_15000_row_synthetic_benchmark() -> None:
     """SR-13: 15,000-row synthetic evaluation executes linearly and preserves hashes."""
-    # Generate 15,000 rows across 4 sheets:
-    # - 12,000 valid rows
-    # - 3,000 rows with missing/blank fields (1,000 in BS, 1,000 in RP, 1,000 in IM)
     total_rows = 15000
     rows_per_sheet = total_rows // 4  # 3,750 per sheet
 
@@ -929,6 +1383,7 @@ def test_sr13_scale_15000_row_synthetic_benchmark() -> None:
             res.append((u, data))
         return res
 
+    t_fixture_start = time.perf_counter()
     bs_rows = make_sheet_rows(
         1, _valid_buy_sell_row, "unit_price_toman_raw", is_text_field=False
     )
@@ -946,22 +1401,60 @@ def test_sr13_scale_15000_row_synthetic_benchmark() -> None:
         inventory_movements_rows=im_rows,
         business_parties_rows=bp_rows,
     )
+    t_fixture_duration = time.perf_counter() - t_fixture_start
     assert snap.total_row_count == 15000
 
-    # Measure pure requiredness evaluation time
-    start_t = time.perf_counter()
+    # Measure pure requiredness evaluation time separately from fixture generation
+    t_eval_start = time.perf_counter()
     report = evaluate_source_requiredness(snap)
-    eval_duration = time.perf_counter() - start_t
+    t_eval_duration = time.perf_counter() - t_eval_start
 
-    # Requiredness evaluation on 15,000 rows should be sub-second (< 0.5s)
-    assert eval_duration < 1.0, f"Evaluation took too long: {eval_duration:.4f}s"
+    print(
+        f"\n[SR-13 SCALE BENCHMARK] 15,000 rows -> "
+        f"eval_seconds: {t_eval_duration:.4f}s | "
+        f"fixture_build_seconds: {t_fixture_duration:.4f}s | "
+        f"checked_rows: {report.checked_row_count} | "
+        f"failed_rows: {report.failed_row_count} | "
+        f"issues: {report.issue_count}"
+    )
 
     assert report.checked_row_count == 15000
-    # 1,000 in BS + 1,000 in RP + 1,000 in IM = 3,000 failed rows
     assert report.failed_row_count == 3000
     assert report.issue_count == 3000
     assert report.passes_requiredness is False
     assert report.snapshot is snap
+
+    # Verify independently expected issue order and retained IDs/raw mappings/hashes
+    # Sheet 1: first 1,000 issues are unit_price_toman_raw in BS
+    for iss in report.issues[:1000]:
+        assert iss.sheet_name == "خرید-فروش"
+        assert iss.field_name == "unit_price_toman_raw"
+        assert iss.reason is SourceRequirednessIssueReason.MISSING_VALUE
+
+    # Sheet 2: next 1,000 issues are party_name_raw in RP
+    for iss in report.issues[1000:2000]:
+        assert iss.sheet_name == "دریافت-پرداخت"
+        assert iss.field_name == "party_name_raw"
+        assert iss.reason in (
+            SourceRequirednessIssueReason.MISSING_VALUE,
+            SourceRequirednessIssueReason.BLANK_TEXT,
+        )
+
+    # Sheet 3: next 1,000 issues are item_name_raw in IM
+    for iss in report.issues[2000:3000]:
+        assert iss.sheet_name == "ورود-خروج"
+        assert iss.field_name == "item_name_raw"
+        assert iss.reason in (
+            SourceRequirednessIssueReason.MISSING_VALUE,
+            SourceRequirednessIssueReason.BLANK_TEXT,
+        )
+
+    # Spot-check identity and hash retention for sample rows
+    for row_tuple in bs_rows[:5] + bp_rows[:5]:
+        u_check = row_tuple[0]
+        snap_row = report.snapshot.all_rows_by_id[u_check]
+        assert snap_row.stable_id == u_check
+        assert snap_row.source_hash == snap.all_rows_by_id[u_check].source_hash
 
 
 # ---------------------------------------------------------------------------
