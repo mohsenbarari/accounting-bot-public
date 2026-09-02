@@ -1117,16 +1117,19 @@ def test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prev
     arrived_before_wait_d = threading.Event()
     release_wait_d = threading.Event()
     notice_injected_d = False
-
     orig_wait_d = runtime_d._condition.wait
+    wait_results: list[bool] = []
 
     def hooked_wait_d(timeout: float | None = None) -> bool:
         nonlocal notice_injected_d
         if not notice_injected_d:
             notice_injected_d = True
             arrived_before_wait_d.set()
-            release_wait_d.wait(timeout=5.0)
-        return orig_wait_d(timeout)
+            release_ok = release_wait_d.wait(timeout=5.0)
+            assert release_ok, "release_wait_d timed out waiting for release"
+        res = orig_wait_d(timeout)
+        wait_results.append(res)
+        return res
 
     monkeypatch.setattr(runtime_d._condition, "wait", hooked_wait_d)
 
@@ -1134,24 +1137,53 @@ def test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prev
     runner_d = ManagedRunnerThread(runtime_d, lambda r: delivered_d.append(r))
     runner_d.start()
 
+    sender_started = threading.Event()
+    sender_done = threading.Event()
+    sender_errors: list[BaseException] = []
+
+    def sender_worker() -> None:
+        sender_started.set()
+        try:
+            runtime_d._on_adapter_event(SaveEventKind.MODIFIED, src, None)
+        except BaseException as ex:
+            sender_errors.append(ex)
+        finally:
+            sender_done.set()
+
+    sender_t = threading.Thread(target=sender_worker, name="NoticeSenderThread")
+
     try:
-        assert arrived_before_wait_d.wait(timeout=5.0)
+        assert arrived_before_wait_d.wait(timeout=5.0), (
+            "arrived_before_wait_d timed out"
+        )
         clock_d.advance_seconds(5.0)
-        runtime_d._on_adapter_event(SaveEventKind.MODIFIED, src, None)
+
+        sender_t.start()
+        assert sender_started.wait(timeout=5.0), "sender_started timed out"
+        time.sleep(0.02)
+
+        # Release runner to enter orig_wait_d, which releases _lifecycle_lock
         release_wait_d.set()
 
+        # Sender acquires lock, updates coordinator, and notifies condition
+        assert sender_done.wait(timeout=5.0), "sender_done timed out"
+        sender_t.join(timeout=5.0)
+        assert not sender_t.is_alive(), "sender thread must be stopped"
+        assert len(sender_errors) == 0, f"sender encountered error: {sender_errors}"
+
+        # Runner wait should have been woken by the sender notification (res is True)
         time.sleep(0.05)
-        clock_d.advance_seconds(3.0)
-        with runtime_d._lifecycle_lock:
-            runtime_d._condition.notify_all()
-        time.sleep(0.05)
+        assert len(wait_results) >= 1
+        assert wait_results[0] is True, "First wait timed out instead of being notified"
 
         runtime_d.request_stop()
         runner_d.join(timeout=5.0)
         runner_d.assert_clean_exit()
-        assert len(delivered_d) >= 1
+        assert runtime_d.view().state == SourceWatchRuntimeState.STOPPED
     finally:
         release_wait_d.set()
+        if sender_t.is_alive():
+            sender_t.join(timeout=5.0)
         runtime_d.request_stop()
         runner_d.join(timeout=5.0)
         mock_obs_d.stop()

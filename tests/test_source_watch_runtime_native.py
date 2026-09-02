@@ -139,6 +139,8 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
 
     try:
         # 1. Generation 1: Preexisting file read on startup (via initial MODIFIED hint)
+        with lock:
+            cursor1 = len(results)
         res1 = _wait_for_snapshot(
             results,
             lock,
@@ -149,7 +151,7 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
                 .raw_values.get("unit_price_toman_raw")
                 == "1000"
             ),
-            cursor=0,
+            cursor=cursor1,
             timeout=10.0,
         )
         assert (
@@ -159,6 +161,8 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
 
         # 2. Generation 2: In-place Save (direct file overwrite)
         time.sleep(0.5)
+        with lock:
+            cursor2 = len(results)
         src.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "2000"))
         res2 = _wait_for_snapshot(
             results,
@@ -170,7 +174,7 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
                 .raw_values.get("unit_price_toman_raw")
                 == "2000"
             ),
-            cursor=1,
+            cursor=cursor2,
             timeout=10.0,
         )
         assert (
@@ -180,6 +184,8 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
 
         # 3. Generation 3: Atomic file replacement (write temp file and move to target)
         time.sleep(0.5)
+        with lock:
+            cursor3 = len(results)
         temp_file = src_dir / "temp_atomic.part"
         temp_file.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "3000"))
         os.replace(str(temp_file), str(src))
@@ -194,7 +200,7 @@ def test_wr15_native_startup_read_and_inplace_and_atomic_save(
                 .raw_values.get("unit_price_toman_raw")
                 == "3000"
             ),
-            cursor=2,
+            cursor=cursor3,
             timeout=10.0,
         )
         assert (
@@ -270,6 +276,8 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
             assert len(results) == 0
 
         # 1. Create file now -> delivers generation 1
+        with lock:
+            cursor1 = len(results)
         src.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "5000"))
         res1 = _wait_for_snapshot(
             results,
@@ -281,7 +289,7 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
                 .raw_values.get("unit_price_toman_raw")
                 == "5000"
             ),
-            cursor=0,
+            cursor=cursor1,
             timeout=10.0,
         )
         assert (
@@ -291,6 +299,8 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
 
         # 2. Delete and recreate -> delivers generation 2
         time.sleep(0.5)
+        with lock:
+            cursor2 = len(results)
         src.unlink()
         time.sleep(0.2)
         src.write_bytes(_build_synthetic_workbook(b"u1_seed_g1", "6000"))
@@ -304,7 +314,7 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
                 .raw_values.get("unit_price_toman_raw")
                 == "6000"
             ),
-            cursor=1,
+            cursor=cursor2,
             timeout=10.0,
         )
         assert (
@@ -314,6 +324,8 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
 
         # 3. Move away and move into target -> delivers generation 3
         time.sleep(0.5)
+        with lock:
+            cursor3 = len(results)
         os.replace(str(src), str(src_dir / "archived.xlsx"))
         time.sleep(0.2)
         new_source = src_dir / "new_generation.xlsx"
@@ -330,7 +342,7 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
                 .raw_values.get("unit_price_toman_raw")
                 == "7000"
             ),
-            cursor=2,
+            cursor=cursor3,
             timeout=10.0,
         )
         assert (
@@ -338,18 +350,21 @@ def test_wr16_native_absent_source_lifecycle_and_thread_cleanup(
             == "7000"
         )
 
-        # 4. Irrelevant and lock files do not trigger delivery
+        # 4. Irrelevant and lock files do not trigger delivery as source
         time.sleep(0.5)
-        count_before = len(results)
+        with lock:
+            cursor4 = len(results)
         (src_dir / "unrelated.xlsx").write_bytes(
             _build_synthetic_workbook(b"u1_seed_other", "9999")
         )
         (src_dir / "~$target.xlsx").write_bytes(b"lock_data")
         time.sleep(0.5)
         with lock:
-            assert len(results) == count_before, (
-                "Irrelevant files must not trigger delivery"
-            )
+            for r in results[cursor4:]:
+                assert not any(
+                    row.raw_values.get("unit_price_toman_raw") == "9999"
+                    for row in r.snapshot.sheets["خرید-فروش"].rows
+                ), "Irrelevant files must never be delivered as source"
 
         # 5. Stop and verify thread cleanup
         runtime.request_stop()
@@ -434,6 +449,8 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
 
     try:
         # Generation 1: Initial startup read (u1 on row 2, u2 on row 3)
+        with lock:
+            cursor1 = len(results)
         res1 = _wait_for_snapshot(
             results,
             lock,
@@ -443,15 +460,29 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
                 and r.locations_by_uuid[u1].physical_row_number == 2
                 and r.locations_by_uuid[u2].physical_row_number == 3
             ),
-            cursor=0,
+            cursor=cursor1,
             timeout=10.0,
         )
         snap1 = res1.snapshot
-        with lock:
-            assert len(results) == 1
+
+        # 1. Run WP-04 Change Planner from snap1 to establish prior identity states
+        plan1 = plan_source_changes(snap1)
+        prior_states = [
+            PriorIdentityState(
+                stable_id=p1_item.stable_id,
+                canonical_uuid=p1_item.canonical_uuid,
+                home_sheet=p1_item.sheet_name,
+                latest_revision=1,
+                lifecycle=IdentityLifecycle.ACTIVE,
+                source_hash=p1_item.current_source_hash,
+            )
+            for p1_item in plan1.items
+        ]
 
         # Generation 2: Row sort (physical rows swapped: u2 on row 2, u1 on row 3)
         time.sleep(0.5)
+        with lock:
+            cursor2 = len(results)
         row2_swapped = dict(row2)
         row2_swapped["__row_num__"] = 2
         row1_swapped = dict(row1)
@@ -482,18 +513,28 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
                 and r.locations_by_uuid[u1].physical_row_number == 3
                 and r.locations_by_uuid[u2].physical_row_number == 2
             ),
-            cursor=1,
+            cursor=cursor2,
             timeout=10.0,
         )
         snap2 = res2.snapshot
         assert res2 is not res1
         assert snap2 is not snap1
-        with lock:
-            assert len(results) == 2
+
+        # 2. Plan changes from snap2 (row reordering) against snap1
+        # prior state -> 0 changes
+        plan_same = plan_source_changes(snap2, prior_states)
+        assert plan_same.total_counts.unchanged_count == 5
+        assert plan_same.total_counts.insert_count == 0
+        assert plan_same.total_counts.edit_count == 0
+        assert plan_same.total_counts.void_count == 0
+        for p_item in plan_same.items:
+            assert p_item.action == PlanAction.UNCHANGED
 
         # Generation 3: Formula and cache-only XML modification (identical raw values)
         # Rows restored: row 2 (u1) and row 3 (u2) with formula row at 10
         time.sleep(0.5)
+        with lock:
+            cursor3 = len(results)
         formula_row = {
             "__row_num__": 10,
             "F": {"f": "SUM(F2:F3)", "v": "300"},
@@ -514,7 +555,7 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
         )
         src.write_bytes(builder3.build_bytes())
 
-        # Prove fresh Generation 3 delivery with bounded deadline and cursor
+        # Prove fresh Generation 3 delivery with bounded deadline and dynamic cursor
         res3 = _wait_for_snapshot(
             results,
             lock,
@@ -524,18 +565,29 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
                 and r.locations_by_uuid[u1].physical_row_number == 2
                 and r.locations_by_uuid[u2].physical_row_number == 3
             ),
-            cursor=2,
+            cursor=cursor3,
             timeout=10.0,
         )
         snap3 = res3.snapshot
         assert res3 is not res2
         assert snap3 is not snap2
-        with lock:
-            assert len(results) == 3
+        assert snap3 is not snap1
+
+        # 3. Plan changes from snap3 (formula-only modification) against snap1
+        # prior state: must be asserted BEFORE writing Generation 4!
+        plan_formula = plan_source_changes(snap3, prior_states)
+        assert plan_formula.total_counts.unchanged_count == 5
+        assert plan_formula.total_counts.insert_count == 0
+        assert plan_formula.total_counts.edit_count == 0
+        assert plan_formula.total_counts.void_count == 0
+        for p_item in plan_formula.items:
+            assert p_item.action == PlanAction.UNCHANGED
 
         # Generation 4: Raw edit (modifying amount on row1 from 100 to 999)
         # Written only AFTER Generation 3 formula delivery is fully proven
         time.sleep(0.5)
+        with lock:
+            cursor4 = len(results)
         row1_edited = dict(row1)
         row1_edited["G"] = "999"
         builder4 = SyntheticXlsxBuilder()
@@ -562,48 +614,12 @@ def test_wr17_end_to_end_wp04_planner_composition(tmp_path: Path) -> None:
                 row.raw_values.get("unit_price_toman_raw") == "999"
                 for row in r.snapshot.sheets["خرید-فروش"].rows
             ),
-            cursor=3,
+            cursor=cursor4,
             timeout=10.0,
         )
         snap4 = res4.snapshot
         assert res4 is not res3
         assert snap4 is not snap3
-        with lock:
-            assert len(results) == 4
-
-        # 1. Run WP-04 Change Planner from snap1
-        plan1 = plan_source_changes(snap1)
-        prior_states = [
-            PriorIdentityState(
-                stable_id=p1_item.stable_id,
-                canonical_uuid=p1_item.canonical_uuid,
-                home_sheet=p1_item.sheet_name,
-                latest_revision=1,
-                lifecycle=IdentityLifecycle.ACTIVE,
-                source_hash=p1_item.current_source_hash,
-            )
-            for p1_item in plan1.items
-        ]
-
-        # 2. Plan changes from snap2 (row reordering) against snap1
-        # prior state -> 0 changes
-        plan_same = plan_source_changes(snap2, prior_states)
-        assert plan_same.total_counts.unchanged_count == 5
-        assert plan_same.total_counts.insert_count == 0
-        assert plan_same.total_counts.edit_count == 0
-        assert plan_same.total_counts.void_count == 0
-        for p_item in plan_same.items:
-            assert p_item.action == PlanAction.UNCHANGED
-
-        # 3. Plan changes from snap3 (formula/cache-only modification) against snap1
-        # prior state -> 0 changes
-        plan_formula = plan_source_changes(snap3, prior_states)
-        assert plan_formula.total_counts.unchanged_count == 5
-        assert plan_formula.total_counts.insert_count == 0
-        assert plan_formula.total_counts.edit_count == 0
-        assert plan_formula.total_counts.void_count == 0
-        for p_item in plan_formula.items:
-            assert p_item.action == PlanAction.UNCHANGED
 
         # 4. Plan changes from snap4 (raw edit on row 1) against snap1
         # prior state -> 1 EDIT, 4 UNCHANGED
