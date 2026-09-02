@@ -487,8 +487,7 @@ def _create_and_anchor_lease_dir_windows(
             _close_windows_handle(int(handle))
         except OSError as close_exc:
             close_exc.__cause__ = exc
-            query_exc.__cause__ = close_exc
-            raise query_exc
+            raise query_exc from close_exc
         raise query_exc from exc
 
     dev, ino = _extract_windows_handle_identity(vol_id, file_id)
