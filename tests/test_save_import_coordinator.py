@@ -516,14 +516,15 @@ def test_sc06_concurrent_due_takes_yield_single_token(tmp_path: Path) -> None:
 
     num_threads = 10
     barrier = threading.Barrier(num_threads)
-    results: list[SourceReadAttempt | None] = [None] * num_threads
+    worker_results: list[SourceReadAttempt | None] = [None] * num_threads
+    worker_errors: list[BaseException | None] = [None] * num_threads
 
     def worker(idx: int) -> None:
         try:
             barrier.wait(timeout=5.0)
-            results[idx] = coord.take_due()
-        except Exception:
-            pass
+            worker_results[idx] = coord.take_due()
+        except BaseException as exc:
+            worker_errors[idx] = exc
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(num_threads)]
     try:
@@ -531,14 +532,21 @@ def test_sc06_concurrent_due_takes_yield_single_token(tmp_path: Path) -> None:
             t.start()
         for t in threads:
             t.join(timeout=5.0)
-            assert not t.is_alive(), "Thread must complete within timeout"
+            assert not t.is_alive(), "Worker thread must complete within timeout"
     finally:
         for t in threads:
             if t.is_alive():
                 t.join(timeout=1.0)
 
-    successful_attempts = [r for r in results if r is not None]
+    # Assert zero worker errors across all threads
+    assert all(err is None for err in worker_errors), (
+        f"Workers encountered unexpected errors: {worker_errors}"
+    )
+
+    successful_attempts = [r for r in worker_results if r is not None]
+    none_results = [r for r in worker_results if r is None]
     assert len(successful_attempts) == 1, "Exactly one thread must acquire the token"
+    assert len(none_results) == num_threads - 1, "All other threads must receive None"
     assert coord.view().state == SaveCoordinatorState.RUNNING
 
 
@@ -1355,29 +1363,258 @@ def test_w7_r1_01_guard_does_not_mutate_new_or_foreign_token(tmp_path: Path) -> 
     clock = FakeClock()
     coord = SaveImportCoordinator(src, _time_source=clock)
 
+    # 1. Cycle 1: take attempt1
     coord.notify(SaveEventKind.MODIFIED, src)
     clock.advance_seconds(3.0)
-    real_attempt = coord.take_due()
-    assert real_attempt is not None
+    attempt1 = coord.take_due()
+    assert attempt1 is not None
 
-    # Call guard with foreign attempt
+    # Call guard with foreign attempt from another coordinator
     from accounting_local_agent.save_import_coordinator import _guarded_force_fault
 
-    foreign = SourceReadAttempt("coord_1", "foreign_tok", 100)
+    foreign = SourceReadAttempt("coord_other", "foreign_tok", 100)
     _guarded_force_fault(coord, foreign)
 
-    # Coordinator's real attempt must still be RUNNING and active!
+    # Coordinator's attempt1 must still be RUNNING and active!
     assert coord.view().state == SaveCoordinatorState.RUNNING
-    assert coord._active_attempt is real_attempt
+    assert coord._active_attempt is attempt1
 
-    # Call guard with real attempt -> released to FAULTED
-    _guarded_force_fault(coord, real_attempt)
+    # Finish attempt1 with FAULTED, then resume and issue attempt2
+    coord.finish(attempt1, SourceReadOutcome.FAULTED)
+    assert coord.view().state == SaveCoordinatorState.FAULTED
+    coord.resume_after_fault()
+    clock.advance_seconds(3.0)
+    attempt2 = coord.take_due()
+    assert attempt2 is not None
+    assert attempt2 is not attempt1
+    assert coord.view().state == SaveCoordinatorState.RUNNING
+    assert coord._active_attempt is attempt2
+
+    # Now call guard with stale attempt1 -> must NOT release or mutate attempt2!
+    _guarded_force_fault(coord, attempt1)
+    assert coord.view().state == SaveCoordinatorState.RUNNING
+    assert coord._active_attempt is attempt2
+
+    # Call guard with active attempt2 -> successfully releases attempt2 to FAULTED
+    _guarded_force_fault(coord, attempt2)
     assert coord.view().state == SaveCoordinatorState.FAULTED
     assert coord._active_attempt is None
 
 
+def test_w7_r2_01_reader_and_finish_and_guard_all_failing_preserves_three_causes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W7-R2-01: Work, finish, and guard failures all preserved with raw causes."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_minimal_valid_four_sheet_xlsx())
+    root = tmp_path / "snapshots"
+    root.mkdir()
+
+    clock = FakeClock()
+    coord = SaveImportCoordinator(src, _time_source=clock)
+    coord.notify(SaveEventKind.MODIFIED, src)
+    clock.advance_seconds(3.0)
+
+    # 1. Reader error with raw underlying cause
+    raw_reader_cause = ValueError("raw_reader_root_cause")
+    injected_read_err = XlsxSourceReadError("reader_stage_failed")
+    injected_read_err.__cause__ = raw_reader_cause
+
+    def failing_reader(p: Path | str) -> Any:
+        raise injected_read_err
+
+    monkeypatch.setattr(
+        "accounting_local_agent.save_import_coordinator.read_xlsx_source_snapshot",
+        failing_reader,
+    )
+
+    # 2. Finish error with raw underlying cause
+    raw_finish_cause = TypeError("raw_finish_root_cause")
+    injected_finish_err = RuntimeError("finish_bookkeeping_failed")
+    injected_finish_err.__cause__ = raw_finish_cause
+
+    finish_calls = 0
+
+    def failing_finish(attempt: SourceReadAttempt, outcome: SourceReadOutcome) -> None:
+        nonlocal finish_calls
+        finish_calls += 1
+        raise injected_finish_err
+
+    monkeypatch.setattr(coord, "finish", failing_finish)
+
+    # 3. Guard error with raw underlying cause
+    raw_guard_cause = OSError("raw_guard_lock_root_cause")
+    injected_guard_err = RuntimeError("guard_force_fault_failed")
+    injected_guard_err.__cause__ = raw_guard_cause
+
+    def failing_guard(
+        c: SaveImportCoordinator,
+        a: SourceReadAttempt,
+    ) -> None:
+        raise injected_guard_err
+
+    monkeypatch.setattr(
+        "accounting_local_agent.save_import_coordinator._guarded_force_fault",
+        failing_guard,
+    )
+
+    with pytest.raises((ExceptionGroup, BaseExceptionGroup)) as exc_info:
+        read_due_source(coord, snapshot_root=root, observation_interval_seconds=0.001)
+
+    assert finish_calls == 1, "finish must be called exactly once"
+
+    group = exc_info.value
+    exceptions = group.exceptions
+    assert len(exceptions) == 3, "All 3 errors must be present in group"
+
+    # Verify exception 0 (reader)
+    assert exceptions[0] is injected_read_err
+    assert exceptions[0].__cause__ is raw_reader_cause
+
+    # Verify exception 1 (finish)
+    assert exceptions[1] is injected_finish_err
+    assert exceptions[1].__cause__ is raw_finish_cause
+
+    # Verify exception 2 (guard)
+    assert exceptions[2] is injected_guard_err
+    assert exceptions[2].__cause__ is raw_guard_cause
+
+
+def test_w7_r2_01_cancellation_in_guard_with_failing_reader_and_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W7-R2-01: BaseException in guard produces BaseExceptionGroup with causes."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_minimal_valid_four_sheet_xlsx())
+    root = tmp_path / "snapshots"
+    root.mkdir()
+
+    clock = FakeClock()
+    coord = SaveImportCoordinator(src, _time_source=clock)
+    coord.notify(SaveEventKind.MODIFIED, src)
+    clock.advance_seconds(3.0)
+
+    injected_read_err = XlsxSourceReadError("reader_err")
+    injected_finish_err = RuntimeError("finish_err")
+    injected_guard_cancel = KeyboardInterrupt("Simulated Ctrl-C in guard")
+
+    monkeypatch.setattr(
+        "accounting_local_agent.save_import_coordinator.read_xlsx_source_snapshot",
+        lambda p: (_ for _ in ()).throw(injected_read_err),
+    )
+    monkeypatch.setattr(
+        coord,
+        "finish",
+        lambda a, o: (_ for _ in ()).throw(injected_finish_err),
+    )
+    monkeypatch.setattr(
+        "accounting_local_agent.save_import_coordinator._guarded_force_fault",
+        lambda c, a: (_ for _ in ()).throw(injected_guard_cancel),
+    )
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        read_due_source(coord, snapshot_root=root, observation_interval_seconds=0.001)
+
+    group = exc_info.value
+    assert len(group.exceptions) == 3
+    assert group.exceptions[0] is injected_read_err
+    assert group.exceptions[1] is injected_finish_err
+    assert group.exceptions[2] is injected_guard_cancel
+
+
+def test_w7_r2_01_guard_failure_after_real_recovery_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W7-R2-01: Guard setting state then failing preserves FAULTED state and group."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_minimal_valid_four_sheet_xlsx())
+    root = tmp_path / "snapshots"
+    root.mkdir()
+
+    clock = FakeClock()
+    coord = SaveImportCoordinator(src, _time_source=clock)
+    coord.notify(SaveEventKind.MODIFIED, src)
+    clock.advance_seconds(3.0)
+
+    injected_read_err = XlsxSourceReadError("reader_failure")
+    injected_finish_err = RuntimeError("finish_failure")
+    injected_guard_err = RuntimeError("guard_post_recovery_failure")
+
+    monkeypatch.setattr(
+        "accounting_local_agent.save_import_coordinator.read_xlsx_source_snapshot",
+        lambda p: (_ for _ in ()).throw(injected_read_err),
+    )
+    monkeypatch.setattr(
+        coord,
+        "finish",
+        lambda a, o: (_ for _ in ()).throw(injected_finish_err),
+    )
+
+    from accounting_local_agent.save_import_coordinator import _guarded_force_fault
+
+    orig_guard = _guarded_force_fault
+
+    def partial_guard(c: SaveImportCoordinator, a: SourceReadAttempt) -> None:
+        orig_guard(c, a)
+        raise injected_guard_err
+
+    monkeypatch.setattr(
+        "accounting_local_agent.save_import_coordinator._guarded_force_fault",
+        partial_guard,
+    )
+
+    with pytest.raises((ExceptionGroup, BaseExceptionGroup)) as exc_info:
+        read_due_source(coord, snapshot_root=root, observation_interval_seconds=0.001)
+
+    # State is correctly FAULTED and pending follow-up is preserved
+    assert coord.view().state == SaveCoordinatorState.FAULTED
+    assert coord.view().pending is True
+
+    group = exc_info.value
+    assert len(group.exceptions) == 3
+    assert group.exceptions[0] is injected_read_err
+    assert group.exceptions[1] is injected_finish_err
+    assert group.exceptions[2] is injected_guard_err
+
+
+def test_w7_r2_01_success_reader_with_faulty_finish_and_guard_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W7-R2-01: Successful read + failing finish & guard fails closed with group."""
+    src = tmp_path / "source.xlsx"
+    src.write_bytes(_build_minimal_valid_four_sheet_xlsx())
+    root = tmp_path / "snapshots"
+    root.mkdir()
+
+    clock = FakeClock()
+    coord = SaveImportCoordinator(src, _time_source=clock)
+    coord.notify(SaveEventKind.MODIFIED, src)
+    clock.advance_seconds(3.0)
+
+    injected_finish_err = RuntimeError("finish_crash")
+    injected_guard_err = RuntimeError("guard_crash")
+
+    monkeypatch.setattr(
+        coord,
+        "finish",
+        lambda a, o: (_ for _ in ()).throw(injected_finish_err),
+    )
+    monkeypatch.setattr(
+        "accounting_local_agent.save_import_coordinator._guarded_force_fault",
+        lambda c, a: (_ for _ in ()).throw(injected_guard_err),
+    )
+
+    with pytest.raises((ExceptionGroup, BaseExceptionGroup)) as exc_info:
+        read_due_source(coord, snapshot_root=root, observation_interval_seconds=0.001)
+
+    group = exc_info.value
+    assert len(group.exceptions) == 2
+    assert group.exceptions[0] is injected_finish_err
+    assert group.exceptions[1] is injected_guard_err
+
+
 # ---------------------------------------------------------------------------
-# W7-R1-02: Atomic Token Reservation in take_due
+# W7-R1-02 & W7-R2-02: Atomic Token Reservation & Strict Concurrency Checks
 # ---------------------------------------------------------------------------
 
 
@@ -1418,7 +1655,7 @@ def test_w7_r1_02_take_due_error_injection_rollback_and_subsequent_success(
 def test_w7_r1_02_take_due_thread_contention_with_injected_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """W7-R1-02: Contention with transient error leaves state clean for winner."""
+    """W7-R1-02 / W7-R2-02: Contention with transient error asserts outcomes."""
     src = tmp_path / "source.xlsx"
     clock = FakeClock()
     coord = SaveImportCoordinator(src, _time_source=clock)
@@ -1435,43 +1672,105 @@ def test_w7_r1_02_take_due_thread_contention_with_injected_error(
         with lock:
             calls += 1
             if calls == 1:
-                raise OSError("Transient entropy error")
+                raise OSError("Injected transient entropy error")
             return real_uuid4()
 
     monkeypatch.setattr(uuid, "uuid4", intermittent_uuid)
 
     num_threads = 4
     barrier = threading.Barrier(num_threads)
-    tokens: list[SourceReadAttempt | None] = []
-    errors: list[Exception] = []
+    worker_results: list[SourceReadAttempt | None] = [None] * num_threads
+    worker_errors: list[BaseException | None] = [None] * num_threads
 
-    def contender() -> None:
+    def contender(idx: int) -> None:
         try:
             barrier.wait(timeout=5.0)
-            tok = coord.take_due()
-            if tok is not None:
-                tokens.append(tok)
-        except Exception as e:
-            errors.append(e)
+            worker_results[idx] = coord.take_due()
+        except BaseException as exc:
+            worker_errors[idx] = exc
 
-    threads = [threading.Thread(target=contender) for _ in range(num_threads)]
+    threads = [
+        threading.Thread(target=contender, args=(i,)) for i in range(num_threads)
+    ]
     try:
         for t in threads:
             t.start()
         for t in threads:
             t.join(timeout=5.0)
+            assert not t.is_alive(), "Contender thread must complete within timeout"
     finally:
         for t in threads:
             if t.is_alive():
                 t.join(timeout=1.0)
 
-    # Transient error occurred in one thread, other thread secures token or none
-    assert len(errors) >= 1
-    assert len(tokens) <= 1
-    # If a token was secured, state is RUNNING; if none yet secured, take_due works
-    if not tokens:
-        tok = coord.take_due()
-        assert tok is not None
+    real_errors = [e for e in worker_errors if e is not None]
+    real_tokens = [r for r in worker_results if r is not None]
+
+    # Exactly one thread must encounter the injected OSError
+    assert len(real_errors) == 1, "Exactly one thread must encounter injected error"
+    assert isinstance(real_errors[0], OSError)
+    assert str(real_errors[0]) == "Injected transient entropy error"
+
+    # Zero unexpected errors (no BrokenBarrierError, no RuntimeError, etc.)
+    assert (
+        len(real_errors) + len([e for e in worker_errors if e is None]) == num_threads
+    )
+
+    # At most one thread secured the token
+    assert len(real_tokens) in (0, 1)
+
+    if len(real_tokens) == 1:
+        assert coord.view().state == SaveCoordinatorState.RUNNING
+    else:
+        assert coord.view().state == SaveCoordinatorState.WAITING
+        subsequent_attempt = coord.take_due()
+        assert subsequent_attempt is not None
+        assert coord.view().state == SaveCoordinatorState.RUNNING
+
+
+def test_w7_r2_02_concurrency_oracle_rejects_unexpected_worker_errors(
+    tmp_path: Path,
+) -> None:
+    """W7-R2-02: Concurrency test oracle catches and surfaces worker crashes."""
+    src = tmp_path / "source.xlsx"
+    clock = FakeClock()
+    coord = SaveImportCoordinator(src, _time_source=clock)
+    coord.notify(SaveEventKind.MODIFIED, src)
+    clock.advance_seconds(3.0)
+
+    num_threads = 3
+    barrier = threading.Barrier(num_threads)
+    worker_results: list[SourceReadAttempt | None] = [None] * num_threads
+    worker_errors: list[BaseException | None] = [None] * num_threads
+
+    def buggy_contender(idx: int) -> None:
+        try:
+            barrier.wait(timeout=5.0)
+            if idx == 0:
+                raise RuntimeError("Injected unexpected worker crash")
+            worker_results[idx] = coord.take_due()
+        except BaseException as exc:
+            worker_errors[idx] = exc
+
+    threads = [
+        threading.Thread(target=buggy_contender, args=(i,)) for i in range(num_threads)
+    ]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+            assert not t.is_alive()
+    finally:
+        for t in threads:
+            if t.is_alive():
+                t.join(timeout=1.0)
+
+    # Oracle must observe the crash in worker_errors
+    crashed_errors = [e for e in worker_errors if e is not None]
+    assert len(crashed_errors) == 1
+    assert isinstance(crashed_errors[0], RuntimeError)
+    assert str(crashed_errors[0]) == "Injected unexpected worker crash"
 
 
 # ---------------------------------------------------------------------------
@@ -1517,12 +1816,14 @@ def test_w7_r1_04_constant_safe_error_messages_no_path_or_secret_leakage(
     assert str(exc_info.value) == "[invalid_policy] Invalid event kind"
 
     # 4. Invalid finish outcome with secret
-    coord.notify(SaveEventKind.MODIFIED, src)
-    coord._next_due_ns = 0
-    attempt = coord.take_due()
+    clock_outcome = FakeClock()
+    coord_outcome = SaveImportCoordinator(src, _time_source=clock_outcome)
+    coord_outcome.notify(SaveEventKind.MODIFIED, src)
+    clock_outcome.advance_seconds(3.0)
+    attempt = coord_outcome.take_due()
     assert attempt is not None
     with pytest.raises(SaveCoordinatorPolicyError) as pol_exc_info:
-        coord.finish(attempt, cast(Any, f"fake_outcome_{secret_marker}"))
+        coord_outcome.finish(attempt, cast(Any, f"fake_outcome_{secret_marker}"))
     assert secret_marker not in str(pol_exc_info.value)
     assert str(pol_exc_info.value) == "[invalid_policy] Invalid finish outcome"
 

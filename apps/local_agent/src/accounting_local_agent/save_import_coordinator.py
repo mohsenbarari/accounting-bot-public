@@ -530,32 +530,35 @@ def read_due_source(
         work_exc = exc
 
     finish_exc: BaseException | None = None
+    guard_exc: BaseException | None = None
     try:
         coordinator.finish(attempt, outcome)
     except BaseException as exc:
         finish_exc = exc
-        _guarded_force_fault(coordinator, attempt)
+        try:
+            _guarded_force_fault(coordinator, attempt)
+        except BaseException as g_exc:
+            guard_exc = g_exc
 
-    if work_exc is None and finish_exc is None:
+    all_excs: list[BaseException] = [
+        e for e in (work_exc, finish_exc, guard_exc) if e is not None
+    ]
+
+    if not all_excs:
         return result
-    if work_exc is None and finish_exc is not None:
-        raise finish_exc
-    if work_exc is not None and finish_exc is None:
-        raise work_exc
 
-    # Both work_exc and finish_exc are present: combine without overwriting causes
-    assert work_exc is not None and finish_exc is not None
-    if (
-        isinstance(work_exc, BaseException)
-        and not isinstance(work_exc, Exception)
-        or isinstance(finish_exc, BaseException)
-        and not isinstance(finish_exc, Exception)
+    if len(all_excs) == 1:
+        raise all_excs[0]
+
+    if any(
+        isinstance(e, BaseException) and not isinstance(e, Exception) for e in all_excs
     ):
         raise BaseExceptionGroup(
             "read_due_source encountered multiple failures",
-            [work_exc, finish_exc],
+            all_excs,
         )
+    std_excs = [e for e in all_excs if isinstance(e, Exception)]
     raise ExceptionGroup(
         "read_due_source encountered multiple failures",
-        [work_exc, finish_exc],
+        std_excs,
     )
