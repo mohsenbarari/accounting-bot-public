@@ -6,7 +6,7 @@ This public repository is the governed operational source for the Telegram accou
 
 - Phase: 1 — source and data-model foundation
 - G0: approved on 2026-08-30
-- Product implementation: Work Packages 01 through 06 accepted and merged; G1 remains open
+- Product implementation: Work Packages 01 through 06 accepted and merged; Work Package 07 issued; G1 remains open
 - Reference Excel modification: not authorized
 
 Product implementation starts only after the Codex Project Manager records an evidence-backed G0 approval in [ROADMAP.md](ROADMAP.md). G0 is now approved; later work remains bounded by phase Gates and protected-asset rules.
@@ -25,6 +25,8 @@ Product implementation starts only after the Codex Project Manager records an ev
 - [Work Package 05](docs/work-packages/phase-01/WP-05-streaming-xlsx-source-reader.md) is accepted and merged: it implements the read-only streaming XLSX-to-validated-source boundary with strict formula/cache exclusion, physical row tracking, synthetic ZIP/XML evidence and cross-platform performance checks. Stable-copy acquisition, Excel/COM writes and database commits remain outside this package.
 - [ADR-0009](docs/adr/ADR-0009-stable-xlsx-snapshot-acquisition.md) fixes the two-observation, streaming copy/hash, atomic-promotion, lease-integrity and exact-cleanup boundary for a stable XLSX snapshot.
 - [Work Package 06](docs/work-packages/phase-01/WP-06-stable-xlsx-snapshot-acquisition.md) is accepted and merged: it provides verified stable XLSX snapshot leases with exclusive candidate creation, streaming copy/hash verification, no-replace promotion, typed diagnostics and ownership-checked cleanup. Independent review and both CI platforms passed using generated synthetic files. Save/OneDrive monitoring, Excel/COM and UUID writes, real workbooks and SQLite/import commits remain outside this package.
+- [ADR-0010](docs/adr/ADR-0010-save-import-coordinator.md) fixes exact-path notice filtering, monotonic two-second debounce, one active attempt, one pending follow-up and explicit failure transitions.
+- [Work Package 07](docs/work-packages/phase-01/WP-07-save-import-coordinator.md) is issued for Antigravity: implement the bounded Save coordinator and a source-read driver through WP-06/WP-05, with deterministic time/concurrency tests and synthetic files. Real watcher/OneDrive delivery, COM/UUID writes and transactional import remain separate work.
 - [accounting-bot-implementer](.agents/skills/accounting-bot-implementer/SKILL.md) governs future Antigravity work packages and handoffs.
 
 The Owner defines the product vision, performs final acceptance testing and reports corrections. Codex acts as Project Manager and independent reviewer, maintaining the Roadmap and deciding work-package acceptance, Gates and merges. Antigravity only implements bounded approved work packages and cannot self-approve.

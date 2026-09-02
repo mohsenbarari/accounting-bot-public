@@ -1,8 +1,8 @@
 # نقشه راه سامانه گزارش حسابداری تلگرام
 
-> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-06 پذیرفته و ادغام شده‌اند و G1 باز است
+> وضعیت سند: فاز 1 فعال؛ G0 بسته، WP-01 تا WP-06 پذیرفته و ادغام شده‌اند، WP-07 صادر شده و G1 باز است
 >
-> نسخه: 0.41
+> نسخه: 0.42
 >
 > آخرین به‌روزرسانی: 2026-09-02
 >
@@ -569,7 +569,7 @@
 
 > وضعیت این زیربخش: ✅ معماری و خانواده فناوری‌های O-52 تا O-56 تأیید شده‌اند. نسخه دقیق بسته‌ها هنگام ساخت Baseline فنی در `uv.lock` قفل می‌شود؛ Spikeها و آزمون‌های ذکرشده همچنان شرط عبور Gate مربوط هستند.
 
-- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد Canonical/Hash منبع O-68 در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md)، قرارداد Snapshot کامل/Change Plan منبع O-69 در [ADR-0007](docs/adr/ADR-0007-full-snapshot-change-plan.md)، قرارداد Reader فقط‌خواندنی XLSX در O-70/[ADR-0008](docs/adr/ADR-0008-streaming-xlsx-source-reader.md) و قرارداد Acquisition/پاک‌سازی Snapshot پایدار در O-71/[ADR-0009](docs/adr/ADR-0009-stable-xlsx-snapshot-acquisition.md) ثبت شده‌اند؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
+- ✅ تصمیم‌ها و برنامه شواهد معماری O-52 تا O-56 در پنج ADR پذیرفته‌شده ثبت شده‌اند: [ADR-0001](docs/adr/ADR-0001-monorepo-modular-monolith-python.md)، [ADR-0002](docs/adr/ADR-0002-windows-excel-agent.md)، [ADR-0003](docs/adr/ADR-0003-server-postgresql-durable-queue.md)، [ADR-0004](docs/adr/ADR-0004-telegram-persian-date-pdf.md) و [ADR-0005](docs/adr/ADR-0005-deployment-dependencies-quality.md). قرارداد Canonical/Hash منبع O-68 در [ADR-0006](docs/adr/ADR-0006-canonical-source-hashing.md)، قرارداد Snapshot کامل/Change Plan منبع O-69 در [ADR-0007](docs/adr/ADR-0007-full-snapshot-change-plan.md)، قرارداد Reader فقط‌خواندنی XLSX در O-70/[ADR-0008](docs/adr/ADR-0008-streaming-xlsx-source-reader.md)، قرارداد Acquisition/پاک‌سازی Snapshot پایدار در O-71/[ADR-0009](docs/adr/ADR-0009-stable-xlsx-snapshot-acquisition.md) و قرارداد هماهنگ‌کننده Save در O-72/[ADR-0010](docs/adr/ADR-0010-save-import-coordinator.md) ثبت شده‌اند؛ اجرای همه آنها تابع Gate و Work Package شاهددار است.
 
 - ✅ ساختار کلان: Monorepo با Modular Monolith برای بخش سرور و یک Agent مستقل ویندوز. هسته Domain و قواعد حسابداری Python خالص و مستقل از FastAPI، Telegram و دیتابیس می‌ماند؛ API/Webhook و Workerها Processهای جدا ولی مصرف‌کننده همان کد دامنه‌اند.
 - ✅ زبان پایه: Python 3.13 برای Agent و سرور، با `pyproject.toml` و Lockfile قطعی. یک Spike روی کپی مجاز اکسل باید پیش از G1 سازگاری COM، بسته‌بندی و نسخه Python را اثبات کند.
@@ -648,6 +648,7 @@
 - 🧪 Debounce دوثانیه‌ای، دو بررسی پایداری، نادیده‌گرفتن فایل موقت/Conflict، ادغام Saveهای متوالی، یک Follow-up هنگام Save وسط Import و صفر Event برای Hash یکسان در محیط واقعی OneDrive اثبات شوند.
 - 🧪 Import فقط Snapshot ثابت را بخواند، Snapshot پس از موفقیت و شکست پاک شود و تغییر فایل اصلی هنگام Parse نتواند داده نیمه‌کاره یا حذف کاذب بسازد.
 - 🧪 Acquisition نسخه‌دار O-71 روی Linux/Windows با دو مشاهده، تشخیص Replace/Mutation، Hash و اندازه یکسان در بازخوانی منبع/کپی، ارتقای اتمیک، پاک‌سازی بدون حذف بازگشتی و اتصال کامل به Reader اثبات شود؛ شاهد ساختگی جای آزمون Save/OneDrive و فایل واقعی را نمی‌گیرد.
+- 🧪 هماهنگ‌کننده O-72 با ساعت یکنواخت ساختگی، مرز دقیق دو ثانیه، تطبیق مسیر و دو سوی Move، تجمیع Save، یک تلاش فعال و یک Follow-up، Retry منبع آماده‌نشده و حفظ خطا/مالکیت تا خروج Lease اثبات شود؛ خروجی Reader مجوز Commit یا جایگزین آزمون Observer/OneDrive و بازیابی پس از Crash نیست.
 - 🧪 ماتریس اعتبارسنجی ثابت کند خطای فنی سراسری هیچ Commitی نمی‌سازد، ولی نام/کالای ناشناخته و RS تاریخی چندکاندیدایی Raw و سایر Importها را حفظ و فقط انتشار دامنه متأثر را متوقف می‌کنند؛ Formula/Cached Value خراب با Raw معتبر بی‌اثر باشد.
 - 🧪 مقایسه UUID/Hash برای Insert، Edit، `void`، Sort، تغییر صرفاً فرمولی و Save بدون تغییر دقیقاً رویدادهای مورد انتظار را بسازد و فایل آرشیوی هیچ رویداد عملیاتی ایجاد نکند.
 - 🧪 تزریق خطا در هر مرحله تراکنش SQLite، آینه، Revision، `void`، `change_events`/Outbox و کلیدهای اثر را همگی Rollback کند؛ Retry همان Import هیچ رویداد تکراری نسازد.
@@ -780,6 +781,7 @@
 - ✅ WP-04 قرارداد `source-change-plan.v1` طبق O-69/ADR-0007 را با Snapshot کامل چهار شیت، رجیستری Active/Voided، برنامه قطعی Insert/Edit/`void`/بدون‌تغییر، Revision بعدی و منع انتقال UUID میان شیت‌ها پیاده کرد؛ Codex پس از بازبینی مستقل و سه دور اصلاح سازنده‌ها/کپی دفاعی/ترتیب Raw/آزمون جایگشت و شواهد کارایی، 89 آزمون و CI دو سکویی PR #16 آن را پذیرفت. این شاهد فقط مدل و Planner خالص است؛ Excel/SQLite/Import Commit واقعی را پوشش نمی‌دهد و G1 باز می‌ماند.
 - ✅ WP-05 مرز Reader فقط‌خواندنی `xlsx-source-reader.v1` طبق O-70/ADR-0008 را با Streaming چهار شیت، Header/شناسه از رجیستری، حذف Formula/Cache و محدوده خروجی، Decode دقیق متن/Decimal/Null، فعالیت ردیف، Location مستقل از Hash و خروجی Snapshot معتبر WP-04 پیاده کرد؛ Codex پس از بازبینی مستقل چندمرحله‌ای، 200 آزمون و CI دو سکویی Run `33505486610` آن را در PR #19 پذیرفت. این شاهد فقط روی XLSXهای کاملاً ساختگی است؛ فایل واقعی، Stable Copy، Save/COM، نوشتن UUID، SQLite/Import Commit و G1 را پوشش نمی‌دهد.
 - ✅ WP-06 مرز `xlsx-snapshot-acquisition.v1` طبق O-71/ADR-0009 را با دو مشاهده پایدار، ایجاد انحصاری Candidate، کپی/Hash جریانی و بازخوانی مستقل منبع/کپی، ارتقای بدون بازنویسی، Lease معتبر برای WP-05 و پاک‌سازی با کنترل مالکیت پیاده کرد؛ Codex پس از بازبینی مستقل چندمرحله‌ای و CI دو سکویی Run `33616797405` با 272 آزمون موفق Linux و 273 آزمون موفق Windows آن را در PR #22 پذیرفت و ادغام کرد. چهار سناریوی symlink در CI ویندوز اجرا شدند. شواهد فقط روی فایل‌های ساختگی‌اند؛ Watcher/Debounce واقعی، OneDrive/COM، UUID، فایل واقعی، SQLite/Outbox و معیار خروج G1 همچنان خارج از این بسته‌اند.
+- 🧪 WP-07 برای پیاده‌سازی `save-import-coordinator.v1` طبق O-72/ADR-0010 صادر شد: دریافت اعلان تایپ‌شده برای مسیر دقیق، Debounce یکنواخت دوثانیه‌ای، تجمیع اعلان‌ها، مالکیت اتمیک یک تلاش خواندن و یک Follow-up، Retry و توقف خطای صریح، و اجرای کامل WP-06/WP-05 پیش از تحویل نتیجه. آزمون ساعت و هم‌زمانی قطعی و فایل ساختگی الزامی است؛ Observer واقعی، OneDrive/COM، UUID، فایل واقعی، Commit/SQLite/Outbox و بازیابی Crash خارج از بسته‌اند و G1 باز می‌ماند.
 - تهیه نسخه پشتیبان کنترل‌شده از اکسل.
 - اجرای کنترل‌شده UUIDv7، Source/Ledger/Sheet SHA-256 و سال مالی پس از دریافت اجازه جداگانه تغییر کپی اکسل.
 - تعریف Whitelist ورودی خام چهار شیت و جداسازی Raw Immutable از Formula/Function/Query/Cached Value اکسل.
@@ -1177,6 +1179,7 @@
 - **موضوع:** جلوگیری از خواندن فایل نیمه‌نوشته یا ساخت Importهای تکراری براثر چند رویداد Excel/OneDrive.
 - **تصمیم:** عامل فقط فایل عملیاتی تنظیم‌شده را می‌پاید و فایل موقت/Conflict را نادیده می‌گیرد؛ پس از آخرین Event دو ثانیه Debounce و دو بررسی پیاپی Size/mtime، آزادبودن فایل و سلامت ZIP/XLSX انجام می‌دهد.
 - **جزئیات:** چند Save متوالی یک Import از آخرین وضعیت می‌سازند؛ Save هنگام Import دقیقاً یک Follow-up ایجاد و Hash یکسان صفر Event می‌سازد. رفتار Rename/Replace و فاصله Probe در آزمون محیط واقعی OneDrive تنظیم می‌شود.
+- **تفکیک اجرا:** هسته زمان‌بندی اعلان و تلاش خواندن در O-72/ADR-0010 و WP-07 با شواهد ساختگی تعریف شده است؛ دریافت اعلان واقعی و نگه‌داشتن مالکیت تلاش تا Commit پایدار Import در بسته‌های بعدی اثبات می‌شوند. قاعده دوثانیه‌ای و رفتار کسب‌وکار تغییر نکرده‌اند.
 - **دلیل:** Event فایل به‌تنهایی پایان نوشتن را تضمین نمی‌کند و OneDrive ممکن است چند Event یا Replace ایجاد کند.
 - **تاریخ تصمیم:** 2026-08-28.
 
@@ -1527,10 +1530,21 @@
 - **شاهد اجرا:** WP-06 در 2026-09-02 پس از بازبینی مستقل commit `503fe2c9635bf268c91c720462413ac75e568efc`، بازاجرای حفظ Candidate خارجی و منبع Hardlinkشده، پیام‌های تایپ‌شده امن و حفظ علت‌های همزمان Query/Close و جایگزینی واقعی هویت فایل پذیرفته شد. CI نهایی Run `33616797405` روی Linux دارای 272 قبولی و 2 آزمون مخصوص Windows اجرا‌نشده و روی Windows دارای 273 قبولی و فقط 1 آزمون مخصوص POSIX اجرا‌نشده بود؛ هر چهار سناریوی symlink ویندوز اجرا شدند. بنچ‌مارک مستقل ترکیبی 15,000 ردیف روی Linux برابر `12.8081s / 59.83 MiB` و روی Windows برابر `2.8819s / 56.52 MiB` بود. PR #22 با مجوز صریح مالک و Merge Commit `1346abf8b0bda329e6df452bc16a0a0f7d9ed9f7` ادغام شد. این شاهد، آزمون فایل واقعی، Save/OneDrive، COM/UUID، SQLite/Outbox یا پذیرش سرتاسری G1 نیست.
 - **تاریخ تصمیم:** 2026-09-01.
 
+### O-72 — هماهنگ‌کننده Save و تلاش خواندن منبع
+
+- **وضعیت:** ✅ بسته؛ قرارداد فنی نسخه 1 پس از دستور مالک برای ادامه WP-07 توسط Codex مدیر پروژه تصویب و در ADR-0010 ثبت شد؛ شواهد پیاده‌سازی همچنان 🧪 هستند.
+- **موضوع:** جلوگیری از تلاش‌های هم‌زمان یا تکراری و گم‌شدن Save تازه هنگام acquisition، خواندن یا پاک‌سازی، با مرز روشن میان خواندن و Commit مالی.
+- **تصمیم:** `save-import-coordinator.v1` در `accounting-local-agent` اعلان‌های تایپ‌شده را فقط با مسیر دقیق و قواعد واژگانی سیستم‌عامل تطبیق می‌دهد؛ دو سوی Move بررسی می‌شوند و مسیر تغییرنام‌یافته جای منبع تنظیم‌شده را نمی‌گیرد. با ساعت `monotonic_ns` و فاصله ثابت دو ثانیه، حالت‌های Idle/Waiting/Running/Faulted، حداکثر یک Token فعال متعلق به همان Coordinator و یک قصد Follow-up نگهداری می‌شوند. اعلان‌های نامرتبط تایمر را تغییر نمی‌دهند؛ I/O و Reader زیر قفل وضعیت اجرا نمی‌شوند.
+- **تکمیل و خطا:** موفقیت فقط پس از خروج سالم Lease و پاک‌سازی اعلام می‌شود. فقط خطای مستقیم `source_not_ready` بدون نیاز به اعلان تازه حداقل دو ثانیه پس از پایان دوباره بررسی می‌شود؛ رد مستقیم Reader منتظر Save تازه می‌ماند و Follow-up ازقبل‌دریافت‌شده را حفظ می‌کند. خطاهای غیرقابل Retry، گروه خطاها و Cancellation به Faulted می‌روند؛ اعلان‌ها حفظ می‌شوند ولی ادامه نیازمند `resume_after_fault()` صریح برنامه است. قواعد جدیدی برای تأیید کاربر، سقف ویرایش/حذف یا UI ساخته نمی‌شود.
+- **مرز:** این وضعیت موقت فقط زمان‌بندی تلاش خواندن است، نه صف مالی، Outbox یا Baseline موفق Import. هیچ Hash فایل جای Hash منبع را نمی‌گیرد؛ برابری Raw با Planner پذیرفته‌شده WP-04 آزموده می‌شود. Driver فقط WP-06 و WP-05 را ترکیب می‌کند؛ مالکیت تا Commit پایدار، Watchdog Observer، دریافت واقعی اعلان، OneDrive/COM/UUID، داده واقعی و بازیابی Crash مؤجل‌اند.
+- **شاهد لازم:** ماتریس SC-01 تا SC-16 با ساعت ساختگی، مرز نانوثانیه‌ای، Move/Path، تجمیع انبوه، Token خارجی/قدیمی، رقابت Take/Finish/Notify با Barrier، همه Outcomeها، خطای خروج Lease، Retry بدون اعلان و اتصال چهارشیت ساختگی؛ حفظ 274 آزمون موجود و حدود Benchmark و موفقیت CI بومی Windows/Linux. G1 و معیار محیط واقعی باز می‌مانند.
+- **تاریخ تصمیم:** 2026-09-02.
+
 ## 22. ریسک‌های اصلی
 
 | ریسک | اثر | اقدام کنترلی پیشنهادی |
 |---|---|---|
+| اشتباه‌گرفتن تکمیل Reader با Commit Import یا گم‌شدن Save حین کار | جاافتادن تغییر یا اجرای هم‌زمان | Token اتمیک و Follow-up قطعی O-72، تکمیل پس از Lease، و تعویق Baseline/Commit پایدار به قرارداد Import |
 | نبود شناسه پایدار در اکسل | اشتباه‌گرفتن ویرایش با حذف/ایجاد | record_id مخفی و نسخه‌بندی |
 | ادغام شخص هویتی با شخص حسابداری | انتقال اشتباه مجوز یا سابقه مالی | موجودیت‌های مستقل، عضویت صریح و آزمون O-57 |
 | تولید غیرقطعی Event یا Ledger | مانده/اصلاحیه تکراری یا غیرقابل‌بازسازی | شناسه و Revision پایدار، calculation_version، Idempotency و Rebuild آزموده O-58/O-59 |
@@ -1599,6 +1613,7 @@
 
 | نسخه | تاریخ | تغییر |
 |---|---|---|
+| 0.42 | 2026-09-02 | بستن تصمیم فنی O-72 و ثبت ADR-0010 برای هماهنگ‌کننده Save با مسیر دقیق، ساعت یکنواخت و Debounce ثابت دوثانیه‌ای، یک Token فعال و یک Follow-up، طبقه‌بندی Retry/Reader rejection/Faulted و Driver کامل WP-06/WP-05؛ صدور WP-07 با 16 معیار آزمون قطعی و شواهد فقط ساختگی، بدون Observer واقعی، Excel/OneDrive، UUID، Commit/SQLite/Outbox یا بستن G1 |
 | 0.41 | 2026-09-02 | ثبت پذیرش شاهددار WP-06 توسط Codex مدیر پروژه پس از بازبینی مستقل و رفع ایجاد غیرانحصاری Candidate، حفظ منبع Hardlinkشده، پیام‌های امن و علت‌های مستقل Windows و آزمون جایگزینی واقعی؛ CI Windows/Linux Run `33616797405` با 273/272 قبولی و اجرای چهار سناریوی symlink ویندوز؛ ادغام PR #22 با مجوز مالک و Commit `1346abf`؛ حفظ مرز فایل ساختگی و بازماندن G1، بدون صدور بسته بعدی |
 | 0.40 | 2026-09-01 | بستن تصمیم فنی O-71 و ثبت ADR-0009 برای Acquisition نسخه‌دار Snapshot ثابت با دو مشاهده، کپی/Hash جریانی، بازخوانی منبع و کپی، ZIP Container، ارتقای اتمیک و Cleanup دقیق؛ صدور WP-06 با Race/Property/Benchmark ترکیبی ساختگی و منع صریح Watcher/OneDrive/COM/UUID/SQLite/فایل واقعی، بدون بستن G1 |
 | 0.39 | 2026-09-01 | ثبت پذیرش شاهددار WP-05 توسط Codex مدیر پروژه پس از بازبینی مستقل چندمرحله‌ای Reader، Raw/SST/Constructor/Property/Lifecycle و ابزارسنجی RSS؛ موفقیت 200 آزمون و CI نهایی Windows/Linux Run `33505486610` با بنچ‌مارک 15,000 ردیف `2.9061s / 58.96 MiB` و `4.6764s / 59.34 MiB`؛ ادغام PR #19 با Commit `638053a`، بدون دسترسی فایل واقعی، تغییر Excel، SQLite/Import Commit یا بستن G1 |
