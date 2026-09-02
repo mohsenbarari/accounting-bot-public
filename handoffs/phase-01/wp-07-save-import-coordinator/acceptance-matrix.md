@@ -1,5 +1,7 @@
 # Acceptance Matrix: WP-07 Save Debounce, Coalescing, and Import Coordination
 
+> Final Codex acceptance (2026-09-02): SC-01 through SC-16 accepted for the synthetic WP-07 boundary. PR #25 / CI Run `33632031865` passed on Linux (312 passed, 2 Windows-only skips) and Windows (313 passed, 1 POSIX-only skip). All four Windows symlink scenarios ran. See [Codex acceptance](codex-review.md); the implementer evidence below predates CI. G1 remains open.
+
 ## Overview
 
 - **Work Package:** `docs/work-packages/phase-01/WP-07-save-import-coordinator.md`
