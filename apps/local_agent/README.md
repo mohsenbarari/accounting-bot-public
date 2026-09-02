@@ -4,6 +4,15 @@ Windows interactive user-session agent for monitoring Excel `.xlsx` saves, strea
 
 ## Architecture and boundaries
 
+- **Save Debounce, Coalescing, and Coordination (`save_import_coordinator.py` — WP-07 / ADR-0010):**
+  - Public version: `SAVE_IMPORT_COORDINATOR_VERSION = "save-import-coordinator.v1"`
+  - Public API: `SaveImportCoordinator`, `SaveCoordinatorView`, `SourceReadAttempt`, `SaveEventKind`, `SaveCoordinatorState`, `SourceReadOutcome`, `read_due_source(...)`
+  - Fixed debounce: `SAVE_DEBOUNCE_NS = 2_000_000_000` (2.0s quiet period)
+  - Enforces exact-path matching with host-native lexical comparison (`normpath`/`normcase`), ignoring sibling `.tmp`, lock `~$`, conflict, archive, snapshot, directory, and read-only notices.
+  - Coalesces notification bursts into one pending reservation; remembers at most one follow-up when a Save occurs during reading.
+  - Thread-safe state transitions without holding locks across file I/O or parsing.
+  - Synchronous `read_due_source` driver reserves an attempt, invokes `open_stable_xlsx_snapshot` and `read_xlsx_source_snapshot`, verifies clean context exit, completes attempt bookkeeping, and re-raises failures with original causes.
+
 - **Stable XLSX Snapshot Acquisition (`xlsx_snapshot_acquisition.py` — WP-06 / ADR-0009):**
   - Public version: `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
   - Public API: `open_stable_xlsx_snapshot(source_path, snapshot_root, observation_interval_seconds) -> Iterator[StableXlsxSnapshot]`
@@ -70,5 +79,5 @@ uv run mypy .
 uv run mypy --platform win32 .
 uv run pytest -v
 git diff --check origin/main...HEAD
-python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/
+python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-07-save-import-coordinator/
 ```
