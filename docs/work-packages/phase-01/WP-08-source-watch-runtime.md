@@ -7,9 +7,11 @@
 - Issued on: 2026-09-02
 - Accepted by: Codex Project Manager
 - Accepted on: 2026-09-02
-- Review evidence: PR #28 and final CI Run `33666088469`; [Codex acceptance](../../../handoffs/phase-01/wp-08-source-watch-runtime/codex-review.md)
+- Review evidence: implementation PR #28 / CI Run `33666088469`, followed by WR-08 stabilization PR #30 / final correction CI Run `33670197344`; [Codex acceptance](../../../handoffs/phase-01/wp-08-source-watch-runtime/codex-review.md)
 - Reviewed head: `2f51f2ef18a09f3c931dde46de5c3a1dbb12a4f3`
 - Merge commit: `0d1df855c39ab7ac5b8d5492915fb1014dc096cf`
+- Stabilization reviewed head: `a593e937b4ac4fdfc2a9711f9ce94b71448e2954` (tested code `c77f85b69e353a3e057de15436a3f8498c8f9a65`)
+- Stabilization merge: `fdaa98b0d5f7a38041c84b8f18d5eafbf02cdc2e`; product code unchanged
 - Required skill: `accounting-bot-implementer`
 - Branch: `antigravity/phase-01-source-watch-runtime`
 - Planning baseline: `0e9bb74b79c8bd9517a1fc93fef1684f36a81b4a`
