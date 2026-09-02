@@ -48,16 +48,17 @@
   - `2f19d90` — `fix(local_agent): resolve Ruff B904 exception chaining in win query`
   - `8a037d4` — `docs(handoff): update WP-06 handoff commit list`
   - `d2a114c` — `fix(local_agent,tests): complete typed handle error lifecycle, windows anchor oracle, candidate protection, and symlink probing for round 12`
+  - `28bf62f` — `docs(handoff): update WP-06 handoff with Codex review round 12 evidence`
+  - `3eca9fb` — `fix(local_agent,tests): restore candidate exclusive creation and complete sanitized error preserving causes for round 13`
 - **Gate G1 Status:** `OPEN / IN PROGRESS` (`REQUEST_CHANGES` pending Codex PR review and merge)
 
 ## Scope
 
 Delivers bounded, atomic XLSX snapshot acquisition, exclusive leased consumer access, post-lease integrity verification, and namespace-safe cleanup lifecycle under ADR-0009 and WP-06.
-Addresses all Round 12 Codex review remediation directives (R12-01 to R12-04):
-1. **R12-01 (Typed Windows Handle Error Lifecycle & Double Failure):** Wrapped WinAPI lookups, argument setups, calls, and return-false checks into typed `XlsxSnapshotCleanupError(reason=SNAPSHOT_CLEANUP_FAILURE)` with original exception chained in `__cause__`; preserved double-failure exception chaining; converted `_close_windows_handle` failures in `finally` to `XlsxSnapshotCleanupError`, failing closed without yield; added comprehensive subtests in `test_r10_02` with exact `call_count` assertions; strengthened native oracle `test_r11_01`.
-2. **R12-02 (Windows Anchor Directory Oracle):** Intercepted `CreateFileW` on `foreign_dir` in `test_r8_01` on Windows, asserting `anchor_yielded is False`, `XlsxSnapshotStorageError` is raised, `foreign_dir.exists()`, `displaced_owned_dir.exists()`, and `list(foreign_dir.iterdir()) == []`.
-3. **R12-03 (Candidate Protection & Writer Coverage):** Verified candidate descriptor closure upon exit in `test_r8_08`; added `after_candidate_close_before_cleanup` hook in product code and asserted unconditional foreign candidate file survival, storage error, and no yield in `test_r8_09`; verified writer attempt/succeeded/blocked outcomes with source verification and subsequent next-generation acquisition in `test_sa05`; executed symlink swap during `during_observation` for `test_sa05`.
-4. **R12-04 (Honest Symlink Probing & CI Guard):** Probed native symlink creation capability via `_probe_symlink_capability(tmp_path)` skipping only for `WinError 1314` / `errno.EPERM`, while calling `pytest.fail` in CI environments to prevent silent capability skips.
+Addresses all Round 13 Codex review remediation directives (R13-01 to R13-03):
+1. **R13-01 (Candidate Exclusive Creation & Source Immutability):** Reverted candidate open flags from `os.O_CREAT | os.O_TRUNC` back to `os.O_CREAT | os.O_EXCL`. Eliminated the regression where a pre-existing candidate or hard link to source could be truncated/overwritten. Added two behavioral regression oracles (`test_r13_01_pre_existing_candidate_file_fail_closed_oracle` and `test_r13_01_candidate_hardlink_to_source_immutability_oracle`) proving source workbook byte/hash immutability and foreign candidate survival.
+2. **R13-02 (Sanitized Typed Messages & Cause Preservation):** Sanitized all WinAPI and move typed error messages to constant static strings without raw exception text, absolute paths, or secret markers. In `_create_and_anchor_lease_dir_windows` double failure, bundled `query_exc` and `cln_err` into `ExceptionGroup`/`BaseExceptionGroup` preserving both independent raw causes without overwriting. Hardened `test_r10_02` with secret-marker injection and strict typed reason assertions.
+3. **R13-03 (Real Foreign File Replacement via `os.replace` in `test_r8_09`):** Prepared an independent foreign file and performed `os.replace` after candidate descriptor close. Proved that file identity changed from candidate to prepared foreign file, and asserted unconditional foreign file survival, bytes unchanged, storage/cleanup errors visible, no yield, and source immutability.
 
 ## Roadmap traceability
 
@@ -68,8 +69,8 @@ Addresses all Round 12 Codex review remediation directives (R12-01 to R12-04):
 ## Changed files
 
 - `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported `DEFAULT_COPY_CHUNK_SIZE`, `XLSX_SNAPSHOT_ACQUISITION_VERSION`, `StableXlsxSnapshot`, error taxonomy classes, and `open_stable_xlsx_snapshot`.
-- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Versioned context manager with Round 12 review fixes (R12-01 to R12-04).
-- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 72 tests covering SA-01 to SA-14 and all regression oracles.
+- `apps/local_agent/src/accounting_local_agent/xlsx_snapshot_acquisition.py`: Versioned context manager with Round 13 review fixes (R13-01 to R13-03).
+- `tests/test_xlsx_snapshot_acquisition.py`: Test suite containing 74 tests covering SA-01 to SA-14 and all regression oracles.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/handoff.md`: Handoff summary and audit traceability.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/acceptance-matrix.md`: Detailed requirement acceptance matrix.
 - `handoffs/phase-01/wp-06-stable-xlsx-snapshot-acquisition/test-results.txt`: Verbatim command outputs, 3-run benchmark logs, and quality scan records.
@@ -84,16 +85,16 @@ Addresses all Round 12 Codex review remediation directives (R12-01 to R12-04):
 2. `uv run ruff check .` (Exit 0, all checks passed)
 3. `uv run mypy .` (Exit 0, 23 source files checked)
 4. `uv run mypy --platform win32 .` (Exit 0, 23 source files checked)
-5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 70 passed, 2 skipped in 15.71s)
-6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark"` (Exit 0, 3 runs: 12.47s, 11.20s, 11.76s duration; 59.51 MiB, 59.45 MiB, 59.89 MiB peak RSS)
-7. `uv run pytest -v` (Exit 0, 270 passed, 2 skipped in 38.42s)
+5. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -v` (Exit 0, 72 passed, 2 skipped in 17.88s)
+6. `uv run pytest tests/test_xlsx_snapshot_acquisition.py -k "test_sa14_combined_15000_row_benchmark"` (Exit 0, 3 runs: 12.67s, 12.60s, 12.50s duration; 59.84 MiB, 59.59 MiB, 59.75 MiB peak RSS)
+7. `uv run pytest -v` (Exit 0, 272 passed, 2 skipped in 42.57s)
 8. `git ls-files` check (Exit 0, 92 tracked files, 0 prohibited files)
 9. `git grep` sensitive patterns check (Exit 1 failure-on-match -> Exit 0 clean)
 
 ## Tests and evidence
 
-- Full repository suite: 270 tests passing cleanly (2 skipped Windows-runtime-only tests).
-- SA-01 to SA-14 coverage: 72 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
+- Full repository suite: 272 tests passing cleanly (2 skipped Windows-runtime-only tests).
+- SA-01 to SA-14 coverage: 74 dedicated unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests.
 - Verbatim execution logs and metrics recorded in `test-results.txt`.
 
 ## Assumptions and open items
@@ -122,4 +123,4 @@ Addresses all Round 12 Codex review remediation directives (R12-01 to R12-04):
 
 ## Stop state
 
-Implementation for Round 12 is stopped pending independent Codex PR review and merge. Gate G1 remains `OPEN / IN PROGRESS` and WP-06 remains `REQUEST_CHANGES`. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation for Round 13 is stopped pending independent Codex PR review and merge. Gate G1 remains `OPEN / IN PROGRESS` and WP-06 remains `REQUEST_CHANGES`. No Gate approval, merge, push, deploy, or next Work Package has been performed.

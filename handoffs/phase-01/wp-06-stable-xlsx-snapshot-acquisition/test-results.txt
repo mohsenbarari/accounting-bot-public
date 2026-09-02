@@ -1,24 +1,24 @@
 WORK PACKAGE: WP-06: Stable XLSX snapshot acquisition and cleanup
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-02T08:25:00Z
+RECORDED AT UTC: 2026-09-02T09:19:00Z
 
-# Test Results: WP-06 Stable XLSX Snapshot Acquisition and Cleanup (Codex Round 12 Review Remediation)
+# Test Results: WP-06 Stable XLSX Snapshot Acquisition and Cleanup (Codex Round 13 Review Remediation)
 
 ## FINAL SUMMARY
 
-- Status: ALL PASS (Linux & Windows Mypy Clean) / Remediated in Round 12 (R12-01 to R12-04) / Independent Codex CI Review Required on PR
+- Status: ALL PASS (Linux & Windows Mypy Clean) / Remediated in Round 13 (R13-01 to R13-03) / Independent Codex CI Review Required on PR
 - Test suites:
-  - WP-06 Acquisition unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests (tests/test_xlsx_snapshot_acquisition.py): 70 passed, 2 skipped (Windows runtime only) in 15.71s
-  - Full repository test suite: 270 passed, 2 skipped in 38.42s
+  - WP-06 Acquisition unit, integration, fault-injection, concurrency, hypothesis, and streaming benchmark tests (tests/test_xlsx_snapshot_acquisition.py): 72 passed, 2 skipped (Windows runtime only) in 17.88s
+  - Full repository test suite: 272 passed, 2 skipped in 42.57s
 - Linters & Types:
   - Ruff format: 60 files formatted, 0 errors
   - Ruff check: 0 errors
   - Mypy Linux native: 0 errors (23 source files)
   - Mypy win32 target: 0 errors (23 source files)
 - Streaming 15,000-Row Benchmark Execution (CPython 3.13.15 Linux):
-  - Run 1: duration 12.4766s, baseline current RSS 28.11 MiB, call peak RSS 59.51 MiB, SHA256 e5c324b1d81bc7775066e06c6ea83317d64b067c58e67cfe1afe8ad8bc4df1f0
-  - Run 2: duration 11.2051s, baseline current RSS 28.19 MiB, call peak RSS 59.45 MiB, SHA256 0f6ed8a52f73d24ccd1cf192d6107f9ea7976d074bde5072502776becdd5d73d
-  - Run 3: duration 11.7627s, baseline current RSS 28.13 MiB, call peak RSS 59.89 MiB, SHA256 b7a8923a7609e9ba774797cd6e1342e3969de460277b77c3dda12c6d76c9d4f0
+  - Run 1: duration 12.6689s, baseline current RSS 28.26 MiB, call peak RSS 59.84 MiB, SHA256 e6c65eeca151a7d4b1e44c520f6a3c00cec1a58baa552a101e0ae83871fca0ca
+  - Run 2: duration 12.5978s, baseline current RSS 28.26 MiB, call peak RSS 59.59 MiB, SHA256 1a3259cce746269b47cbc6df208e647cba82ba0624043d6dbb9ddae7e583bd62
+  - Run 3: duration 12.5033s, baseline current RSS 28.21 MiB, call peak RSS 59.75 MiB, SHA256 4ea838fc14fc74298ca01bd2f7bf316d0dd7300233d07fe07ed9ec771e59d142
   - Limits: duration < 15.0s, call peak RSS < 128.0 MiB
 - Security & Integrity:
   - Prohibited tracked binary/database files: 0 found (checked 92 tracked files)
@@ -29,16 +29,39 @@ RECORDED AT UTC: 2026-09-02T08:25:00Z
 ## Pytest Output
 
 ```text
-........................................................................ [ 26%]
-...........................................................
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.7627s | baseline_current_rss_mib: 28.13 MiB | call_peak_rss_mib: 59.89 MiB | rows: 15000 | file_bytes: 549787 | file_sha: b7a8923a7609e9ba774797cd6e1342e3969de460277b77c3dda12c6d76c9d4f0 | platform: linux
-............. [ 52%]
-...............ss......................................
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 12.4637s | baseline_current_rss_mib: 28.30 MiB | call_peak_rss_mib: 59.91 MiB | rows: 15000 | platform: linux
-................. [ 79%]
-........................................................                 [100%]
-=========================== short test summary info ============================
-SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3683: Native Windows handle protection test only runs on Windows runtime
-SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3780: Windows platform-conditional test only runs on Windows runtime
-270 passed, 2 skipped in 38.42s
+=================== test session starts ====================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /srv/accounting-bot/workspace
+configfile: pyproject.toml
+testpaths: tests
+plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 274 items                                        
+
+tests/test_architecture_guard.py ..............      [  5%]
+tests/test_canonical_date.py ..........              [  8%]
+tests/test_canonical_hashing.py ..................   [ 15%]
+tests/test_imports.py .......                        [ 17%]
+tests/test_raw_input_contracts.py ...............    [ 23%]
+tests/test_source_change_plan.py ................... [ 30%]
+......                                               [ 32%]
+tests/test_xlsx_snapshot_acquisition.py ............ [ 36%]
+..............................
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 13.5325s | baseline_current_rss_mib: 28.17 MiB | call_peak_rss_mib: 59.55 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 9077029430657372335e153cf165188c5b78f33c002446c345392cab9ddbf512 | platform: linux
+...................... [ 55%]
+........ss                                           [ 59%]
+tests/test_xlsx_source_reader.py ................... [ 66%]
+...................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 13.7011s | baseline_current_rss_mib: 28.26 MiB | call_peak_rss_mib: 59.92 MiB | rows: 15000 | platform: linux
+.......                           [ 75%]
+tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 76%]
+......                                               [ 78%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 78%]
+.................................................... [ 97%]
+......                                               [100%]
+
+================= short test summary info ==================
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
+============= 272 passed, 2 skipped in 42.57s ==============
 ```

@@ -7,15 +7,15 @@
 - **Component Version:** `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
 - **Baseline Commit:** `bc085acd8852e2293fdfcb786a7694fe96e93407`
 - **Current Branch:** `antigravity/phase-01-stable-xlsx-snapshot-acquisition`
-- **Remediation Scope:** Codex Round 12 Review Remediation (R12-01 to R12-04)
+- **Remediation Scope:** Codex Round 13 Review Remediation (R13-01 to R13-03)
 
 ---
 
-## Detailed Requirement Verification (SA-01 to SA-14 & R12-01 to R12-04)
+## Detailed Requirement Verification (SA-01 to SA-14 & R13-01 to R13-03)
 
 | Item ID | Requirement / Scope | Status | Verification & Evidence |
 | :--- | :--- | :--- | :--- |
-| **SA-01** | Public API, version export, typed taxonomy & reason strings, sanitized error formatting without path/member leaks | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa01_public_api_exports_and_version`, `test_sa01_stable_xlsx_snapshot_invariants`, `test_sa01_error_taxonomy_reasons_and_retryability`, `test_sa01_no_path_or_secret_leakage_in_messages_and_repr` |
+| **SA-01** | Public API, version export, typed taxonomy & reason strings, sanitized constant error formatting without path/member/secret leaks | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa01_public_api_exports_and_version`, `test_sa01_stable_xlsx_snapshot_invariants`, `test_sa01_error_taxonomy_reasons_and_retryability`, `test_sa01_no_path_or_secret_leakage_in_messages_and_repr` |
 | **SA-02** | Two ordered observations; rejection of non-positive intervals, non-xlsx files, non-directory roots, string paths, and initial symlinks (with honest symlink capability probe) | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa02_two_observations_and_sleeper`, `test_sa02_invalid_arguments_and_policy_rejections`, `test_sa02_initial_source_symlink_rejection`, `test_sa02_non_regular_file_rejection_policy` |
 | **SA-03** | Source file read-only immutability (bytes, sha256, size, mtime_ns, permissions unchanged across all outcomes) | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa03_source_immutability_on_success_and_failures` |
 | **SA-04** | Missing, disappearing, or inaccessible source files raise retryable `XlsxSourceNotReadyError` | PASS | `tests/test_xlsx_snapshot_acquisition.py::test_sa04_missing_and_disappearing_source_handling`, `test_sa04_inaccessible_file_permission_lock` |
@@ -32,34 +32,31 @@
 
 ---
 
-## Round 12 Refinements & Deterministic Oracles (R12-01 to R12-04)
+## Round 13 Refinements & Deterministic Oracles (R13-01 to R13-03)
 
-1. **R12-01: Windows Handle Close Lifecycle & Typed Error Hierarchy (`test_r10_02`, `test_r11_01`):**
-   - In `_close_windows_handle`, wrapped lookup, `argtypes`/`restype` setup, and API call in `try...except Exception as exc:`. Converts `AttributeError`, `ctypes.ArgumentError`, `TypeError`, `OSError`, and `ret == False` into `XlsxSnapshotCleanupError(f"CloseHandle failed on handle {handle}...")` with reason `SNAPSHOT_CLEANUP_FAILURE` and cause chained (`WINDOWS_CLOSE_HANDLE_TYPED_ERROR = True`).
-   - In `_create_and_anchor_lease_dir_windows`, immediate single ownership of opened handle with `try...except` ensuring no handle leak. On double failure, chains `query_exc from cln_err` where `cln_err` contains `exc` (`WINDOWS_DOUBLE_FAILURE_CAUSES_PRESERVED = True`).
-   - In `open_stable_xlsx_snapshot`, catches close failures from `_close_windows_handle` in `finally` and raises `XlsxSnapshotCleanupError("Failed to close lease directory anchor")`, aborting without yield (`WINDOWS_CLOSE_HANDLE_FINALLY_FAIL_CLOSED = True`).
-   - Test `test_r10_02` covers: return-true, return-false, lookup failure (`AttributeError`), call failure (`ctypes.ArgumentError`), query failure + successful close, query failure + close failure, and close failure on context exit. Exact `call_count` asserted across all test cases.
-   - Enhanced native test `test_r11_01_windows_handle_protect_from_close_native_oracle` with full WinAPI prototype declarations and cleanup verification in `finally`.
+1. **R13-01: Reversion to Exclusive Candidate Creation (`O_CREAT | O_EXCL`) & Invariant Hardening:**
+   - In `open_stable_xlsx_snapshot`, reverted candidate open flags from `os.O_CREAT | os.O_TRUNC` back to `os.O_CREAT | os.O_EXCL` (`CANDIDATE_CREATION_EXCLUSIVE = True`).
+   - If candidate path already exists before copy open, `os.open` fails immediately with `FileExistsError` -> typed `XlsxSnapshotStorageError("Failed to create snapshot candidate file")`, aborting without yield.
+   - Pre-existing and hardlinked candidate files are never truncated, overwritten, deleted, or promoted.
+   - Added two dedicated regression tests:
+     - `test_r13_01_pre_existing_candidate_file_fail_closed_oracle`: Injects pre-existing candidate file at `before_copy_open`; asserts `XlsxSnapshotStorageError`, no yield, foreign candidate file survives cleanup untouched with exact initial bytes, and source workbook is untouched.
+     - `test_r13_01_candidate_hardlink_to_source_immutability_oracle`: Injects hard link (`os.link(src, part_file)`) at `before_copy_open`; asserts `XlsxSnapshotStorageError`, no yield, and crucially asserts source size is NOT truncated to 0 bytes and retains 100% byte, size, mtime, and hash parity.
 
-2. **R12-02: Windows Lease Directory Anchor Oracle (`test_r8_01`):**
-   - Updated `test_r8_01_anchor_failure_between_mkdir_and_open_fail_closed_oracle` to intercept `CreateFileW` on Windows when targeting `foreign_dir`, failing with `-1` (`ERROR_ACCESS_DENIED`).
-   - Asserts `anchor_yielded is False`, `XlsxSnapshotStorageError` is raised, `foreign_dir.exists()`, `displaced_owned_dir.exists()`, and `list(foreign_dir.iterdir()) == []` on both POSIX and Windows backends.
+2. **R13-02: Sanitized Constant Typed Error Messages & Independent Exception Branching:**
+   - Replaced all formatted exception messages (`f"...{exc}"`, `f"...{err}"`) in WinAPI and move helpers with constant static messages (`"Failed to initialize WinAPI CreateFileW"`, `"CreateFileW invocation failed on lease directory"`, `"CreateFileW failed on lease directory"`, `"Failed to query lease directory identity"`, `"CloseHandle failed on handle"`, `"Linux atomic move failed"`, `"Windows atomic move failed"`).
+   - In `_create_and_anchor_lease_dir_windows`, when both query and close fail, both exceptions are bundled into an `ExceptionGroup`/`BaseExceptionGroup` with distinct objects: `query_exc` retains raw query exception in `__cause__`, and `cln_err` retains raw close exception in `__cause__`. Neither overwrites the other and no self-causes are formed.
+   - In `test_r10_02`, verified all typed messages and string representations are free of raw exception text, secret markers, and absolute directory paths.
 
-3. **R12-03: Candidate Protection and Writer Coverage (`test_r8_08`, `test_r8_09`, `test_sa05`):**
-   - In `test_r8_08`, verified transient fstat retry targets the exact same file descriptor and asserted candidate descriptor is cleanly closed upon context exit.
-   - In `open_stable_xlsx_snapshot`, added fault hook `after_candidate_close_before_cleanup` immediately after `os.close(dst_fd)` when fstat fails. In `test_r8_09`, asserted unconditionally that foreign replacement was created, survived cleanup, retains exact foreign bytes, storage error was visible, and no snapshot was yielded.
-   - In `test_sa05_atomic_os_replace_at_every_race_point`, asserted `attempted`, `succeeded`, and `blocked` outcomes. If blocked by Windows kernel file locking, verified `PermissionError` (WinError 32/5), verified source remained uncorrupted, verified clean snapshot, and verified subsequent acquisition of the new generation after reader exit.
-   - In `test_sa05_source_symlink_race_mutation_with_same_inode`, performed symlink swap during `during_observation` so swap succeeds cleanly and observation 2 detects and rejects the symlink.
-
-4. **R12-04: Honest Symlink Capability Probing & CI Guard:**
-   - In `_probe_symlink_capability(tmp_path)`, explicitly probes symlink creation and skips only for `WinError 1314` (`ERROR_PRIVILEGE_NOT_HELD`) or `errno.EPERM`. Any unexpected `OSError` raises immediately.
-   - In `_assert_or_skip_symlink_capability(tmp_path)`, checks `CI=true` or `GITHUB_ACTIONS=true` and calls `pytest.fail` if capability is missing in CI, preventing silent green jobs.
+3. **R13-03: Real Foreign File Replacement in `test_r8_09` via `os.replace`:**
+   - In `test_r8_09`, prepared an independent foreign file `prepared_foreign` with distinct bytes in the fixture.
+   - In hook `after_candidate_close_before_cleanup`, executed `os.replace(prepared_foreign, t)` on the closed candidate handle.
+   - Asserted `os.replace` succeeded, asserted that the replacement file identity matches `prepared_foreign` and differs from original candidate, and unconditionally asserted foreign file survival, bytes unchanged, `XlsxSnapshotStorageError` + `XlsxSnapshotCleanupError`, no yield, and source immutability.
 
 ---
 
 ## Coverage gaps
 
-- **Linux (Native Platform):** Full test suite (270/270 active tests passing, 3 benchmark runs under 12.5s and 60 MiB RSS).
+- **Linux (Native Platform):** Full test suite (272/272 active tests passing, 3 benchmark runs under 12.7s and 60 MiB RSS).
 - **Windows Runtime Platform:** Platform-conditional runtime execution (`test_r9_10`, `test_r11_01`) is recorded as **PENDING** independent Codex CI execution on PR. Static type compliance verified via `mypy --platform win32` (Exit 0).
 
 ---
