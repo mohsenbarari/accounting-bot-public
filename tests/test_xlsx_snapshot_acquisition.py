@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import dataclasses
+import errno
 import hashlib
 import io
 import os
@@ -78,27 +79,65 @@ def _flatten_exceptions(exc: BaseException) -> list[BaseException]:
     return [exc]
 
 
-def _can_create_symlinks(tmp_path: Path) -> bool:
-    """Check if current environment/account has native symlink creation permission."""
+def _probe_symlink_capability(tmp_path: Path) -> tuple[bool, str]:
+    """Probe environment for native symlink creation capability.
+    Returns (can_symlink, skip_reason).
+    """
     if not hasattr(os, "symlink"):
-        return False
+        return False, "os.symlink is not available on this platform"
+
     probe_target = tmp_path / f".symlink_probe_target_{uuid.uuid4().hex}"
     probe_link = tmp_path / f".symlink_probe_link_{uuid.uuid4().hex}"
-    probe_target.write_bytes(b"probe")
+    probe_target.write_bytes(b"symlink_probe_payload")
+
     try:
         probe_link.symlink_to(probe_target)
-        probe_link.unlink()
-        probe_target.unlink()
-        return True
-    except (OSError, NotImplementedError):
-        try:
-            if probe_target.exists():
-                probe_target.unlink()
-            if probe_link.exists():
-                probe_link.unlink()
-        except OSError:
-            pass
-        return False
+        can_symlink = True
+        skip_reason = ""
+    except (OSError, NotImplementedError) as exc:
+        winerror = getattr(exc, "winerror", None)
+        # Windows WinError 1314: ERROR_PRIVILEGE_NOT_HELD
+        if winerror == 1314 or (
+            isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.EPERM
+        ):
+            can_symlink = False
+            code = winerror if winerror is not None else getattr(exc, "errno", None)
+            skip_reason = (
+                f"Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno {code})"
+            )
+        elif isinstance(exc, NotImplementedError):
+            can_symlink = False
+            skip_reason = "Symlinks not implemented on filesystem"
+        else:
+            # Any unexpected OSError during probe must fail rather than skip
+            raise
+    finally:
+        if probe_link.is_symlink() or probe_link.exists():
+            probe_link.unlink()
+        if probe_target.exists():
+            probe_target.unlink()
+
+    return can_symlink, skip_reason
+
+
+def _assert_or_skip_symlink_capability(tmp_path: Path) -> None:
+    """Check symlink capability. In CI environments, lack of capability fails;
+    in local unprivileged dev, skips with precise reason.
+    """
+    can_symlink, skip_reason = _probe_symlink_capability(tmp_path)
+    if not can_symlink:
+        is_ci = (
+            os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+        )
+        if is_ci:
+            pytest.fail(f"CI environment symlink precondition failure: {skip_reason}")
+        pytest.skip(skip_reason)
+
+
+def _can_create_symlinks(tmp_path: Path) -> bool:
+    """Historical backward-compatible boolean probe."""
+    can_symlink, _ = _probe_symlink_capability(tmp_path)
+    return can_symlink
 
 
 # ============================================================================
@@ -434,11 +473,7 @@ def test_sa02_invalid_arguments_and_policy_rejections(tmp_path: Path) -> None:
 
 def test_sa02_initial_source_symlink_rejection(tmp_path: Path) -> None:
     """SA-02 & R2-02: Initial symlink source rejected with policy error."""
-    if not _can_create_symlinks(tmp_path):
-        pytest.skip(
-            "Native symlink creation not permitted in this environment "
-            "(e.g., Windows account lacks SeCreateSymbolicLinkPrivilege)"
-        )
+    _assert_or_skip_symlink_capability(tmp_path)
 
     root = tmp_path / "root"
     root.mkdir()
@@ -630,14 +665,19 @@ def test_sa05_atomic_os_replace_at_every_race_point(
     root = tmp_path / "root"
     root.mkdir()
 
+    initial_stat = src.stat()
+    initial_sha = hashlib.sha256(original_bytes).hexdigest().lower()
+
     replacement_src = tmp_path / "replacement.xlsx"
     replacement_bytes = original_bytes + b"replacement_bytes"
     replacement_src.write_bytes(replacement_bytes)
+    replacement_sha = hashlib.sha256(replacement_bytes).hexdigest().lower()
 
-    replace_outcome: dict[str, bool] = {
+    replace_outcome: dict[str, Any] = {
         "attempted": False,
         "succeeded": False,
         "blocked": False,
+        "blocked_exc": None,
     }
 
     def inject_replacement(stage: str, s: Path, t: Path | None) -> None:
@@ -646,8 +686,9 @@ def test_sa05_atomic_os_replace_at_every_race_point(
             try:
                 os.replace(replacement_src, s)
                 replace_outcome["succeeded"] = True
-            except OSError:
+            except OSError as exc:
                 replace_outcome["blocked"] = True
+                replace_outcome["blocked_exc"] = exc
 
     try:
         with open_stable_xlsx_snapshot(
@@ -658,31 +699,42 @@ def test_sa05_atomic_os_replace_at_every_race_point(
             _fault_hook=inject_replacement,
         ) as snap:
             # If writer was blocked by OS file sharing/locking on Windows:
+            assert replace_outcome["attempted"] is True
             assert replace_outcome["blocked"] is True
+            # Verify blocked reason is genuine OS sharing/permission lock
+            blocked_exc = replace_outcome["blocked_exc"]
+            assert isinstance(blocked_exc, PermissionError) or getattr(
+                blocked_exc, "winerror", None
+            ) in (32, 5)
+            # Verify source on disk remained completely uncorrupted
+            after_stat = src.stat()
+            assert src.read_bytes() == original_bytes
+            assert after_stat.st_size == initial_stat.st_size
             assert snap.byte_count == len(original_bytes)
-            assert (
-                snap.file_sha256 == hashlib.sha256(original_bytes).hexdigest().lower()
-            )
+            assert snap.file_sha256 == initial_sha
     except XlsxSourceNotReadyError as exc:
+        assert replace_outcome["attempted"] is True
         assert replace_outcome["succeeded"] is True
         assert exc.retryable is True
 
     assert list(root.iterdir()) == []
     if replace_outcome["blocked"]:
-        # Verify that after reader exits and releases handles, replacement succeeds
+        # Verify that after reader exits and releases all handles, replacement succeeds
         os.replace(replacement_src, src)
         assert src.read_bytes() == replacement_bytes
+        # And verify next generation acquisition succeeds cleanly
+        with open_stable_xlsx_snapshot(
+            src, root, 0.001, _sleeper=lambda _: None
+        ) as next_snap:
+            assert next_snap.byte_count == len(replacement_bytes)
+            assert next_snap.file_sha256 == replacement_sha
 
 
 def test_sa05_source_symlink_race_mutation_with_same_inode(
     tmp_path: Path,
 ) -> None:
     """SA-05 & R2-02: Renaming source and replacing with symlink is detected."""
-    if not _can_create_symlinks(tmp_path):
-        pytest.skip(
-            "Native symlink creation not permitted in this environment "
-            "(e.g., Windows account lacks SeCreateSymbolicLinkPrivilege)"
-        )
+    _assert_or_skip_symlink_capability(tmp_path)
 
     src = tmp_path / "source.xlsx"
     original_bytes = _build_valid_test_xlsx()
@@ -691,32 +743,37 @@ def test_sa05_source_symlink_race_mutation_with_same_inode(
     root.mkdir()
 
     renamed_target = tmp_path / "renamed_same_inode.xlsx"
-    symlink_outcome = {"attempted": False, "succeeded": False, "blocked": False}
+    symlink_outcome: dict[str, Any] = {
+        "attempted": False,
+        "succeeded": False,
+        "blocked": False,
+        "blocked_exc": None,
+    }
 
     def inject_symlink_swap(stage: str, s: Path, t: Path | None) -> None:
-        if stage == "during_copy_chunk" and s.exists():
+        if stage == "during_observation" and s.exists():
             symlink_outcome["attempted"] = True
             try:
                 os.replace(s, renamed_target)
                 s.symlink_to(renamed_target)
                 symlink_outcome["succeeded"] = True
-            except OSError:
+            except OSError as exc:
                 symlink_outcome["blocked"] = True
+                symlink_outcome["blocked_exc"] = exc
 
-    try:
+    with pytest.raises(XlsxSourceNotReadyError) as exc_info:
         with open_stable_xlsx_snapshot(
             src,
             root,
             0.001,
             _sleeper=lambda _: None,
             _fault_hook=inject_symlink_swap,
-        ) as snap:
-            assert symlink_outcome["blocked"] is True
-            assert snap.byte_count == len(original_bytes)
-    except XlsxSourceNotReadyError as exc:
-        assert symlink_outcome["succeeded"] is True
-        assert exc.retryable is True
+        ):
+            pass
 
+    assert symlink_outcome["attempted"] is True
+    assert symlink_outcome["succeeded"] is True
+    assert exc_info.value.retryable is True
     assert list(root.iterdir()) == []
 
 
@@ -903,11 +960,7 @@ def test_sa07_candidate_symlink_rejection_leaves_target_untouched(
     tmp_path: Path,
 ) -> None:
     """SA-07 & R2-01: Candidate symlink fails and leaves target untouched."""
-    if not _can_create_symlinks(tmp_path):
-        pytest.skip(
-            "Native symlink creation not permitted in this environment "
-            "(e.g., Windows account lacks SeCreateSymbolicLinkPrivilege)"
-        )
+    _assert_or_skip_symlink_capability(tmp_path)
 
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
@@ -1236,11 +1289,7 @@ def test_sa09_atomic_os_replace_during_lease_preserves_replacement_file(
 
 def test_sa09_symlink_replacement_during_lease(tmp_path: Path) -> None:
     """SA-09 & R2-01: Replacing snapshot with a symlink raises integrity error."""
-    if not _can_create_symlinks(tmp_path):
-        pytest.skip(
-            "Native symlink creation not permitted in this environment "
-            "(e.g., Windows account lacks SeCreateSymbolicLinkPrivilege)"
-        )
+    _assert_or_skip_symlink_capability(tmp_path)
 
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
@@ -1951,6 +2000,8 @@ def test_r8_01_anchor_failure_between_mkdir_and_open_fail_closed_oracle(
     root = tmp_path / "root"
     root.mkdir()
 
+    import accounting_local_agent.xlsx_snapshot_acquisition as mod
+
     displaced_owned_dir: Path | None = None
     foreign_dir: Path | None = None
     anchor_yielded = False
@@ -1971,6 +2022,42 @@ def test_r8_01_anchor_failure_between_mkdir_and_open_fail_closed_oracle(
         return orig_open(path, flags, *args)
 
     monkeypatch.setattr(os, "open", mock_open)
+
+    # For Windows: intercept CreateFileW when opening foreign_dir
+    class MockWinKernel32AnchorFail:
+        def __init__(self, real_k32: Any) -> None:
+            self._real = real_k32
+
+        def __getattr__(self, name: str) -> Any:
+            if name == "CreateFileW":
+
+                class MockCreateFileWFunc:
+                    def __init__(self, real_fn: Any) -> None:
+                        self._real_fn = real_fn
+                        self.argtypes: Any = None
+                        self.restype: Any = None
+
+                    def __call__(self, lpFileName: str, *args: Any) -> int:
+                        if foreign_dir is not None and str(lpFileName) == str(
+                            foreign_dir
+                        ):
+                            return -1
+                        res = self._real_fn(lpFileName, *args)
+                        return int(res)
+
+                return MockCreateFileWFunc(self._real.CreateFileW)
+            return getattr(self._real, name)
+
+    if sys.platform == "win32":
+        orig_win_dll = mod._ctypes_provider.WinDLL
+
+        def mock_win_dll(name: str, *a: Any, **kw: Any) -> Any:
+            dll = orig_win_dll(name, *a, **kw)
+            if name.lower() == "kernel32":
+                return MockWinKernel32AnchorFail(dll)
+            return dll
+
+        monkeypatch.setattr(mod._ctypes_provider, "WinDLL", mock_win_dll)
 
     try:
         with pytest.raises(
@@ -2349,7 +2436,7 @@ def test_r8_07_safe_typed_error_messages_no_path_or_raw_oserror_oracle(
 def test_r8_08_candidate_fstat_transient_failure_no_replacement_oracle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test 8: Candidate fstat fails once, retry cleans root."""
+    """Test 8: Candidate fstat fails once, retry cleans root and descriptor closed."""
     src = tmp_path / "source.xlsx"
     src.write_bytes(_build_valid_test_xlsx())
     root = tmp_path / "root"
@@ -2358,12 +2445,14 @@ def test_r8_08_candidate_fstat_transient_failure_no_replacement_oracle(
     import accounting_local_agent.xlsx_snapshot_acquisition as mod
 
     orig_candidate_fstat = mod._fstat_candidate_fd
-    fstat_failed_once = False
+    fstat_call_count = 0
+    candidate_fds: list[int] = []
 
     def mock_candidate_fstat(fd: int) -> os.stat_result:
-        nonlocal fstat_failed_once
-        if not fstat_failed_once:
-            fstat_failed_once = True
+        nonlocal fstat_call_count
+        fstat_call_count += 1
+        candidate_fds.append(fd)
+        if fstat_call_count == 1:
             raise OSError("Injected single transient candidate fstat error")
         return orig_candidate_fstat(fd)
 
@@ -2373,8 +2462,19 @@ def test_r8_08_candidate_fstat_transient_failure_no_replacement_oracle(
     with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None) as snap:
         assert snap.byte_count == len(_build_valid_test_xlsx())
 
-    assert fstat_failed_once is True
+    assert fstat_call_count == 2
+    assert len(candidate_fds) == 2
+    # Retry must target the exact same open descriptor
+    assert candidate_fds[0] == candidate_fds[1]
     assert list(root.iterdir()) == []
+
+    # Verify candidate descriptor was cleanly closed upon exit
+    try:
+        os.fstat(candidate_fds[0])
+        fd_still_open = True
+    except OSError:
+        fd_still_open = False
+    assert fd_still_open is False, "Candidate descriptor must be closed after exit"
 
 
 def test_r8_09_candidate_fstat_failure_with_path_replacement_oracle(
@@ -2391,19 +2491,20 @@ def test_r8_09_candidate_fstat_failure_with_path_replacement_oracle(
     foreign_bytes = b"FOREIGN_CANDIDATE_REPLACEMENT_R8"
     foreign_path: Path | None = None
     fstat_call_count = 0
+    snap_yielded = False
 
     def mock_candidate_fstat(fd: int) -> os.stat_result:
-        nonlocal foreign_path, fstat_call_count
+        nonlocal fstat_call_count
         fstat_call_count += 1
-        # Overwrite candidate file on disk with foreign replacement if possible
-        for item in root.glob("acq-*/snapshot.part"):
-            try:
-                item.unlink()
-                item.write_bytes(foreign_bytes)
-                foreign_path = item
-            except OSError:
-                pass
         raise OSError("Persistent candidate fstat error")
+
+    def inject_foreign_after_candidate_close(
+        stage: str, s: Path, t: Path | None
+    ) -> None:
+        nonlocal foreign_path
+        if stage == "after_candidate_close_before_cleanup" and t is not None:
+            t.write_bytes(foreign_bytes)
+            foreign_path = t
 
     monkeypatch.setattr(mod, "_fstat_candidate_fd", mock_candidate_fstat)
 
@@ -2411,16 +2512,24 @@ def test_r8_09_candidate_fstat_failure_with_path_replacement_oracle(
         with pytest.raises(
             (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
         ) as exc_info:
-            with open_stable_xlsx_snapshot(src, root, 0.001, _sleeper=lambda _: None):
-                pass
+            with open_stable_xlsx_snapshot(
+                src,
+                root,
+                0.001,
+                _sleeper=lambda _: None,
+                _fault_hook=inject_foreign_after_candidate_close,
+            ):
+                snap_yielded = True
 
         flat = _flatten_exceptions(exc_info.value)
         assert any(isinstance(e, XlsxSnapshotStorageError) for e in flat)
         assert fstat_call_count >= 1
+        assert snap_yielded is False
 
-        # If foreign file was created, it must survive cleanup
-        if foreign_path is not None and foreign_path.exists():
-            assert foreign_path.read_bytes() == foreign_bytes
+        # Invariants unconditionally checked:
+        assert foreign_path is not None, "Foreign replacement must be created"
+        assert foreign_path.exists(), "Foreign replacement must survive cleanup"
+        assert foreign_path.read_bytes() == foreign_bytes, "Foreign bytes unchanged"
     finally:
         if foreign_path is not None and foreign_path.exists():
             foreign_path.unlink()
@@ -3381,20 +3490,15 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesFailCreate())
 
     lease_dir_fail = tmp_path / "test_lease_win_fail"
-    with pytest.raises(OSError, match="CreateFileW failed"):
+    with pytest.raises((XlsxSnapshotStorageError, OSError), match="CreateFileW failed"):
         mod._create_and_anchor_lease_dir_windows(lease_dir_fail)
 
     # 3. Test GetFileInformationByHandleEx failure (returns False)
     class MockKernel32FailGetInfo:
         def __init__(self) -> None:
-            self.closed = False
             self.CreateFileW = MockFunc(lambda *args: 0x1234)
             self.GetFileInformationByHandleEx = MockFunc(lambda *args: False)
-            self.CloseHandle = MockFunc(self._close)
-
-        def _close(self, *args: Any) -> bool:
-            self.closed = True
-            return True
+            self.CloseHandle = MockFunc(lambda *args: True)
 
     mock_k32_info = MockKernel32FailGetInfo()
 
@@ -3410,29 +3514,45 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesFailGetInfo())
 
     lease_dir_fail2 = tmp_path / "test_lease_win_fail2"
-    with pytest.raises(OSError, match="Failed to query lease directory identity"):
+    with pytest.raises(
+        (XlsxSnapshotStorageError, OSError),
+        match="Failed to query lease directory identity",
+    ):
         mod._create_and_anchor_lease_dir_windows(lease_dir_fail2)
 
-    assert mock_k32_info.closed is True, "CloseHandle must be called on failure"
+    assert mock_k32_info.CloseHandle.call_count == 1, (
+        "CloseHandle must be called exactly once on query failure"
+    )
 
-    # 4. Test CloseHandle returning False raises OSError
+    # 4. Test CloseHandle returning False raises XlsxSnapshotCleanupError
     class MockKernel32CloseFail:
         def __init__(self) -> None:
             self.CloseHandle = MockFunc(lambda *args: False)
+
+    mock_k32_close = MockKernel32CloseFail()
 
     class MockCtypesCloseFail:
         wintypes = MockWintypes()
 
         def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
-            return MockKernel32CloseFail()
+            return mock_k32_close
 
         def get_last_error(self) -> int:
             return 6  # ERROR_INVALID_HANDLE
 
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesCloseFail())
 
-    with pytest.raises(OSError, match="CloseHandle failed on handle"):
+    with pytest.raises(
+        (XlsxSnapshotCleanupError, OSError), match="CloseHandle failed on handle"
+    ) as exc_info_close:
         mod._close_windows_handle(0x5555)
+
+    assert mock_k32_close.CloseHandle.call_count == 1
+    if isinstance(exc_info_close.value, XlsxSnapshotCleanupError):
+        assert (
+            exc_info_close.value.reason
+            == XlsxSnapshotAcquisitionReason.SNAPSHOT_CLEANUP_FAILURE
+        )
 
     # 5. Test Query failure + CloseHandle failure preserves both causes
     class MockKernel32DoubleFail:
@@ -3441,11 +3561,13 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
             self.GetFileInformationByHandleEx = MockFunc(lambda *args: False)
             self.CloseHandle = MockFunc(lambda *args: False)
 
+    mock_k32_double = MockKernel32DoubleFail()
+
     class MockCtypesDoubleFail:
         wintypes = MockWintypes()
 
         def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
-            return MockKernel32DoubleFail()
+            return mock_k32_double
 
         def get_last_error(self) -> int:
             return 6
@@ -3453,14 +3575,57 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
     monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesDoubleFail())
 
     lease_dir_fail3 = tmp_path / "test_lease_win_fail3"
-    with pytest.raises(OSError) as exc_info:
+    with pytest.raises((XlsxSnapshotStorageError, OSError)) as exc_info_double:
         mod._create_and_anchor_lease_dir_windows(lease_dir_fail3)
 
-    assert "Failed to query lease directory identity" in str(exc_info.value)
-    assert exc_info.value.__cause__ is not None
-    assert "CloseHandle failed on handle" in str(exc_info.value.__cause__)
+    assert "Failed to query lease directory identity" in str(exc_info_double.value)
+    assert exc_info_double.value.__cause__ is not None
+    assert "CloseHandle failed on handle" in str(exc_info_double.value.__cause__)
+    assert mock_k32_double.CloseHandle.call_count == 1
 
-    # 6. Test CloseHandle failure in open_stable_xlsx_snapshot finally
+    # 6. Test CloseHandle Lookup failure (AttributeError) converts to cleanup error
+    class MockKernel32MissingCloseHandle:
+        pass
+
+    class MockCtypesMissingClose:
+        wintypes = MockWintypes()
+
+        def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
+            return MockKernel32MissingCloseHandle()
+
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesMissingClose())
+
+    with pytest.raises(
+        (XlsxSnapshotCleanupError, OSError), match="CloseHandle failed on handle"
+    ) as exc_info_lookup:
+        mod._close_windows_handle(0x6666)
+
+    assert isinstance(exc_info_lookup.value.__cause__, AttributeError)
+
+    # 7. Test CloseHandle Call failure (ArgumentError / TypeError)
+    class MockKernel32ArgumentErrorClose:
+        def __init__(self) -> None:
+            def raise_arg_error(*args: Any) -> Any:
+                raise ctypes.ArgumentError("Invalid argument types")
+
+            self.CloseHandle = MockFunc(raise_arg_error)
+
+    class MockCtypesArgErrorClose:
+        wintypes = MockWintypes()
+
+        def WinDLL(self, *args: Any, **kwargs: Any) -> Any:
+            return MockKernel32ArgumentErrorClose()
+
+    monkeypatch.setattr(mod, "_ctypes_provider", MockCtypesArgErrorClose())
+
+    with pytest.raises(
+        (XlsxSnapshotCleanupError, OSError), match="CloseHandle failed on handle"
+    ) as exc_info_arg:
+        mod._close_windows_handle(0x7777)
+
+    assert isinstance(exc_info_arg.value.__cause__, (ctypes.ArgumentError, TypeError))
+
+    # 8. Test CloseHandle failure in open_stable_xlsx_snapshot finally
     # aborts before yield
     class MockKernel32CloseFailOnExit:
         def __init__(self) -> None:
@@ -3487,15 +3652,20 @@ def test_r10_02_windows_file_id_info_success_and_fail_closed_oracle(
 
     win_yielded = False
     with pytest.raises(
-        (ExceptionGroup, BaseExceptionGroup, XlsxSnapshotStorageError)
-    ) as exc_info_close:
+        (
+            ExceptionGroup,
+            BaseExceptionGroup,
+            XlsxSnapshotStorageError,
+            XlsxSnapshotCleanupError,
+        )
+    ) as exc_info_exit:
         with open_stable_xlsx_snapshot(src, root_win, 0.001, _sleeper=lambda _: None):
             win_yielded = True
 
     assert win_yielded is False, "Failure to close anchor must prevent yield"
-    flat = _flatten_exceptions(exc_info_close.value)
+    flat = _flatten_exceptions(exc_info_exit.value)
     assert any(
-        isinstance(e, XlsxSnapshotStorageError)
+        isinstance(e, (XlsxSnapshotStorageError, XlsxSnapshotCleanupError))
         and "Failed to close lease directory anchor" in str(e)
         for e in flat
     )
@@ -3525,17 +3695,45 @@ def test_r11_01_windows_handle_protect_from_close_native_oracle(
     win_dll_cls = getattr(ctypes, "WinDLL", None)
     wintypes = mod._get_wintypes()
     if wintypes is None or win_dll_cls is None:
-        pytest.skip("wintypes or WinDLL unavailable")
+        pytest.fail("wintypes or WinDLL unavailable on Windows runtime")
 
     kernel32 = win_dll_cls("kernel32", use_last_error=True)
+
+    # Strict prototype declarations for WinAPI used in test harness
+    generic_read = 0x80000000
+    file_share_read = 0x1
+    open_existing = 3
+    handle_flag_protect_from_close = 0x00000002
+
+    create_file_w = kernel32.CreateFileW
+    create_file_w.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file_w.restype = wintypes.HANDLE
+
+    set_handle_info = kernel32.SetHandleInformation
+    set_handle_info.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+    set_handle_info.restype = wintypes.BOOL
+
+    get_handle_info = kernel32.GetHandleInformation
+    get_handle_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    get_handle_info.restype = wintypes.BOOL
+
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
     test_file = tmp_path / "native_handle_test.tmp"
     test_file.write_bytes(b"test")
 
     # Create test handle
-    generic_read = 0x80000000
-    file_share_read = 0x1
-    open_existing = 3
-    handle = kernel32.CreateFileW(
+    handle = create_file_w(
         str(test_file),
         generic_read,
         file_share_read,
@@ -3547,11 +3745,6 @@ def test_r11_01_windows_handle_protect_from_close_native_oracle(
     assert handle not in (-1, 0, None)
 
     # Set HANDLE_FLAG_PROTECT_FROM_CLOSE = 2
-    handle_flag_protect_from_close = 0x00000002
-    set_handle_info = kernel32.SetHandleInformation
-    set_handle_info.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
-    set_handle_info.restype = wintypes.BOOL
-
     set_ok = set_handle_info(
         wintypes.HANDLE(handle),
         handle_flag_protect_from_close,
@@ -3559,10 +3752,20 @@ def test_r11_01_windows_handle_protect_from_close_native_oracle(
     )
     assert set_ok, "Failed to set HANDLE_FLAG_PROTECT_FROM_CLOSE"
 
+    flags = wintypes.DWORD(0)
+    get_ok = get_handle_info(wintypes.HANDLE(handle), ctypes.byref(flags))
+    assert get_ok, "Failed to get handle information"
+    assert bool(flags.value & handle_flag_protect_from_close) is True
+
     try:
-        # Attempt to close protected handle via product helper -> must raise OSError
-        with pytest.raises(OSError, match="CloseHandle failed"):
+        # Attempt to close protected handle -> must raise typed cleanup error
+        with pytest.raises((XlsxSnapshotCleanupError, OSError)) as exc_info:
             mod._close_windows_handle(int(handle))
+        if isinstance(exc_info.value, XlsxSnapshotCleanupError):
+            assert (
+                exc_info.value.reason
+                == XlsxSnapshotAcquisitionReason.SNAPSHOT_CLEANUP_FAILURE
+            )
     finally:
         # Restore flag and close handle cleanly in test harness
         set_handle_info(
@@ -3570,7 +3773,8 @@ def test_r11_01_windows_handle_protect_from_close_native_oracle(
             handle_flag_protect_from_close,
             0,
         )
-        kernel32.CloseHandle(wintypes.HANDLE(handle))
+        closed_ok = close_handle(wintypes.HANDLE(handle))
+        assert closed_ok, "Harness failed to close test handle"
 
 
 @pytest.mark.skipif(
