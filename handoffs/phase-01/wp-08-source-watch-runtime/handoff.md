@@ -1,18 +1,18 @@
-# Handoff: WP-08 Managed Source Watcher and Serial Read Runtime
+# Handoff: WP-08 Managed Source Watcher and Serial Read Runtime (Post-Merge WR-08 Test Stabilization)
 
 ## Identity
 
 - **Work Package:** `WP-08: Managed source watcher and serial read runtime`
 - **Phase:** `1 — source and data-model foundation`
 - **Component Version:** `SOURCE_WATCH_RUNTIME_VERSION = "source-watch-runtime.v1"`
-- **Baseline Commit:** `c7520c94606f37720f3e023b753e36d1c1f433a3`
-- **Tested Code Commit SHA:** `809572f1b0e996c114ab5d5b6719ad151aab10ff`
-- **Target Branch:** `antigravity/phase-01-source-watch-runtime`
+- **Baseline Commit:** `0d1df855c39ab7ac5b8d5492915fb1014dc096cf` (PR #28 merged into main)
+- **Tested Code Commit SHA:** `c77f85b69e353a3e057de15436a3f8498c8f9a65`
+- **Target Branch:** `antigravity/phase-01-wp08-wr08-test-stabilization`
 - **Gate G1 Status:** `OPEN / IN PROGRESS`
 
 ## Scope
 
-Delivers the managed source watcher and serial read runtime under ADR-0011 and WP-08, remediated for all review findings (R1 through R8 across rounds 1 to 7):
+Delivers post-merge test stabilization for WR-08 four-phase burst coalescing under ADR-0011 and WP-08, remediating Windows CI Run 33666981958 timing sensitivity while preserving product code (R2 strictly closed):
 1. **Public API & Version:** Implemented and exported `SOURCE_WATCH_RUNTIME_VERSION = "source-watch-runtime.v1"`, `SourceWatchRuntime`, `SourceWatchRuntimeState`, `SourceWatchRuntimeReason`, `SourceWatchRuntimeError`, and frozen `SourceWatchRuntimeView`.
 2. **Lexical Validation & Non-Containment:** Strict constructor validation of `source_path` (.xlsx, non-lock `~$`, absolute, rejecting relative segments `'..'`/`'.'`) and `snapshot_root` with cross-platform containment enforcement.
 3. **Table-Driven Watchdog Event Adapter:** Single `dispatch()` handler mapping file creations, modifications, deletions, and moves to `SaveImportCoordinator` notices; safely ignores directory events, temporary files, conflict files, read-only events, and unknown events (`future_event`) without filesystem I/O.
@@ -20,7 +20,7 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 5. **Synchronous Caller-Thread Delivery:** Delivers successful reader snapshots synchronously to the consumer on the run caller's thread after clean lease exit; drains active cycles gracefully upon `request_stop()`.
 6. **Thread Lifecycle & Multi-Failure Grouping:** Strict worker tracking and joined teardown; deduplication strictly on exact instance identities, preserving independent errors with pre-existing or shared causes in `[run_error, async_error, *teardown_errors]` order; raw `BaseException` (like `KeyboardInterrupt`) preserved without wrapping; worker thread join failure wrapped in `SHUTDOWN_FAILED` with cause; mixed cancellation and normal stop failure in `BaseExceptionGroup`.
 7. **Native OS Integration & WP-04 Composition (WR-15..17):** Real filesystem watcher responsiveness for in-place saves, atomic replaces, missing-source creation, and 4 distinct generations with bounded delivery deadlines. Initial cursor taken under lock before `run_thread.start()` ensures pre-existing files are never missed due to thread scheduling races. Dynamic cursors taken under lock immediately before writes adhere to WR-D contract without brittle exact delivery count assertions. Generation 3 Formula/Cache XML verified against independent WP-04 Planner oracle (0 changes, 5 UNCHANGED) prior to Generation 4 raw edit (1 EDIT, 4 UNCHANGED).
-8. **Controlled Waiter & Timing Verification:** `ControlledConditionWaiter` hooks `Condition.wait` to eliminate arbitrary sleeps and deterministically verify deadline boundaries (deadline - 1ns wait duration 0.0001s, exact deadline cycle admission, latest-event debounce reset, and 0 retry I/O on reader error). WR-07 Case D lost-wake prevention tested via dedicated notice sender thread and ACK event (`result_recorded_d`) for recorded wait result, confirming condition wake without lock contention, timeouts, arbitrary sleeps, or rescuer notifications.
+8. **WR-08 Four-Phase Stabilization (Post-Merge):** Replaced all arbitrary `time.sleep(0.05)` calls in Consumer, Acquisition, Reader, and Cleanup phases with deterministic `ControlledConditionWaiter` ACK arrivals. Advances `FakeClock` only after witnessing runtime arrival in condition wait. Awaits completion of cycle 1 and follow-up condition wait entry via `waiter.wait_for_ack(timeout=5.0)` before advancing clock for the second cycle. Second delivery is witnessed deterministically via explicit event before `runtime.request_stop()` is called. Controlled delay witness (`followup_delay_gate` and `release_followup_delay`) in Phase 4 demonstrates that delayed follow-up execution is awaited without early stop cancellation.
 
 ## Roadmap traceability
 
@@ -28,26 +28,23 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 - **Roadmap Section 5.1 & 19.1:** Connects filesystem notifications to the save-import coordinator and read pipeline, establishing the native watcher runtime boundary for Phase 1.
 - **Evidence Status:** Recorded under `test-results.txt` and `acceptance-matrix.md`.
 
-## Review findings resolution summary (R7, R8 Round 7)
+## Review findings resolution summary (Post-Merge WR-08 Stabilization)
 
 | Review Item | Description & Root Cause | Resolution |
 | :--- | :--- | :--- |
-| **WR-07 Case D ACK Synchronization** | Sender completion did not guarantee runner had appended wait result to list before test thread asserted; 50ms sleep was arbitrary. | Added `result_recorded_d = threading.Event()` signaled under `wait_results_lock` immediately after `res = orig_wait_d(timeout)` is appended. Test thread awaits `result_recorded_d.wait(timeout=5.0)` deterministically. Removed arbitrary `time.sleep(0.02)` and `time.sleep(0.05)`. Maintained strict assertion `wait_results[0] is True` and clean thread join in `finally`. |
-| **WR-15 & WR-17 Initial Cursor Timing** | `cursor1 = len(results)` was acquired after `run_thread.start()`, creating a race condition where fast startup delivery could set `cursor1 = 1` and miss the initial snapshot. | Moved initial cursor acquisition under lock immediately BEFORE `run_thread.start()` (`with lock: cursor1 = len(results)`). Pre-existing startup snapshot is guaranteed to be detected from index 0 even if delivered before `start()` returns. |
-| **Rollback SHA Verification & Scratch Execution** | Fixed rollback SHA list required validation against `git rev-list`; scratch rollback claim needed live execution verification rather than purely prescriptive instructions. | Queried full commit list via `git rev-list c7520c94606f37720f3e023b753e36d1c1f433a3..809572f1b0e996c114ab5d5b6719ad151aab10ff`, verifying all 9 commits. Executed live scratch rollback on temporary branch `scratch/verify-rollback`: all 9 commits reverted cleanly, confirmed working tree matched baseline with `git diff --quiet c7520c94606f37720f3e023b753e36d1c1f433a3` (Exit 0), and cleanly removed scratch branch. |
-| **Full-Repository Type Checking** | Verification requires whole-repository scope (28 source files). | Confirmed `uv run mypy .` and `uv run mypy --platform win32 .` pass with 0 errors across 28 source files. |
-| **Segregated Platform Status** | Linux local, Windows local, and CI must be reported distinctly. | Reported Linux Native as PASS, Windows Local as NOT RUN (unsupported host), and Windows CI execution as PENDING on PR. |
+| **WR-08 Initial Wait ACK** | Arbitrary `time.sleep(0.05)` before advancing `FakeClock` to admit cycle 1. | Replaced with `waiter.wait_for_ack(timeout=5.0)` across all four phases (Consumer, Acquisition, Reader, Cleanup), confirming runtime has entered condition wait before time advances. |
+| **WR-08 Follow-Up Await & Second Delivery ACK** | Fixed 50ms sleep before `request_stop()` caused premature termination on slower CI runners (Windows Run 33666981958) before follow-up cycle delivered (`len(results4) == 2` failed with actual 1). | After releasing the blocked phase, test thread deterministically awaits `waiter.wait_for_ack(timeout=5.0)` to verify runner is waiting for follow-up deadline. Clock is advanced, and second delivery is witnessed via `second_delivered*.wait(timeout=5.0)` before calling `request_stop()`. All sleeps eliminated. |
+| **WR-08 Controlled Delay Witness** | Requirement to prove that delayed follow-up execution does not cause early cancellation. | In Phase 4 (Cleanup), added `followup_delay_gate` and `release_followup_delay` on the second cycle (`cleanup_calls == 2`). Test thread witnesses the delay, confirms no premature stop occurs, releases the gate, witnesses second delivery, and only then requests stop. |
+| **Release Wait Assertions & Resource Cleanup** | All release events must assert success and threads must be cleaned up in `finally`. | All `release_*.wait(timeout=5.0)` calls assert success with explicit failure messages. All runners, senders, and observers are released, stopped, and joined in `finally`. Runner clean exit asserted with `runner.assert_clean_exit()`. |
+| **Rollback Verification on Scratch Branch** | Rollback must be verified against new baseline `0d1df855c39ab7ac5b8d5492915fb1014dc096cf`. | Revert of `c77f85b69e353a3e057de15436a3f8498c8f9a65` verified on temporary scratch branch `scratch/verify-rollback`: confirmed 100% identical working tree against baseline via `git diff --quiet 0d1df855c39ab7ac5b8d5492915fb1014dc096cf` (Exit 0). |
 
 ## Changed files
 
-- `apps/local_agent/src/accounting_local_agent/source_watch_runtime.py`: Core managed source watcher runtime implementation (R2 closed; untouched in Round 7).
-- `apps/local_agent/src/accounting_local_agent/__init__.py`: Exported WP-08 public symbols (`SOURCE_WATCH_RUNTIME_VERSION`, `SourceWatchRuntime`, `SourceWatchRuntimeState`, `SourceWatchRuntimeReason`, `SourceWatchRuntimeError`, `SourceWatchRuntimeView`).
-- `apps/local_agent/README.md`: Documented architecture, lifecycle transitions, exception hierarchy, and synthetic-only library usage example.
-- `tests/test_source_watch_runtime.py`: Deterministic unit, barrier, race condition, fault injection, and exception grouping test suite (33 tests covering WR-01 through WR-14; WR-07 Case D ACK-synchronized result recording).
-- `tests/test_source_watch_runtime_native.py`: Real native OS filesystem observer integration test suite (3 tests covering WR-15 through WR-17; initial cursor acquired before start and dynamic cursors adhering to WR-D).
+- `apps/local_agent/src/accounting_local_agent/source_watch_runtime.py`: Core managed source watcher runtime implementation (R2 closed; untouched in this branch).
+- `tests/test_source_watch_runtime.py`: Stabilized WR-08 four-phase burst coalescing test with deterministic condition waiter ACKs, delivery events, controlled delay witness, and zero sleeps.
 - `handoffs/phase-01/wp-08-source-watch-runtime/handoff.md`: Handoff summary, verified fixed rollback instructions, and audit traceability.
 - `handoffs/phase-01/wp-08-source-watch-runtime/acceptance-matrix.md`: Detailed requirement acceptance matrix (WR-01 to WR-18).
-- `handoffs/phase-01/wp-08-source-watch-runtime/test-results.txt`: Direct command execution logs, quality scan records, scratch verification proof, and benchmark metrics on tested code commit `809572f1b0e996c114ab5d5b6719ad151aab10ff`.
+- `handoffs/phase-01/wp-08-source-watch-runtime/test-results.txt`: Direct command execution logs, quality scan records, scratch verification proof, and benchmark metrics on tested code commit `c77f85b69e353a3e057de15436a3f8498c8f9a65`.
 
 ## Schema and migrations
 
@@ -61,10 +58,10 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 4. `uv run ruff check .` (Exit 0, all checks passed)
 5. `uv run mypy .` (Exit 0, 28 source files checked across repository)
 6. `uv run mypy --platform win32 .` (Exit 0, 28 source files checked across repository)
-7. `uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v` (Exit 0, 36 passed in 28.64s)
-8. `uv run pytest tests/ -k "not test_bench"` (Exit 0, 348 passed, 2 skipped in 63.23s)
-9. `uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s` (Exit 0, 10.70s / 61.90 MiB)
-10. `uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s` (Exit 0, 11.39s / 61.25 MiB)
+7. `uv run pytest tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py -v` (Exit 0, 36 passed in 27.91s)
+8. `uv run pytest tests/ -k "not test_bench"` (Exit 0, 348 passed, 2 skipped in 62.06s)
+9. `uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s` (Exit 0, 11.28s / 61.55 MiB)
+10. `uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s` (Exit 0, 12.03s / 61.73 MiB)
 11. `git diff --check` (Exit 0, 0 whitespace errors)
 12. `git ls-files | grep -E "\.(env|key|pem|pfx|p12|kdbx|sqlite|db)$"` (Exit 0 on check, 0 prohibited files)
 13. `git grep -i -E "(BEGIN PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[0-9a-zA-Z]{36})"` (Exit 0 on check, 0 sensitive credentials)
@@ -74,11 +71,11 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 
 - **Full repository suite:** 348 tests passing cleanly on Linux native (2 platform-conditional skipped Windows-handle tests; 350 collected total).
 - **Watcher Runtime tests:** 36 dedicated unit, deterministic barrier, native OS observer, lifecycle race, and composition tests (33 in `tests/test_source_watch_runtime.py`, 3 in `tests/test_source_watch_runtime_native.py`).
-- **15,000-row streaming benchmarks:** WP-05 Reader at 10.70s duration / 61.90 MiB peak RSS; WP-06 Acquisition at 11.39s duration / 61.25 MiB peak RSS (strictly within 15.0s / 128.0 MiB ceilings).
+- **15,000-row streaming benchmarks:** WP-05 Reader at 11.28s duration / 61.55 MiB peak RSS; WP-06 Acquisition at 12.03s duration / 61.73 MiB peak RSS (strictly within 15.0s / 128.0 MiB ceilings).
 - **Platform Separation:**
   - **Linux Local:** PASS (executed natively and passed all 36 WP-08 tests, 348 repository tests, and benchmarks).
   - **Windows Local:** NOT RUN (Linux host environment; static type safety validated via `mypy --platform win32 .` with 0 errors in 28 source files).
-  - **Windows CI:** PENDING automated CI runner execution upon PR creation.
+  - **Windows CI:** PENDING automated CI runner execution upon PR submission.
 - Direct execution logs, scratch rollback verification, and metrics recorded in `test-results.txt`.
 
 ## Assumptions and open items
@@ -86,7 +83,7 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 - **Clock Source:** Default clock uses `time.monotonic_ns()`. `FakeClock` used in test fixtures for deterministic time control.
 - **Observer Ownership:** `SourceWatchRuntime` creates, schedules, starts, stops, and joins its private `watchdog.observers.Observer` instance and captured worker emitters. Construction performs zero thread allocations.
 - **Single-use Lifecycle:** Each `SourceWatchRuntime` instance supports exactly one execution of `run()`. Terminal instances (`STOPPED`, `FAILED`) reject subsequent `run()` invocations.
-- **Remediation R1-R8:** All items from Codex review rounds 1 to 7 (worker tracking before start, raw BaseException preservation, expected worker liveness, watchdog dispatch override, lexical path relative segment rejection, atomic teardown view invariant, shared cause deduplication, error origin disentanglement, async start error wrapping with stop failure, coordinator constructor cancellation, barrier tests, 4-phase 2,000 notice burst blocking, reader rejection retry, formula/cache XML generation with WP-04 planner oracle, runner thread exception propagation, independent dispatcher failure, cause identities, join failure, mixed cancellation, WR-07 Case D ACK synchronization, initial native cursor timing before start, verified fixed rollback SHAs, and full WR-01..18 test coverage) have been fully addressed and tested.
+- **Remediation R1-R8:** All items from Codex review rounds 1 to 7 and post-merge WR-08 stabilization (worker tracking before start, raw BaseException preservation, expected worker liveness, watchdog dispatch override, lexical path relative segment rejection, atomic teardown view invariant, shared cause deduplication, error origin disentanglement, async start error wrapping with stop failure, coordinator constructor cancellation, barrier tests, 4-phase 2,000 notice burst blocking with condition waiter ACKs, reader rejection retry, formula/cache XML generation with WP-04 planner oracle, runner thread exception propagation, independent dispatcher failure, cause identities, join failure, mixed cancellation, WR-07 Case D ACK synchronization, initial native cursor timing before start, verified fixed rollback SHAs, and full WR-01..18 test coverage) have been fully addressed and tested.
 
 ## Risks
 
@@ -95,7 +92,7 @@ Delivers the managed source watcher and serial read runtime under ADR-0011 and W
 
 ## Rollback
 
-To revert this work package cleanly and safely without blind file deletions or destructive checkouts:
+To revert this stabilization commit cleanly and safely without blind file deletions or destructive checkouts:
 
 1. **Verify working tree cleanliness:**
    ```bash
@@ -104,50 +101,29 @@ To revert this work package cleanly and safely without blind file deletions or d
    Ensure no untracked or independent user modifications exist before proceeding.
 
 2. **Reverting Changes by Fixed Scope:**
-   - **Scope A: Revert Only Round 7 Test Remediation Commit:**
-     To back out only the Round 7 test commit `809572f1b0e996c114ab5d5b6719ad151aab10ff`:
+   - **Scope: Revert WR-08 Test Stabilization Commit:**
+     To back out the test stabilization commit `c77f85b69e353a3e057de15436a3f8498c8f9a65` back to baseline `0d1df855c39ab7ac5b8d5492915fb1014dc096cf`:
      ```bash
-     git revert --no-edit 809572f1b0e996c114ab5d5b6719ad151aab10ff
-     ```
-   - **Scope B: Revert Entire WP-08 Package:**
-     To revert all WP-08 commits back to baseline commit `c7520c94606f37720f3e023b753e36d1c1f433a3`, apply reverts for the fixed commit range `c7520c94606f37720f3e023b753e36d1c1f433a3..809572f1b0e996c114ab5d5b6719ad151aab10ff`:
-     Explicit commit sequence generated from `git rev-list`:
-     1. `809572f1b0e996c114ab5d5b6719ad151aab10ff` (Round 7 test remediation)
-     2. `a0bae5d9b819c86a24e805a427d7f6957b25a45d` (Round 6 handoff documentation)
-     3. `8c670b1ad34ba8519538c19f85b96d88a02173ab` (Round 6 test remediation)
-     4. `5fb76b5cea29d6eaae941d01311cc4ce7d3fc012` (Round 5 remediation)
-     5. `47c962f80def95f17de6cce2c93812291bdf2ccf` (Round 4 remediation)
-     6. `ccce0b2c001efae467e0d698aff19064231eba06` (Round 3 remediation)
-     7. `f2a9d8312ad39d8644a8a46928ccffbc889bbb9e` (Round 2 remediation)
-     8. `f922cfa6d26e70d6808cc5330b8b7e489e0e7abd` (Round 1 remediation)
-     9. `2abf448610c31677702828a1064effc7a42b4189` (Initial WP-08 implementation)
-
-     Command:
-     ```bash
-     git revert --no-edit c7520c94606f37720f3e023b753e36d1c1f433a3..809572f1b0e996c114ab5d5b6719ad151aab10ff
+     git revert --no-edit c77f85b69e353a3e057de15436a3f8498c8f9a65
      ```
 
    - **Verified Scratch Branch Procedure (Confirmed Zero Diff Against Baseline):**
-     This rollback procedure was verified on temporary branch `scratch/verify-rollback`. Reverting the 9 package commits produced an exact zero diff against baseline `c7520c94606f37720f3e023b753e36d1c1f433a3`:
+     This rollback procedure was verified on temporary branch `scratch/verify-rollback`. Reverting commit `c77f85b69e353a3e057de15436a3f8498c8f9a65` produced an exact zero diff against baseline `0d1df855c39ab7ac5b8d5492915fb1014dc096cf`:
      ```bash
      # Create scratch branch from fixed tested SHA
-     git checkout -b scratch/verify-rollback 809572f1b0e996c114ab5d5b6719ad151aab10ff
+     git checkout -b scratch/verify-rollback c77f85b69e353a3e057de15436a3f8498c8f9a65
 
-     # Apply the revert across the fixed package range
-     git revert --no-edit c7520c94606f37720f3e023b753e36d1c1f433a3..809572f1b0e996c114ab5d5b6719ad151aab10ff
+     # Apply the revert
+     git revert --no-edit c77f85b69e353a3e057de15436a3f8498c8f9a65
 
      # Verify that working tree is identical to baseline (exited with code 0)
-     git diff --quiet c7520c94606f37720f3e023b753e36d1c1f433a3
+     git diff --quiet 0d1df855c39ab7ac5b8d5492915fb1014dc096cf
 
-     # Run test suite to verify baseline functionality
-     uv run ruff check .
-     uv run pytest tests/ -k "not test_bench"
-
-     # Return to delivery branch and delete scratch branch
-     git checkout antigravity/phase-01-source-watch-runtime
+     # Return to stabilization branch and delete scratch branch
+     git checkout antigravity/phase-01-wp08-wr08-test-stabilization
      git branch -D scratch/verify-rollback
      ```
-   - **Precaution:** Avoid running blind `git rm` or destructive `git checkout c7520c94606f37720f3e023b753e36d1c1f433a3 -- .` directly on the delivery branch, as that would destroy non-WP-08 modifications or uncommitted changes.
+   - **Precaution:** Avoid running blind `git rm` or destructive `git checkout 0d1df855c39ab7ac5b8d5492915fb1014dc096cf -- .` directly on the branch, as that would destroy uncommitted modifications.
 
 ## Protected assets
 
@@ -159,4 +135,4 @@ To revert this work package cleanly and safely without blind file deletions or d
 
 ## Stop state
 
-Implementation, remediation of all review items (R1 through R8 across rounds 1 to 7), native OS observer tests, runner thread propagation, verified scratch rollback, and test verification for WP-08 are completed and stopped for handoff review. Gate G1 remains `OPEN / IN PROGRESS`. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation, post-merge WR-08 test stabilization, native OS observer tests, runner thread propagation, verified scratch rollback, and test verification for WP-08 are completed and stopped for handoff review. Gate G1 remains `OPEN / IN PROGRESS`. No Gate approval, merge, push, deploy, or next Work Package has been performed.
