@@ -9,6 +9,7 @@
 - **Target Branch:** `antigravity/phase-01-save-import-coordinator`
 - **Linear Branch Commits:**
   - `3a84402` — `feat(local_agent,tests): implement save-import-coordinator.v1 and tests under WP-07`
+  - `2617237` — `docs(handoff): add WP-07 save import coordinator handoff package`
 - **Gate G1 Status:** `OPEN / IN PROGRESS`
 
 ## Scope
