@@ -1225,27 +1225,33 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
         _observer_factory=lambda: mock_obs1,
         _time_source=clock1,
     )
+    waiter1 = ControlledConditionWaiter(runtime1._condition)
+    monkeypatch.setattr(runtime1._condition, "wait", waiter1.hooked_wait)
 
     in_consumer = threading.Event()
     release_consumer = threading.Event()
+    second_delivered1 = threading.Event()
     results1: list[XlsxSourceReadResult] = []
 
     def blocking_consumer(res: XlsxSourceReadResult) -> None:
         results1.append(res)
         if len(results1) == 1:
             in_consumer.set()
-            release_consumer.wait(timeout=5.0)
+            assert release_consumer.wait(timeout=5.0), "release_consumer timed out"
+        elif len(results1) == 2:
+            second_delivered1.set()
 
     runner1 = ManagedRunnerThread(runtime1, blocking_consumer)
     runner1.start()
 
     try:
-        time.sleep(0.05)
+        # 1. ACK arrival in condition wait before advancing clock (no sleep)
+        waiter1.wait_for_ack(timeout=5.0)
         clock1.advance_seconds(3.0)
         with runtime1._lifecycle_lock:
             runtime1._condition.notify_all()
 
-        assert in_consumer.wait(timeout=5.0)
+        assert in_consumer.wait(timeout=5.0), "in_consumer timed out"
         # While consumer blocks, assert active cycle is running (preventing 2nd cycle)
         assert runtime1._active_cycle_running is True
 
@@ -1253,21 +1259,27 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
         for _ in range(2000):
             runtime1._on_adapter_event(SaveEventKind.MODIFIED, src, None)
 
-        # Release consumer and advance clock
+        # Release consumer and await runner entering wait for follow-up cycle
         release_consumer.set()
-        time.sleep(0.05)
+        waiter1.wait_for_ack(timeout=5.0)
+
+        # Advance clock past follow-up deadline and wake condition
         clock1.advance_seconds(3.0)
         with runtime1._lifecycle_lock:
             runtime1._condition.notify_all()
-        time.sleep(0.05)
+
+        # Await second delivery deterministically before stopping (no sleep)
+        assert second_delivered1.wait(timeout=5.0), "second_delivered1 timed out"
+        assert len(results1) == 2
 
         runtime1.request_stop()
         runner1.join(timeout=5.0)
         runner1.assert_clean_exit()
-        assert len(results1) == 2
+        assert runtime1.view().state == SourceWatchRuntimeState.STOPPED
     finally:
         release_consumer.set()
         runtime1.request_stop()
+        runner1.join(timeout=5.0)
         mock_obs1.stop()
 
     # -----------------------------------------------------------------------
@@ -1282,14 +1294,21 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
         _observer_factory=lambda: mock_obs2,
         _time_source=clock2,
     )
+    waiter2 = ControlledConditionWaiter(runtime2._condition)
+    monkeypatch.setattr(runtime2._condition, "wait", waiter2.hooked_wait)
 
     in_acq = threading.Event()
     release_acq = threading.Event()
+    second_delivered2 = threading.Event()
+    acq_calls = 0
     orig_open_snap = open_stable_xlsx_snapshot
 
     def hooked_open_snap(*args: Any, **kwargs: Any) -> Any:
-        in_acq.set()
-        release_acq.wait(timeout=5.0)
+        nonlocal acq_calls
+        acq_calls += 1
+        if acq_calls == 1:
+            in_acq.set()
+            assert release_acq.wait(timeout=5.0), "release_acq timed out"
         return orig_open_snap(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -1298,33 +1317,46 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
     )
 
     results2: list[XlsxSourceReadResult] = []
-    runner2 = ManagedRunnerThread(runtime2, lambda r: results2.append(r))
+
+    def consumer2(res: XlsxSourceReadResult) -> None:
+        results2.append(res)
+        if len(results2) == 2:
+            second_delivered2.set()
+
+    runner2 = ManagedRunnerThread(runtime2, consumer2)
     runner2.start()
 
     try:
-        time.sleep(0.05)
+        # ACK arrival in condition wait before advancing clock (no sleep)
+        waiter2.wait_for_ack(timeout=5.0)
         clock2.advance_seconds(3.0)
         with runtime2._lifecycle_lock:
             runtime2._condition.notify_all()
 
-        assert in_acq.wait(timeout=5.0)
+        assert in_acq.wait(timeout=5.0), "in_acq timed out"
+        assert runtime2._active_cycle_running is True
+
         for _ in range(2000):
             runtime2._on_adapter_event(SaveEventKind.MODIFIED, src, None)
 
         release_acq.set()
-        time.sleep(0.05)
+        waiter2.wait_for_ack(timeout=5.0)
+
         clock2.advance_seconds(3.0)
         with runtime2._lifecycle_lock:
             runtime2._condition.notify_all()
-        time.sleep(0.05)
+
+        assert second_delivered2.wait(timeout=5.0), "second_delivered2 timed out"
+        assert len(results2) == 2
 
         runtime2.request_stop()
         runner2.join(timeout=5.0)
         runner2.assert_clean_exit()
-        assert len(results2) == 2
+        assert runtime2.view().state == SourceWatchRuntimeState.STOPPED
     finally:
         release_acq.set()
         runtime2.request_stop()
+        runner2.join(timeout=5.0)
         mock_obs2.stop()
 
     # -----------------------------------------------------------------------
@@ -1339,14 +1371,21 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
         _observer_factory=lambda: mock_obs3,
         _time_source=clock3,
     )
+    waiter3 = ControlledConditionWaiter(runtime3._condition)
+    monkeypatch.setattr(runtime3._condition, "wait", waiter3.hooked_wait)
 
     in_reader = threading.Event()
     release_reader = threading.Event()
+    second_delivered3 = threading.Event()
+    reader_calls = 0
     orig_read_snap = read_xlsx_source_snapshot
 
     def hooked_read_snap(*args: Any, **kwargs: Any) -> Any:
-        in_reader.set()
-        release_reader.wait(timeout=5.0)
+        nonlocal reader_calls
+        reader_calls += 1
+        if reader_calls == 1:
+            in_reader.set()
+            assert release_reader.wait(timeout=5.0), "release_reader timed out"
         return orig_read_snap(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -1355,33 +1394,46 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
     )
 
     results3: list[XlsxSourceReadResult] = []
-    runner3 = ManagedRunnerThread(runtime3, lambda r: results3.append(r))
+
+    def consumer3(res: XlsxSourceReadResult) -> None:
+        results3.append(res)
+        if len(results3) == 2:
+            second_delivered3.set()
+
+    runner3 = ManagedRunnerThread(runtime3, consumer3)
     runner3.start()
 
     try:
-        time.sleep(0.05)
+        # ACK arrival in condition wait before advancing clock (no sleep)
+        waiter3.wait_for_ack(timeout=5.0)
         clock3.advance_seconds(3.0)
         with runtime3._lifecycle_lock:
             runtime3._condition.notify_all()
 
-        assert in_reader.wait(timeout=5.0)
+        assert in_reader.wait(timeout=5.0), "in_reader timed out"
+        assert runtime3._active_cycle_running is True
+
         for _ in range(2000):
             runtime3._on_adapter_event(SaveEventKind.MODIFIED, src, None)
 
         release_reader.set()
-        time.sleep(0.05)
+        waiter3.wait_for_ack(timeout=5.0)
+
         clock3.advance_seconds(3.0)
         with runtime3._lifecycle_lock:
             runtime3._condition.notify_all()
-        time.sleep(0.05)
+
+        assert second_delivered3.wait(timeout=5.0), "second_delivered3 timed out"
+        assert len(results3) == 2
 
         runtime3.request_stop()
         runner3.join(timeout=5.0)
         runner3.assert_clean_exit()
-        assert len(results3) == 2
+        assert runtime3.view().state == SourceWatchRuntimeState.STOPPED
     finally:
         release_reader.set()
         runtime3.request_stop()
+        runner3.join(timeout=5.0)
         mock_obs3.stop()
 
     # -----------------------------------------------------------------------
@@ -1396,16 +1448,35 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
         _observer_factory=lambda: mock_obs4,
         _time_source=clock4,
     )
+    waiter4 = ControlledConditionWaiter(runtime4._condition)
+    monkeypatch.setattr(runtime4._condition, "wait", waiter4.hooked_wait)
 
     in_cleanup = threading.Event()
     release_cleanup = threading.Event()
+    second_delivered4 = threading.Event()
+    cleanup_calls = 0
+
+    # Controlled delay witness for follow-up execution (Requirement 5)
+    followup_delay_gate = threading.Event()
+    release_followup_delay = threading.Event()
 
     @contextmanager
     def hooked_open_snap_cleanup(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        nonlocal cleanup_calls
         with orig_open_snap(*args, **kwargs) as snap_lease:
             yield snap_lease
-            in_cleanup.set()
-            release_cleanup.wait(timeout=5.0)
+            cleanup_calls += 1
+            if cleanup_calls == 1:
+                in_cleanup.set()
+                assert release_cleanup.wait(timeout=5.0), "release_cleanup timed out"
+            elif cleanup_calls == 2:
+                # Controlled witness: delay follow-up cleanup exit to prove
+                # test deterministically awaits delivery rather than
+                # cancelling the cycle with an early stop.
+                followup_delay_gate.set()
+                assert release_followup_delay.wait(timeout=5.0), (
+                    "release_followup_delay timed out"
+                )
 
     monkeypatch.setattr(
         "accounting_local_agent.save_import_coordinator.open_stable_xlsx_snapshot",
@@ -1413,33 +1484,54 @@ def test_wr08_burst_coalescing_and_responsiveness_during_blocking(
     )
 
     results4: list[XlsxSourceReadResult] = []
-    runner4 = ManagedRunnerThread(runtime4, lambda r: results4.append(r))
+
+    def consumer4(res: XlsxSourceReadResult) -> None:
+        results4.append(res)
+        if len(results4) == 2:
+            second_delivered4.set()
+
+    runner4 = ManagedRunnerThread(runtime4, consumer4)
     runner4.start()
 
     try:
-        time.sleep(0.05)
+        # ACK arrival in condition wait before advancing clock (no sleep)
+        waiter4.wait_for_ack(timeout=5.0)
         clock4.advance_seconds(3.0)
         with runtime4._lifecycle_lock:
             runtime4._condition.notify_all()
 
-        assert in_cleanup.wait(timeout=5.0)
+        assert in_cleanup.wait(timeout=5.0), "in_cleanup timed out"
+        assert runtime4._active_cycle_running is True
+
         for _ in range(2000):
             runtime4._on_adapter_event(SaveEventKind.MODIFIED, src, None)
 
         release_cleanup.set()
-        time.sleep(0.05)
+        waiter4.wait_for_ack(timeout=5.0)
+
         clock4.advance_seconds(3.0)
         with runtime4._lifecycle_lock:
             runtime4._condition.notify_all()
-        time.sleep(0.05)
+
+        # Controlled delay witness: follow-up is held in cleanup_calls == 2.
+        # Test thread observes delay witness, proves test does not stop
+        # prematurely, then releases the delay gate to allow delivery.
+        assert followup_delay_gate.wait(timeout=5.0), "followup_delay_gate timed out"
+        release_followup_delay.set()
+
+        # Await second delivery deterministically before stopping (no sleep)
+        assert second_delivered4.wait(timeout=5.0), "second_delivered4 timed out"
+        assert len(results4) == 2
 
         runtime4.request_stop()
         runner4.join(timeout=5.0)
         runner4.assert_clean_exit()
-        assert len(results4) == 2
+        assert runtime4.view().state == SourceWatchRuntimeState.STOPPED
     finally:
         release_cleanup.set()
+        release_followup_delay.set()
         runtime4.request_stop()
+        runner4.join(timeout=5.0)
         mock_obs4.stop()
 
 
