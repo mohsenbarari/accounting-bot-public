@@ -92,3 +92,38 @@ selects no operational year and grants no import, deletion or archive permission
 Requiredness, source binding, fiscal/archive eligibility, opening balances and
 persistence require their own checks. Evaluation uses the existing Jalali parser
 without filesystem, network, clock or random access.
+
+## Annual Source Binding (`source_binding`)
+
+`source-binding.v1` implements ADR-0014 over trusted annual metadata:
+
+```python
+from accounting_contracts import SourceBindingDisposition, resolve_source_binding
+
+resolution = resolve_source_binding(key, registry)
+if resolution.disposition is SourceBindingDisposition.ACTIVE:
+    selected_prior = resolution.prior_registry
+    # Continue the separately validated import pipeline for this source only.
+```
+
+`SourceBindingKey(source_id, fiscal_year)` requires a UUIDv7 object and an exact
+Jalali year int. `SourceBindingRecord(key, state, prior_registry, final_file_sha256)`
+retains the supplied WP-04 prior object. ACTIVE requires no final hash; ARCHIVED
+requires its final file's lowercase SHA-256 metadata. `SourceBindingRegistry(records)`
+copies the iterable into a sorted immutable tuple with unique IDs/years and at
+most one active record. Lookup uses a private immutable source-ID index and does
+not traverse prior rows. Empty and archive-only registries are valid.
+
+Direct `SourceBindingResolution(key, registry)` computes the same routing result.
+An exact active match selects the identical prior object. Archives and unknown
+IDs select None; an unknown ID cannot borrow another source by year. A known ID
+with a different year raises `SourceBindingInputError`. Public errors use fixed
+messages and repr excludes nested prior state. Raw date observations, empty
+snapshots and deletion volume are not resolver inputs.
+
+These objects do not attest workbook identity or a committed import. Physical
+marker format/read/write, binding marker and Raw to the same stable acquisition,
+enrollment, global identity/revision projection and durable rollover remain
+separate prerequisites. Shared permanent party UUIDs in historical views are
+retained without merging or resetting revisions. The resolver performs no I/O,
+calls no Planner or financial checks, and ACTIVE does not authorize a commit.
