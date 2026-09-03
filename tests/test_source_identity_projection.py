@@ -7,7 +7,7 @@ import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
-from dataclasses import FrozenInstanceError, fields, replace
+from dataclasses import FrozenInstanceError, dataclass, fields, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
@@ -20,6 +20,7 @@ import accounting_contracts.source_requiredness as requiredness
 import pytest
 from accounting_contracts import (
     ContractError,
+    PriorIdentityState,
     SourceBindingInputError,
     SourceBindingKey,
     SourceBindingRegistry,
@@ -145,6 +146,43 @@ def test_ip02_empty_and_archive_only_catalog(archive_only: bool) -> None:
     entries = [record(1404, [state(3, 1)])] if archive_only else []
     catalog = SourceIdentityCatalog(SourceBindingRegistry(entries))
     assert catalog.identity_count == int(archive_only)
+
+
+@pytest.mark.parametrize("subclass_in_archive", [False, True])
+@pytest.mark.parametrize("voided", [False, True])
+def test_ip02_semantically_equal_state_subclasses_preserve_objects(
+    subclass_in_archive: bool, voided: bool
+) -> None:
+    @dataclass(frozen=True, slots=True)
+    class EquivalentPrior(PriorIdentityState):
+        """Valid immutable state with inherited validation and no extra fields."""
+
+    base = state(3, 1, 7, voided=voided)
+    equivalent = EquivalentPrior(
+        base.stable_id,
+        base.canonical_uuid,
+        base.home_sheet,
+        base.latest_revision,
+        base.lifecycle,
+        base.source_hash,
+    )
+    assert not hasattr(equivalent, "__dict__")
+    assert base != equivalent
+    assert all(
+        getattr(base, item.name) == getattr(equivalent, item.name)
+        for item in fields(base)
+    )
+    archive_state, active_state = (
+        (equivalent, base) if subclass_in_archive else (base, equivalent)
+    )
+    archive = record(1404, [archive_state])
+    active = record(1405, [active_state], active=True)
+    catalog = SourceIdentityCatalog(SourceBindingRegistry([active, archive]))
+    assert catalog.identity_count == 1
+    assert catalog._global_heads[uid(1)] is archive_state
+    projected = projection.project_source_prior(active.key, snapshot(), catalog)
+    assert projected.identities[uid(1)] is active_state
+    assert archive.prior_registry.identities[uid(1)] is archive_state
 
 
 @pytest.mark.parametrize(

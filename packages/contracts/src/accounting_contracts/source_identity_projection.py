@@ -110,7 +110,7 @@ class SourceIdentityCatalog:
                         )
                 revision_key = (stable_id, state.latest_revision)
                 previous = revisions.setdefault(revision_key, state)
-                if previous != state:
+                if not _same_revision_state(previous, state):
                     raise SourceIdentityProjectionError(
                         SourceIdentityProjectionReason.INCONSISTENT_CATALOG
                     )
@@ -120,7 +120,7 @@ class SourceIdentityCatalog:
         active = self.source_registry.active_record
         if active is not None:
             for state in active.prior_registry.identities.values():
-                if state != heads[state.stable_id]:
+                if not _same_revision_state(state, heads[state.stable_id]):
                     raise SourceIdentityProjectionError(
                         SourceIdentityProjectionReason.INCONSISTENT_CATALOG
                     )
@@ -137,6 +137,16 @@ class SourceIdentityCatalog:
             "_transaction_owners",
             MappingProxyType({key: owners[key] for key in ordered if key in owners}),
         )
+
+
+def _same_revision_state(left: PriorIdentityState, right: PriorIdentityState) -> bool:
+    """Compare the normative fields for states already grouped by row UUID."""
+    return (
+        left.home_sheet == right.home_sheet
+        and left.latest_revision == right.latest_revision
+        and left.lifecycle == right.lifecycle
+        and left.source_hash == right.source_hash
+    )
 
 
 def project_source_prior(
