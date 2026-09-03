@@ -236,221 +236,118 @@ def test_sr01_version_exports_and_inert_pure_library() -> None:
     assert SOURCE_CHANGE_PLAN_VERSION == "source-change-plan.v1"
 
 
-_SUBPROCESS_PROBE_SCRIPT = r"""
-import sys
-import io
-import os
-import builtins
-import pathlib
-import socket
-import threading
-import time
-import uuid
-
-py_lib_dir = os.path.abspath(sys.base_prefix)
-workspace_dir = os.path.abspath(os.getcwd())
-target_pkg_dir = os.path.abspath(
-    os.path.join(workspace_dir, "packages", "contracts", "src", "accounting_contracts")
+_REQUIREDNESS_EXPORT_NAMES = (
+    "SourceRequirednessIssueReason",
+    "SourceRequirednessIssue",
+    "SourceRequirednessReport",
+    "SourceRequirednessInputError",
+    "evaluate_source_requiredness",
 )
 
-orig_builtins_open = builtins.open
-orig_io_open = io.open
-orig_os_open = os.open
-orig_path_open = pathlib.Path.open
 
-def _fail_side_effect(msg):
-    raise AssertionError(f"Forbidden side-effect: {msg}")
+def _requiredness_exports() -> tuple[object, ...]:
+    import accounting_contracts
+    import accounting_contracts.source_requiredness as submodule
 
-socket.socket = lambda *args, **kwargs: _fail_side_effect("socket")
-time.time = lambda *args, **kwargs: _fail_side_effect("time.time")
-time.monotonic = lambda *args, **kwargs: _fail_side_effect("time.monotonic")
-time.monotonic_ns = lambda *args, **kwargs: _fail_side_effect("time.monotonic_ns")
-uuid.uuid4 = lambda *args, **kwargs: _fail_side_effect("uuid4")
-if hasattr(uuid, "uuid7"):
-    uuid.uuid7 = lambda *args, **kwargs: _fail_side_effect("uuid7")
-threading.Thread.start = lambda *args, **kwargs: _fail_side_effect("Thread.start")
-pathlib.Path.write_bytes = lambda *args, **kwargs: _fail_side_effect("Path.write_bytes")
-pathlib.Path.write_text = lambda *args, **kwargs: _fail_side_effect("Path.write_text")
-
-def _check_file_access(path, mode, op_name):
-    mode_str = str(mode)
-    if any(m in mode_str for m in ("w", "a", "+", "x")):
-        _fail_side_effect(f"{op_name} write mode {mode_str} on {path}")
-    norm_path = os.path.abspath(str(path))
-    is_code = norm_path.endswith((".py", ".pyc", ".so"))
-    is_in_std = (
-        norm_path.startswith(py_lib_dir)
-        or "/site-packages/" in norm_path
-        or "/lib/python" in norm_path
-        or "/usr/lib" in norm_path
+    assert sys.modules["accounting_contracts.source_requiredness"] is submodule
+    values = tuple(
+        getattr(accounting_contracts, name) for name in _REQUIREDNESS_EXPORT_NAMES
     )
-    is_in_contracts = norm_path.startswith(target_pkg_dir) and is_code
-    is_zoneinfo = (
-        "/usr/share/zoneinfo" in norm_path
-        or "/zoneinfo" in norm_path
-        or "tzdata" in norm_path
-    )
-    if not ((is_code and is_in_std) or is_in_contracts or is_zoneinfo):
-        _fail_side_effect(f"{op_name} application data read on {path}")
+    for name, value in zip(_REQUIREDNESS_EXPORT_NAMES, values, strict=True):
+        assert value is getattr(submodule, name)
+    return values
 
-def guarded_builtins_open(file, mode="r", *args, **kwargs):
-    _check_file_access(file, mode, "builtins.open")
-    return orig_builtins_open(file, mode, *args, **kwargs)
 
-def guarded_io_open(file, mode="r", *args, **kwargs):
-    _check_file_access(file, mode, "io.open")
-    return orig_io_open(file, mode, *args, **kwargs)
-
-def guarded_os_open(path, flags, *args, **kwargs):
-    if flags & (
-        os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_EXCL", 0)
-    ):
-        _fail_side_effect(f"os.open write flags {flags} on {path}")
-    _check_file_access(path, "r", "os.open")
-    return orig_os_open(path, flags, *args, **kwargs)
-
-def guarded_path_open(self, mode="r", *args, **kwargs):
-    _check_file_access(self, mode, "Path.open")
-    return orig_path_open(self, mode, *args, **kwargs)
-
-builtins.open = guarded_builtins_open
-io.open = guarded_io_open
-os.open = guarded_os_open
-pathlib.Path.open = guarded_path_open
-
-action = sys.argv[1] if len(sys.argv) > 1 else "normal"
-if action == "write_canary":
-    canary = sys.argv[2]
-    pathlib.Path(canary).open("w").write("canary")
-elif action == "read_data":
-    data_file = sys.argv[2]
-    pathlib.Path(data_file).open("r").read()
-
-import importlib
-mod = importlib.import_module("accounting_contracts.source_requiredness")
-assert mod.SOURCE_REQUIREDNESS_VERSION == "source-requiredness.v1"
-
-import accounting_contracts
-assert (
-    accounting_contracts.SourceRequirednessIssueReason
-    is mod.SourceRequirednessIssueReason
-)
-assert (
-    accounting_contracts.SourceRequirednessIssue
-    is mod.SourceRequirednessIssue
-)
-assert (
-    accounting_contracts.SourceRequirednessReport
-    is mod.SourceRequirednessReport
-)
-assert (
-    accounting_contracts.SourceRequirednessInputError
-    is mod.SourceRequirednessInputError
-)
-assert (
-    accounting_contracts.evaluate_source_requiredness
-    is mod.evaluate_source_requiredness
-)
-
-u = uuid.UUID("01955f00-0000-7000-8000-000000000001")
-iss = accounting_contracts.SourceRequirednessIssue(
-    sheet_name="خرید-فروش",
-    stable_id=u,
-    field_name="date_raw",
-    reason=mod.SourceRequirednessIssueReason.MISSING_VALUE,
-)
-assert iss.reason is accounting_contracts.SourceRequirednessIssueReason.MISSING_VALUE
-print("PROBE_OK")
-"""
+def _run_fresh_import_probe(
+    action: str = "normal", path: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    before = _requiredness_exports()
+    probe = Path(__file__).with_name("source_requiredness_import_probe.py")
+    args = [sys.executable, "-X", "utf8", "-B", str(probe), action]
+    if path is not None:
+        args.append(str(path))
+    try:
+        return subprocess.run(
+            args,
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=15,
+            check=False,
+        )
+    finally:
+        # Checked after both successful and guard-rejected child imports, and
+        # also if process launch or its bounded wait fails.
+        after = _requiredness_exports()
+        assert all(a is b for a, b in zip(before, after, strict=True))
 
 
 def test_sr01_fresh_import_subprocess_probe() -> None:
-    """SR-01: Fresh module import executes completely inertly in isolated probe."""
-    res = subprocess.run(
-        [sys.executable, "-c", _SUBPROCESS_PROBE_SCRIPT, "normal"],
-        capture_output=True,
-        text=True,
-    )
-    assert res.returncode == 0, f"Probe failed with stderr: {res.stderr}"
-    assert "PROBE_OK" in res.stdout
+    """SR-01: Execute the exact fresh target module under a subprocess guard."""
+    res = _run_fresh_import_probe()
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.splitlines() == [
+        "IMPORT_ENTERED",
+        "IMPORT_EXECUTED",
+        "PROBE_OK",
+    ]
 
 
-def test_sr01_fresh_import_negative_controls(tmp_path: Path) -> None:
-    """SR-01: Bounded negative controls: write is rejected and data read is rejected."""
-    # Negative control 1: deliberate application write via Path.open
-    canary_path = tmp_path / "canary_probe.txt"
-    res_w = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            _SUBPROCESS_PROBE_SCRIPT,
-            "write_canary",
-            str(canary_path),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert res_w.returncode != 0
-    assert (
-        "Forbidden side-effect" in res_w.stderr
-        or "Path.open write mode" in res_w.stderr
-    )
-    assert not canary_path.exists(), "Canary file must not be created!"
+@pytest.mark.parametrize(
+    "action",
+    [
+        "path_write",
+        "builtins_read",
+        "io_read",
+        "os_read",
+        "path_read",
+        "code_read",
+        "zoneinfo_read",
+    ],
+)
+def test_sr01_fresh_import_negative_controls(tmp_path: Path, action: str) -> None:
+    """SR-01: Real import-time I/O is rejected without contaminating the parent."""
+    if action == "code_read":
+        # A real source path under accounting_contracts must not grant the
+        # application a read exemption merely because its loader may read it.
+        import accounting_contracts.source_requiredness as submodule
 
-    # Negative control 2: deliberate application data read via Path.open
-    data_path = tmp_path / "application_data.xlsx"
-    data_path.write_bytes(b"PK_fake_xlsx")
-    res_r = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            _SUBPROCESS_PROBE_SCRIPT,
-            "read_data",
-            str(data_path),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert res_r.returncode != 0
-    assert (
-        "Forbidden side-effect" in res_r.stderr
-        or "application data read" in res_r.stderr
-    )
+        assert submodule.__file__ is not None
+        target = Path(submodule.__file__)
+    else:
+        target = tmp_path / (
+            "tzdata-synthetic.py" if action == "zoneinfo_read" else "application.txt"
+        )
+        if action != "path_write":
+            target.write_text("synthetic fixture", encoding="utf-8")
+    before = target.read_bytes() if target.exists() else None
+
+    res = _run_fresh_import_probe(action, target)
+    assert res.returncode == 73, (res.stdout, res.stderr)
+    assert res.stdout.splitlines() == ["IMPORT_ENTERED", "IMPORT_REJECTED_BY_GUARD"]
+    if before is None:
+        assert not target.exists(), "The rejected write must not create a canary."
+    else:
+        assert target.read_bytes() == before
 
 
 def test_sr01_public_and_submodule_exports_identity_retention() -> None:
-    """SR-01: Public and submodule exports remain strictly identical by identity."""
+    """SR-01: The genuine public/submodule enum remains usable after a probe."""
     import accounting_contracts
-    import accounting_contracts.source_requiredness as submod
+    import accounting_contracts.source_requiredness as submodule
 
-    assert (
-        accounting_contracts.SourceRequirednessIssueReason
-        is submod.SourceRequirednessIssueReason
-    )
-    assert (
-        accounting_contracts.SourceRequirednessIssue is submod.SourceRequirednessIssue
-    )
-    assert (
-        accounting_contracts.SourceRequirednessReport is submod.SourceRequirednessReport
-    )
-    assert (
-        accounting_contracts.SourceRequirednessInputError
-        is submod.SourceRequirednessInputError
-    )
-    assert (
-        accounting_contracts.evaluate_source_requiredness
-        is submod.evaluate_source_requiredness
-    )
-
-    u = uuid.UUID("01955f00-0000-7000-8000-000000000001")
-    iss = accounting_contracts.SourceRequirednessIssue(
+    before = _requiredness_exports()
+    assert _run_fresh_import_probe().returncode == 0
+    assert all(a is b for a, b in zip(before, _requiredness_exports(), strict=True))
+    issue = accounting_contracts.SourceRequirednessIssue(
         sheet_name="خرید-فروش",
-        stable_id=u,
+        stable_id=uuid.UUID("01955f00-0000-7000-8000-000000000001"),
         field_name="date_raw",
-        reason=submod.SourceRequirednessIssueReason.MISSING_VALUE,
+        reason=submodule.SourceRequirednessIssueReason.MISSING_VALUE,
     )
     assert (
-        iss.reason is accounting_contracts.SourceRequirednessIssueReason.MISSING_VALUE
+        issue.reason is accounting_contracts.SourceRequirednessIssueReason.MISSING_VALUE
     )
 
 
@@ -1775,6 +1672,16 @@ def test_sr12_hypothesis_randomized_presence_combinations(
         s: [(u, dict(reversed(list(r.items())))) for u, r in reversed(rows)]
         for s, rows in sheet_specs.items()
     }
+    for sheet_name, original_rows in sheet_specs.items():
+        transformed_rows = sheet_specs_trans[sheet_name]
+        if len(original_rows) > 1:
+            assert [u for u, _ in transformed_rows] != [u for u, _ in original_rows]
+        original_by_id = dict(original_rows)
+        for stable_id, raw in transformed_rows:
+            original_raw = original_by_id[stable_id]
+            assert raw == original_raw
+            assert list(raw) == list(reversed(original_raw))
+            assert list(raw) != list(original_raw)
     snap_trans = build_source_workbook_snapshot(
         [
             SourceSheetInput(
