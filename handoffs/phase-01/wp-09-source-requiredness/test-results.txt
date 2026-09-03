@@ -1,8 +1,8 @@
-WORK PACKAGE: WP-09 Required-field preflight for raw source snapshots (Round 1 Correction)
+WORK PACKAGE: WP-09 Required-field preflight for raw source snapshots (Round 2 Correction)
 PHASE: 1 — source and data-model foundation
-RECORDED AT UTC: 2026-09-02T22:58:00Z
-TESTED CODE COMMIT SHA: f142de97aec65242be8994a6b8fd73537c1f0c12
-PRIOR DELIVERY HEAD: cea3cf67baa73ff50f4a5783689506f84d8ef40e
+RECORDED AT UTC: 2026-09-03T04:10:00Z
+TESTED CODE COMMIT SHA: 844421a0d4ffd6a7fb9a4d064084f469daf2ecc6
+PRIOR DELIVERY HEAD: 528c313c57eba2ad8eb84296293fa9b8ef43484a
 APPROVED BASELINE: d59e20accfa57cfc67de8a8ca6d31deba8a6d405
 
 ================================================================================
@@ -11,8 +11,8 @@ COMMAND 1: SYNCHRONIZATION AND DEPENDENCY LOCK CHECK
 Exact command: uv sync --frozen --all-packages --all-groups && uv lock --check
 Exit code: 0
 Relevant output:
-Checked 81 packages in 65ms
-Resolved 88 packages in 4ms
+Checked 81 packages in 2ms
+Resolved 88 packages in 3ms
 
 ================================================================================
 COMMAND 2: WP-09 UNIT, INTEGRATION, AND PROPERTY SUITE (SR-01 TO SR-14)
@@ -26,9 +26,10 @@ rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 34 items
+collected 45 items
 
 tests/test_source_requiredness.py::test_sr01_version_exports_and_inert_pure_library PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_under_guard PASSED
 tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-date_raw] PASSED
 tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-party_name_raw] PASSED
 tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-transaction_type_raw] PASSED
@@ -47,7 +48,17 @@ tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_fi
 tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647-party_name_raw] PASSED
 tests/test_source_requiredness.py::test_sr02_multiple_rows_and_fields_aggregate_all_missing_issues PASSED
 tests/test_source_requiredness.py::test_sr02_omission_of_transaction_type_raw_is_detected PASSED
-tests/test_source_requiredness.py::test_sr03_required_text_presence_null_blank_whitespace_and_unicode PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-transaction_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-entry_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-movement_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_omission_of_receipts_payments_blank_entry_type_is_detected PASSED
+tests/test_source_requiredness.py::test_sr03_date_presence_and_upstream_rejection PASSED
 tests/test_source_requiredness.py::test_sr04_numeric_zero_signed_values_and_type_preservation PASSED
 tests/test_source_requiredness.py::test_sr05_optional_fields_null_and_blank_permitted PASSED
 tests/test_source_requiredness.py::test_sr06_mixed_four_sheet_snapshot_issue_aggregation_and_counts PASSED
@@ -56,40 +67,61 @@ tests/test_source_requiredness.py::test_sr08_constructor_invariants_immutability
 tests/test_source_requiredness.py::test_sr09_error_messages_and_repr_masking_without_raw_leakage PASSED
 tests/test_source_requiredness.py::test_sr10_purity_repeatability_and_raw_preservation PASSED
 tests/test_source_requiredness.py::test_sr11_xlsx_reader_integration_synthetic_workbooks PASSED
-tests/test_source_requiredness.py::test_sr12_property_permutations_and_independent_oracle PASSED
+tests/test_source_requiredness.py::test_sr12_property_all_four_sheets_permutations_and_independent_oracle PASSED
 tests/test_source_requiredness.py::test_sr12_property_single_value_mutation_transitions PASSED
 tests/test_source_requiredness.py::test_sr12_property_exact_snapshot_raw_and_hash_retention PASSED
 tests/test_source_requiredness.py::test_sr12_hypothesis_randomized_presence_combinations PASSED
 tests/test_source_requiredness.py::test_sr13_scale_15000_row_synthetic_benchmark
-[SR-13 SCALE BENCHMARK] 15,000 rows -> eval_seconds: 0.0396s | fixture_build_seconds: 2.9844s | checked_rows: 15000 | failed_rows: 3000 | issues: 3000
+[SR-13 SCALE BENCHMARK] 15,000 rows -> eval_seconds: 0.0349s | fixture_build_seconds: 2.6894s | checked_rows: 15000 | failed_rows: 3000 | issues: 3000
 PASSED
 tests/test_source_requiredness.py::test_sr14_existing_suite_retention_and_contracts_integrity PASSED
 
-================== 34 passed in 3.80s ===================
+================== 45 passed in 3.69s ===================
 
 ================================================================================
-COMMAND 3: CONTROLLED MUTATION CHECK FOR OMISSION OF transaction_type_raw
+COMMAND 3: CONTROLLED IN-MEMORY MUTATION CHECKS
 ================================================================================
-Description: Temporarily removed "transaction_type_raw" from REQUIRED_FIELDS_BY_SHEET["خرید-فروش"].
-Exact command: uv run pytest tests/test_source_requiredness.py -k "test_sr02" -v
-Exit code: 1 (Expected Failure)
-Relevant output:
+Description: Demonstrated that both omissions cause immediate, reliable test failures:
+1. Omission of required transaction_type_raw from buy/sell.
+2. Omission of blank checking for entry_type_raw from receipts/payments.
+
+=== TESTING IN-MEMORY MUTANT 1: Omission of buy/sell transaction_type_raw ===
 ======================= FAILURES =======================
-_ test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-transaction_type_raw] _
->       assert report.passes_requiredness is False
-E       assert True is False
-E        +  where True = SourceRequirednessReport(checked_row_count=1, failed_row_count=0, issue_count=0, passes_requiredness=True, issues=()).passes_requiredness
-tests/test_source_requiredness.py:254: AssertionError
 _ test_sr02_omission_of_transaction_type_raw_is_detected _
+    def test_sr02_omission_of_transaction_type_raw_is_detected() -> None:
+        u = _make_uuid7(b"sr02_omission_check")
+        row_data = _valid_buy_sell_row()
+        row_data["transaction_type_raw"] = None
+        snap = _build_snapshot_with_rows(buy_sell_rows=[(u, row_data)])
+        report = evaluate_source_requiredness(snap)
 >       assert report.passes_requiredness is False
 E       assert True is False
 E        +  where True = SourceRequirednessReport(checked_row_count=1, failed_row_count=0, issue_count=0, passes_requiredness=True, issues=()).passes_requiredness
-tests/test_source_requiredness.py:295: AssertionError
-===== 2 failed, 16 passed, 16 deselected in 0.80s ======
+tests/test_source_requiredness.py:363: AssertionError
+FAILED tests/test_source_requiredness.py::test_sr02_omission_of_transaction_type_raw_is_detected - assert True is False
+1 failed, 44 deselected in 0.58s
+Mutant 1 pytest exit code: 1 (Expected Failure)
 
-After restoring "transaction_type_raw":
-Exact command: uv run pytest tests/test_source_requiredness.py -k "test_sr02" -v
-Exit code: 0 (PASSED: 18 passed, 16 deselected in 0.85s)
+=== TESTING IN-MEMORY MUTANT 2: Omission of receipts/payments blank entry_type_raw ===
+======================= FAILURES =======================
+_ test_sr03_omission_of_receipts_payments_blank_entry_type_is_detected _
+    def test_sr03_omission_of_receipts_payments_blank_entry_type_is_detected() -> None:
+        u = _make_uuid7(b"sr03_blank_entry")
+        row_data = _valid_receipts_payments_row()
+        row_data["entry_type_raw"] = "   "  # Blank text in receipts_payments entry_type_raw
+        snap = _build_snapshot_with_rows(receipts_payments_rows=[(u, row_data)])
+        report = evaluate_source_requiredness(snap)
+>       assert report.passes_requiredness is False
+E       assert True is False
+E        +  where True = SourceRequirednessReport(checked_row_count=1, failed_row_count=0, issue_count=0, passes_requiredness=True, issues=()).passes_requiredness
+tests/test_source_requiredness.py:466: AssertionError
+FAILED tests/test_source_requiredness.py::test_sr03_omission_of_receipts_payments_blank_entry_type_is_detected - assert True is False
+1 failed, 44 deselected in 0.08s
+Mutant 2 pytest exit code: 1 (Expected Failure)
+
+Normal Passing Validation against Unchanged Product Code:
+Exact command: uv run pytest tests/test_source_requiredness.py -v
+Exit code: 0 (45 passed in 3.69s)
 
 ================================================================================
 COMMAND 4: CODE STYLE AND FORMATTING VALIDATION
@@ -117,8 +149,8 @@ COMMAND 6: WP-05 STREAMING READER 15,000-ROW BENCHMARK
 Exact command: uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
 Exit code: 0
 Relevant output:
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.0202s | baseline_current_rss_mib: 30.13 MiB | call_peak_rss_mib: 61.65 MiB | rows: 15000 | platform: linux
-1 passed in 12.88s (Ceilings: 15.0s, 128.0 MiB)
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.6795s | baseline_current_rss_mib: 30.27 MiB | call_peak_rss_mib: 61.94 MiB | rows: 15000 | platform: linux
+1 passed in 12.21s (Ceilings: 15.0s, 128.0 MiB)
 
 ================================================================================
 COMMAND 7: WP-06 SNAPSHOT ACQUISITION 15,000-ROW BENCHMARK
@@ -126,8 +158,8 @@ COMMAND 7: WP-06 SNAPSHOT ACQUISITION 15,000-ROW BENCHMARK
 Exact command: uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
 Exit code: 0
 Relevant output:
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.3971s | baseline_current_rss_mib: 29.96 MiB | call_peak_rss_mib: 61.77 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 9a3f3e2d75332edcb00e83f62461f008df305d8fdabb400241af785afd3e2787 | platform: linux
-1 passed in 13.67s (Ceilings: 15.0s, 128.0 MiB)
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.6799s | baseline_current_rss_mib: 30.16 MiB | call_peak_rss_mib: 61.64 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 4c8544eacfaebd0f3de91f5cd882a46ab3523ba806659d95c1aec66efbfc750c | platform: linux
+1 passed in 13.20s (Ceilings: 15.0s, 128.0 MiB)
 
 ================================================================================
 COMMAND 8: FULL REPOSITORY REGRESSION TEST SUITE
@@ -135,34 +167,34 @@ COMMAND 8: FULL REPOSITORY REGRESSION TEST SUITE
 Exact command: uv run pytest -v -k "not test_bench"
 Exit code: 0
 Relevant output:
-collected 384 items
+collected 395 items
 tests/test_architecture_guard.py ..............     [  3%]
 tests/test_canonical_date.py ..........             [  6%]
 tests/test_canonical_hashing.py ..................  [ 10%]
 tests/test_imports.py .......                       [ 12%]
 tests/test_raw_input_contracts.py ...............   [ 16%]
-tests/test_save_import_coordinator.py ............. [ 20%]
-...........................                         [ 27%]
-tests/test_source_change_plan.py .................. [ 31%]
-.......                                             [ 33%]
-tests/test_source_requiredness.py ................. [ 38%]
-.................                                   [ 42%]
-tests/test_source_watch_runtime.py ................ [ 46%]
-.................                                   [ 51%]
-tests/test_source_watch_runtime_native.py ...       [ 51%]
-tests/test_xlsx_snapshot_acquisition.py ........... [ 54%]
-...............................                     [ 67%]
+tests/test_save_import_coordinator.py ............. [ 19%]
+...........................                         [ 26%]
+tests/test_source_change_plan.py .................. [ 30%]
+.......                                             [ 32%]
+tests/test_source_requiredness.py ................. [ 36%]
+............................                        [ 44%]
+tests/test_source_watch_runtime.py ................ [ 48%]
+.................                                   [ 52%]
+tests/test_source_watch_runtime_native.py ...       [ 53%]
+tests/test_xlsx_snapshot_acquisition.py ........... [ 55%]
+...............................                     [ 68%]
 ..........ss                                        [ 71%]
-tests/test_xlsx_source_reader.py .................. [ 75%]
-...........................                         [ 82%]
+tests/test_xlsx_source_reader.py .................. [ 76%]
+...........................                         [ 83%]
 tests/test_xlsx_source_reader_raw_contract_regressions.py . [ 83%]
-......                                              [ 84%]
-tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 84%]
+......                                              [ 85%]
+tests/test_xlsx_source_reader_sst_activity_regressions.py . [ 85%]
 ................................................... [ 98%]
 .......                                             [100%]
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
 SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
-======== 382 passed, 2 skipped in 66.19s (0:01:06) ========
+======== 393 passed, 2 skipped in 64.98s (0:01:04) ========
 
 ================================================================================
 COMMAND 9: REPOSITORY DIFF AND SECURITY AUDIT SCANS
@@ -183,58 +215,62 @@ Relevant output:
 CLEAN_CODEBASE_EXIT_1
 
 Benign Documentation Matches in handoffs/:
-- handoffs/phase-01/wp-08-source-watch-runtime/handoff.md:67 (documentation of scan command)
-- handoffs/phase-01/wp-08-source-watch-runtime/test-results.txt:159 (documentation of scan command)
-- handoffs/phase-01/wp-09-source-requiredness/handoff.md:95 (documentation of scan command)
-- handoffs/phase-01/wp-09-source-requiredness/test-results.txt:129 (documentation of scan command)
+- handoffs/phase-01/wp-08-source-watch-runtime/handoff.md (documentation of scan command)
+- handoffs/phase-01/wp-08-source-watch-runtime/test-results.txt (documentation of scan command)
+- handoffs/phase-01/wp-09-source-requiredness/handoff.md (documentation of scan command)
+- handoffs/phase-01/wp-09-source-requiredness/test-results.txt (documentation of scan command)
 Category: Non-secret markdown/text command descriptions. No private keys, AWS IDs, or tokens committed.
 
 ================================================================================
 COMMAND 10: SCRATCH ROLLBACK VERIFICATION ON ISOLATED BRANCH
 ================================================================================
 Exact command:
-git checkout -b scratch/verify-rollback f142de97aec65242be8994a6b8fd73537c1f0c12 && \
+git checkout -b scratch/verify-rollback 844421a0d4ffd6a7fb9a4d064084f469daf2ecc6 && \
+git revert --no-edit 844421a0d4ffd6a7fb9a4d064084f469daf2ecc6 && \
+git revert --no-edit 528c313c57eba2ad8eb84296293fa9b8ef43484a && \
 git revert --no-edit f142de97aec65242be8994a6b8fd73537c1f0c12 && \
-git diff --quiet cea3cf67baa73ff50f4a5783689506f84d8ef40e && \
-echo "ROLLBACK TO DELIVERY HEAD cea3cf6 SUCCESSFUL" && \
 git revert --no-edit cea3cf67baa73ff50f4a5783689506f84d8ef40e && \
 git revert --no-edit 46020d6f45a4af66cc52fe660829516c5c792c98 && \
 git diff --quiet d59e20accfa57cfc67de8a8ca6d31deba8a6d405 && \
-echo "FULL WP-09 ROLLBACK TO BASELINE d59e20a SUCCESSFUL: 100% MATCH" && \
+echo "SCRATCH ROLLBACK TO BASELINE d59e20a SUCCESSFUL: 100% ZERO DIFF" && \
 git checkout antigravity/phase-01-source-requiredness && \
 git branch -D scratch/verify-rollback
 Exit code: 0
 Relevant output:
 Switched to a new branch 'scratch/verify-rollback'
-[scratch/verify-rollback 2cea117] Revert "fix(contracts): enforce reason enum type and expand SR-01..14 property evidence"
+[scratch/verify-rollback 99bfde6] Revert "test(contracts): expand 9-field text matrix, inert import, and 4-sheet property permutations"
+ 1 file changed, 182 insertions(+), 442 deletions(-)
+[scratch/verify-rollback 4b7455a] Revert "docs(handoff): update WP-09 evidence for Round 1 review correction"
+ 3 files changed, 162 insertions(+), 225 deletions(-)
+[scratch/verify-rollback 24f95ca] Revert "fix(contracts): enforce reason enum type and expand SR-01..14 property evidence"
  2 files changed, 216 insertions(+), 702 deletions(-)
-ROLLBACK TO DELIVERY HEAD cea3cf6 SUCCESSFUL
-[scratch/verify-rollback 17c960e] Revert "docs(handoff): record WP-09 source requiredness evidence and verified rollback"
+[scratch/verify-rollback abf2bc2] Revert "docs(handoff): record WP-09 source requiredness evidence and verified rollback"
  3 files changed, 375 deletions(-)
  delete mode 100644 handoffs/phase-01/wp-09-source-requiredness/acceptance-matrix.md
  delete mode 100644 handoffs/phase-01/wp-09-source-requiredness/handoff.md
  delete mode 100644 handoffs/phase-01/wp-09-source-requiredness/test-results.txt
-[scratch/verify-rollback ac6bc3e] Revert "feat(contracts): implement source-requiredness.v1 preflight and SR-01..14 tests"
+[scratch/verify-rollback d8788ca] Revert "feat(contracts): implement source-requiredness.v1 preflight and SR-01..14 tests"
  4 files changed, 1240 deletions(-)
  delete mode 100644 packages/contracts/src/accounting_contracts/source_requiredness.py
  delete mode 100644 tests/test_source_requiredness.py
-FULL WP-09 ROLLBACK TO BASELINE d59e20a SUCCESSFUL: 100% MATCH
+SCRATCH ROLLBACK TO BASELINE d59e20a SUCCESSFUL: 100% ZERO DIFF
 Switched to branch 'antigravity/phase-01-source-requiredness'
-Deleted branch scratch/verify-rollback (was ac6bc3e).
+Deleted branch scratch/verify-rollback (was d8788ca).
 
 ================================================================================
 FINAL SUMMARY
 ================================================================================
-Passed: 382
+Passed: 393
 Failed: 0
 Skipped: 2 (Platform-conditional Windows native handle locks)
 Blocked: 0
-Total collected: 384 (350 baseline tests + 34 WP-09 tests)
-Tested Code Commit SHA: f142de97aec65242be8994a6b8fd73537c1f0c12
-Prior Delivery HEAD: cea3cf67baa73ff50f4a5783689506f84d8ef40e
+Total collected: 395 (350 baseline tests + 45 WP-09 tests)
+Tested Code Commit SHA: 844421a0d4ffd6a7fb9a4d064084f469daf2ecc6
+Prior Delivery HEAD: 528c313c57eba2ad8eb84296293fa9b8ef43484a
 Approved Baseline SHA: d59e20accfa57cfc67de8a8ca6d31deba8a6d405
+Product Code Status: Unchanged from f142de97aec65242be8994a6b8fd73537c1f0c12
 Mypy Type Checks: 0 errors in 30 source files on both Linux and Win32 platforms
-Benchmarks: WP-05 at 11.02s / 61.65 MiB; WP-06 at 11.40s / 61.77 MiB (< 15.0s / 128.0 MiB ceilings)
-SR-13 Preflight Evaluator Scale: 15,000 rows evaluated in 0.0396s (linear O(N), fixture generation 2.9844s)
-Controlled Mutation Check: Omission of transaction_type_raw reliably detected (2 failures observed, exit 1)
-Scratch Branch Revert: Scope 1 matches cea3cf6; Scope 2 matches baseline d59e20a with zero diff
+Benchmarks: WP-05 at 10.68s / 61.94 MiB; WP-06 at 11.68s / 61.64 MiB (< 15.0s / 128.0 MiB ceilings)
+SR-13 Preflight Evaluator Scale: 15,000 rows evaluated in 0.0349s (fixture build: 2.6894s, all 3,000 issues matched, 100% row/hash retention verified)
+Controlled In-Memory Mutation Checks: Both omissions detected with exit code 1 (buy/sell transaction_type_raw and receipts/payments blank entry_type_raw)
+Scratch Branch Revert: Revert sequence back to baseline d59e20a exits 0 with 100% zero diff

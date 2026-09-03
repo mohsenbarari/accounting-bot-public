@@ -1,14 +1,15 @@
-# Handoff: WP-09 Required-Field Preflight for Raw Source Snapshots (Round 1 Correction)
+# Handoff: WP-09 Required-Field Preflight for Raw Source Snapshots (Round 2 Correction)
 
 ## Identity
 
 - **Phase:** 1 — source and data-model foundation
-- **Work Package:** WP-09 Required-field preflight for raw source snapshots (Round 1 Bounded Correction)
+- **Work Package:** WP-09 Required-field preflight for raw source snapshots (Round 2 Bounded Correction)
 - **Branch/worktree:** `antigravity/phase-01-source-requiredness`
 - **Execution Baseline:** `d59e20accfa57cfc67de8a8ca6d31deba8a6d405` (PR #31 merged into main)
-- **Prior Code Commit:** `46020d6f45a4af66cc52fe660829516c5c792c98`
-- **Prior Delivery HEAD:** `cea3cf67baa73ff50f4a5783689506f84d8ef40e`
-- **Tested Code Commit SHA:** `f142de97aec65242be8994a6b8fd73537c1f0c12`
+- **Prior Code Commit:** `f142de97aec65242be8994a6b8fd73537c1f0c12`
+- **Prior Delivery HEAD:** `528c313c57eba2ad8eb84296293fa9b8ef43484a`
+- **Tested Code Commit SHA:** `844421a0d4ffd6a7fb9a4d064084f469daf2ecc6`
+- **Product Code Status:** 100% UNCHANGED from `f142de97aec65242be8994a6b8fd73537c1f0c12` (R1 closed)
 - **Implementer:** Google Antigravity
 - **Reviewer:** Codex Project Manager
 - **Gate G1 Status:** `OPEN / IN PROGRESS`
@@ -17,22 +18,22 @@
 
 ### Requested outcome
 
-Address the four bounded correction items (R1 through R4) requested by Codex independent review on delivery `cea3cf67baa73ff50f4a5783689506f84d8ef40e`:
-1. **R1 — Enforce actual reason enum type:** Replace reason coercion with strict type validation `type(self.reason) is not SourceRequirednessIssueReason`. Both canonical strings and foreign StrEnum members raise `SourceRequirednessInputError`. Genuine members are retained by identity. Restriction of `BLANK_TEXT` to required text fields is preserved.
-2. **R2 — Independent matrix and real property scenarios:** Write complete approved required-fields matrix independently in test code covering all 16 entries without importing product maps. Add real property testing under sheet, row, and mapping-key permutations with inverted UUID order, single-value transitions, exact raw/hash retention, and Hypothesis randomized combinations. Include controlled mutation proof demonstrating that omitting buy/sell `transaction_type_raw` is caught immediately.
-3. **R3 — Complete issued acceptance evidence:** Implement side-effect guard in SR-10 forbidding filesystem, network, clock, and UUID generation during evaluation; test optional fields individually and together plus C/D/H/HA/HS with blank notes in SR-05; directly construct report on failing snapshot in SR-08; test invalid supplied args and marker-bearing metadata in SR-09 with non-empty issues assertion; assert read-only byte preservation in SR-11; separate fixture timing from evaluator timing in SR-13 with no invented ceilings; cite upstream tests for negative cases in SR-04, SR-07, and SR-11.
-4. **R4 — Recapture handoff evidence:** Map each assertion to tests that actually execute it, record real commands and outputs, document grep exit codes accurately, maintain explicit rollback scopes, and separate platform evidence.
+Address the remaining R2–R4 test and evidence corrections requested by Codex independent review on delivery `528c313c57eba2ad8eb84296293fa9b8ef43484a`:
+1. **R1 — Product code status:** R1 is closed. Product code in `packages/contracts/src/accounting_contracts/source_requiredness.py` remains 100% unchanged from `f142de97aec65242be8994a6b8fd73537c1f0c12`.
+2. **R2 — Complete independent text-field and generated-permutation coverage:** Cover present, nonblank surrounding whitespace preserved verbatim, None, empty string, ASCII whitespace, and Unicode whitespace across all nine required raw-text fields from a test-owned matrix. Extend generated property tests to span all four sheets and bounded actual sheet, row, and mapping-order permutations with inverted UUID byte order against an independent oracle. Demonstrate that both omissions are detected: buy/sell required `transaction_type_raw` and receipts/payments blank `entry_type_raw`.
+3. **R3 — Finish SR-01 and SR-13 without widening product scope:** Add a focused SR-01 test that actually executes a fresh module import of `accounting_contracts.source_requiredness` under a side-effect guard (evicting from `sys.modules`, forbidding writes, network, clocks, UUIDs, and threads while permitting Python module-loader reads). In SR-13, derive and compare the full independently expected ordered tuple `(sheet_name, UUID, field_name, reason)` for all 3,000 issues. Pre-capture row references, raw mappings, and source hashes before evaluation and verify 100% post-evaluation retention across all 15,000 rows. Record separate fixture build and evaluator timings, distinguish code-inspection complexity from observed timings, and assert no invented ceilings.
+4. **R4 — Correct rollback scope and update supported claims:** Verify complete scratch branch rollback sequence back to baseline `d59e20accfa57cfc67de8a8ca6d31deba8a6d405` with zero diff. Commit test corrections first, record the tested commit SHA, capture all commands and outputs, and commit documentation afterward without self-hash placeholder loops.
 
 ### In scope
 
-- `packages/contracts/src/accounting_contracts/source_requiredness.py`: Strict reason enum type enforcement under R1.
-- `tests/test_source_requiredness.py`: Comprehensive test suite expansions under R1, R2, and R3 (34 tests total).
-- `handoffs/phase-01/wp-09-source-requiredness/acceptance-matrix.md`: Updated acceptance matrix with exact test nodes and upstream citations.
-- `handoffs/phase-01/wp-09-source-requiredness/test-results.txt`: Recaptured command outputs, benchmark measurements, mutation check, and scratch rollback proof.
+- `tests/test_source_requiredness.py`: Expanded 9-field text matrix, inert fresh import test, 4-sheet property permutations, and strict 15,000-row issue/retention assertions (45 tests total).
+- `handoffs/phase-01/wp-09-source-requiredness/acceptance-matrix.md`: Updated matrix mapping all SR-01..14 requirements to executing test nodes.
+- `handoffs/phase-01/wp-09-source-requiredness/test-results.txt`: Recaptured command outputs, benchmark timings, both in-memory mutation checks, and scratch rollback proof.
 - `handoffs/phase-01/wp-09-source-requiredness/handoff.md`: Updated handoff document.
 
 ### Out of scope
 
+- Product code changes: Strictly forbidden (R1 closed).
 - No changes to `ROADMAP.md` or ADR/WP scope.
 - No changes to upstream Raw contracts, canonical date/hashing, Change Planner, XLSX Reader, Snapshot Acquisition, Save Import Coordinator, or Watcher runtime.
 - No database persistence, Outbox, Telegram bot, or Ledger changes.
@@ -56,11 +57,10 @@ Address the four bounded correction items (R1 through R4) requested by Codex ind
 
 | File | Change | Reason |
 |---|---|---|
-| `packages/contracts/src/accounting_contracts/source_requiredness.py` | Modified | R1: Replaced reason coercion with strict type validation `type(self.reason) is SourceRequirednessIssueReason`. |
-| `tests/test_source_requiredness.py` | Modified | R1–R3: Independent matrix, 16 parametrized entries, property tests, side-effect guard, mutation check, scale benchmark. |
-| `handoffs/phase-01/wp-09-source-requiredness/acceptance-matrix.md` | Modified | R4: Updated acceptance matrix mapping all SR-01..14 requirements to executing test nodes. |
-| `handoffs/phase-01/wp-09-source-requiredness/test-results.txt` | Modified | R4: Recorded real commands, exit codes, benchmark timings, mutation failure, and scratch rollback proof. |
-| `handoffs/phase-01/wp-09-source-requiredness/handoff.md` | Modified | R4: Updated handoff report with R1–R4 disposition, rollback scopes, and platform status. |
+| `tests/test_source_requiredness.py` | Modified | R2/R3: 9-field text matrix, inert fresh import test, 4-sheet property permutations, 15k-row issue & retention verification. |
+| `handoffs/phase-01/wp-09-source-requiredness/acceptance-matrix.md` | Modified | R4: Updated acceptance matrix mapping all requirements to executing test nodes. |
+| `handoffs/phase-01/wp-09-source-requiredness/test-results.txt` | Modified | R4: Recorded real commands, exit codes, benchmark timings, both mutation checks, and scratch rollback proof. |
+| `handoffs/phase-01/wp-09-source-requiredness/handoff.md` | Modified | R4: Updated handoff report with R2–R4 disposition, rollback sequence, and platform status. |
 
 ## Schema and migrations
 
@@ -75,14 +75,14 @@ Address the four bounded correction items (R1 through R4) requested by Codex ind
 |---|---:|---|
 | `uv sync --frozen --all-packages --all-groups` | 0 | Verify frozen dependency lock synchronization (81 packages). |
 | `uv lock --check` | 0 | Verify lockfile integrity against pyproject.toml (88 packages). |
-| `uv run pytest tests/test_source_requiredness.py -v -s` | 0 | Run dedicated WP-09 unit, integration, and property suite (34 passed in 3.80s). |
+| `uv run pytest tests/test_source_requiredness.py -v -s` | 0 | Run dedicated WP-09 unit, integration, and property suite (45 passed in 3.69s). |
 | `uv run ruff format --check .` | 0 | Verify code formatting compliance across all 81 files. |
 | `uv run ruff check .` | 0 | Run ruff linter checks across all 81 files (0 warnings/errors). |
 | `uv run mypy .` | 0 | Static type safety check on Linux target across 30 source files (0 errors). |
 | `uv run mypy --platform win32 .` | 0 | Static type safety check on Win32 target across 30 source files (0 errors). |
-| `uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s` | 0 | WP-05 streaming reader benchmark: 11.02s / 61.65 MiB (< 15s / 128 MiB). |
-| `uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s` | 0 | WP-06 acquisition benchmark: 11.40s / 61.77 MiB (< 15s / 128 MiB). |
-| `uv run pytest -v -k "not test_bench"` | 0 | Full repository regression test suite: 382 passed, 2 skipped in 66.19s. |
+| `uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s` | 0 | WP-05 streaming reader benchmark: 10.68s / 61.94 MiB (< 15s / 128 MiB). |
+| `uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s` | 0 | WP-06 acquisition benchmark: 11.68s / 61.64 MiB (< 15s / 128 MiB). |
+| `uv run pytest -v -k "not test_bench"` | 0 | Full repository regression test suite: 393 passed, 2 skipped in 64.98s. |
 | `git diff --check d59e20accfa57cfc67de8a8ca6d31deba8a6d405...HEAD` | 0 | Verify zero whitespace errors against approved main baseline. |
 | `git ls-files \| grep -E "\.(env\|key\|pem\|pfx\|p12\|kdbx\|sqlite\|db)$" \|\| echo "CLEAN_EXIT_$?"` | 0 | Security audit scan for prohibited sensitive files (normalized exit 1 = 0 found). |
 | `git grep -n -i -E "(BEGIN PRIVATE KEY\|AKIA[0-9A-Z]{16}\|ghp_[0-9a-zA-Z]{36})" -- ':!handoffs/' \|\| echo "CLEAN_CODEBASE_EXIT_$?"` | 0 | Security audit scan for leaked private keys and tokens across codebase (normalized exit 1 = 0 found). |
@@ -90,19 +90,22 @@ Address the four bounded correction items (R1 through R4) requested by Codex ind
 
 ## Tests and evidence
 
-- **Full repository suite:** 382 tests passing cleanly on Linux native (2 platform-conditional skipped Windows-handle tests; 384 collected total, preserving all 350 baseline tests).
-- **WP-09 Unit & Property suite:** 34 dedicated tests passing in 3.80s in `tests/test_source_requiredness.py`.
-- **SR-13 Preflight Scale Benchmark:** 15,000 rows evaluated by `evaluate_source_requiredness` in **0.0396s** (linear O(N), fixture generation 2.9844s).
-- **Streaming Benchmarks (15,000 rows):** WP-05 Reader at 11.02s / 61.65 MiB peak RSS; WP-06 Acquisition at 11.40s / 61.77 MiB peak RSS (strictly within 15.0s / 128.0 MiB ceilings).
-- **Controlled Mutation Proof:** In-memory omission of `transaction_type_raw` caused 2 test failures in `test_sr02` (`assert True is False`), proving immediate failure detection.
+- **Full repository suite:** 393 tests passing cleanly on Linux native (2 platform-conditional skipped Windows-handle tests; 395 collected total, preserving all 350 baseline tests).
+- **WP-09 Unit & Property suite:** 45 dedicated tests passing in 3.69s in `tests/test_source_requiredness.py`.
+- **SR-13 Preflight Scale Benchmark:** 15,000 rows evaluated by `evaluate_source_requiredness` in **0.0349s** (linear single-pass O(N) complexity by code inspection, fixture generation 2.6894s). All 3,000 issues match independently expected ordered tuple `(sheet_name, UUID, field_name, reason)`. 100% row object, raw mapping, and source hash retention verified across all 15,000 rows.
+- **Streaming Benchmarks (15,000 rows):** WP-05 Reader at 10.68s / 61.94 MiB peak RSS; WP-06 Acquisition at 11.68s / 61.64 MiB peak RSS (strictly within 15.0s / 128.0 MiB ceilings).
+- **Controlled In-Memory Mutation Proof:**
+  - Omission of buy/sell `transaction_type_raw` failed `test_sr02_omission_of_transaction_type_raw_is_detected` with exit code 1 (`assert True is False`).
+  - Omission of receipts/payments blank `entry_type_raw` failed `test_sr03_omission_of_receipts_payments_blank_entry_type_is_detected` with exit code 1 (`assert True is False`).
 - **Platform Separation:**
-  - **Linux Local:** PASS (382 tests passed, 2 skipped on Linux native runtime).
+  - **Linux Local:** PASS (393 tests passed, 2 skipped on Linux native runtime).
   - **Windows Local:** NOT RUN (Linux host development environment; static type safety validated via `mypy --platform win32 .` with 0 errors in 30 source files).
   - **Windows CI:** PENDING automated GitHub Actions CI execution upon PR submission.
 
 ## Assumptions and open items
 
 - **Pure Evaluation Boundary:** `evaluate_source_requiredness` is a stateless, pure library function that performs no filesystem I/O, spawns no background threads, and accesses no clocks or random sources (verified via side-effect guard in SR-10).
+- **Fresh Module Import Purity:** Fresh import of `accounting_contracts.source_requiredness` executes completely inertly without application file writes, network calls, clock queries, UUID generations, or thread startups (verified via side-effect guard in SR-01).
 - **Preflight vs. Commit:** Passing requiredness preflight (`passes_requiredness=True`) indicates solely that essential required raw cells are present and non-blank. Full fiscal validation, entity resolution, financial balance, and transaction ownership must be verified in future packages before an import commit may proceed.
 
 ## Risks
@@ -120,23 +123,17 @@ To revert changes cleanly and safely:
    ```
    Ensure no uncommitted modifications exist.
 
-2. **Rollback by Explicit Scope:**
-
-   - **Scope 1: Revert Round 1 Code Correction (`f142de97aec65242be8994a6b8fd73537c1f0c12`):**
-     To revert solely the Round 1 product and test changes back to previous delivery HEAD `cea3cf67baa73ff50f4a5783689506f84d8ef40e`:
-     ```bash
-     git revert --no-edit f142de97aec65242be8994a6b8fd73537c1f0c12
-     ```
-     Verified on scratch branch `scratch/verify-rollback`: working tree matches `cea3cf67baa73ff50f4a5783689506f84d8ef40e` with 0 diff.
-
-   - **Scope 2: Full Rollback of WP-09 Back to Approved Baseline (`d59e20accfa57cfc67de8a8ca6d31deba8a6d405`):**
-     To completely back out all WP-09 code and documentation commits back to baseline `d59e20accfa57cfc67de8a8ca6d31deba8a6d405`:
-     ```bash
-     git revert --no-edit f142de97aec65242be8994a6b8fd73537c1f0c12
-     git revert --no-edit cea3cf67baa73ff50f4a5783689506f84d8ef40e
-     git revert --no-edit 46020d6f45a4af66cc52fe660829516c5c792c98
-     ```
-     Verified on scratch branch `scratch/verify-rollback`: working tree matches `d59e20accfa57cfc67de8a8ca6d31deba8a6d405` with 100% exact zero diff.
+2. **Complete Rollback Sequence from Tested Code Commit (`844421a0d4ffd6a7fb9a4d064084f469daf2ecc6`):**
+   In an isolated scratch branch or clean clone starting at `844421a0d4ffd6a7fb9a4d064084f469daf2ecc6`:
+   ```bash
+   git revert --no-edit 844421a0d4ffd6a7fb9a4d064084f469daf2ecc6
+   git revert --no-edit 528c313c57eba2ad8eb84296293fa9b8ef43484a
+   git revert --no-edit f142de97aec65242be8994a6b8fd73537c1f0c12
+   git revert --no-edit cea3cf67baa73ff50f4a5783689506f84d8ef40e
+   git revert --no-edit 46020d6f45a4af66cc52fe660829516c5c792c98
+   git diff --quiet d59e20accfa57cfc67de8a8ca6d31deba8a6d405
+   ```
+   Verified on scratch branch `scratch/verify-rollback`: working tree matches baseline `d59e20accfa57cfc67de8a8ca6d31deba8a6d405` with 100% exact zero diff (Exit code 0).
 
 ## Protected assets
 
@@ -148,4 +145,4 @@ To revert changes cleanly and safely:
 
 ## Stop state
 
-Implementation of Round 1 corrections (R1–R4), expanded test suites, property testing, benchmarks, static typing, verified scratch rollback, and handoff documentation for WP-09 are completed and stopped for independent Codex review. Gate G1 remains `OPEN / IN PROGRESS`. No Gate approval, merge, push, deploy, or next Work Package has been performed.
+Implementation of Round 2 corrections (R2–R4), expanded 9-field text matrix, inert fresh import test, 4-sheet property permutations, 15,000-row exact issue and retention verification, static typing, verified scratch rollback, and handoff documentation for WP-09 are completed and stopped for independent Codex review. Product code in `accounting_contracts` is confirmed 100% unchanged from `f142de97aec65242be8994a6b8fd73537c1f0c12`. Gate G1 remains `OPEN / IN PROGRESS`. No Gate approval, merge, push, deploy, or next Work Package has been performed.
