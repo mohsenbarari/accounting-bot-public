@@ -90,6 +90,60 @@ To guarantee strict memory bounding (< 128 MiB peak RSS) and fast linear runtime
    - Inactive rows (template, style-only, leftover date/ID) are omitted without creating identities or void events.
    - Active rows require a valid UUIDv7 in their designated technical ID column (`Z` for خرید-فروش, `P` for دریافت-پرداخت, `P` for ورود-خروج, `D` for لیست کسبه).
 
+## Source identity from the acquired workbook (WP-12)
+
+`read_identified_xlsx_source` implements
+[ADR-0015](../../docs/adr/ADR-0015-xlsx-source-identity.md). It acquires one WP-06
+snapshot, opens one ZIP inside the lease and reads both the source marker and
+WP-05 Raw from that object. It returns only after ZIP/member close, lease integrity
+checks and cleanup succeed. It does not invoke the binding resolver, Planner,
+requiredness/fiscal evaluators or runtime.
+
+The exact custom property `AccountingBot.SourceIdentity` contains an unlinked
+plain text value, for example this synthetic key:
+
+```text
+xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|1405
+```
+
+The marker is discovered through the unique internal package relationship; its
+filename is not assumed. Transitional/Strict namespace families are supported.
+The three metadata parts each have a 1,048,576-byte decompressed limit and secure
+XML parsing. Linked, ambiguous, malformed or missing markers are rejected;
+worksheet row limits and standalone WP-05 compatibility are unchanged.
+
+```python
+from pathlib import Path
+from accounting_local_agent import read_identified_xlsx_source
+
+# Inputs here must be generated synthetic workbooks for WP-12 validation.
+result = read_identified_xlsx_source(
+    Path("synthetic/source.xlsx"),
+    snapshot_root=Path("synthetic/leases"),
+    observation_interval_seconds=0.01,
+)
+key = result.key
+raw_snapshot = result.read_result.snapshot
+acquired_hash = result.file_sha256
+```
+
+`IdentifiedXlsxSource` retains the exact key/reader-result objects, byte digest and
+count; it holds no live path or lease. Its constructor validates representation
+only. Neither a manually constructed result nor a copied marker authenticates a
+workbook, registers a new annual source or authorizes import/commit.
+
+`XlsxSourceIdentityError` exposes an exact `XlsxSourceIdentityReason` and fixed
+`reason_code`; public messages contain no supplied marker/path/Raw. Acquisition
+and Raw errors retain their existing taxonomy. For example, a missing
+`[Content_Types].xml` can already fail acquisition as source-not-ready, before
+marker parsing starts. Independent read/close/lease failures remain in ordered
+exception groups, with `BaseExceptionGroup` for cancellation; diagnostic causes
+remain available and are not a promise of redacted tracebacks.
+
+WP-12 is read-only and uses synthetic fixtures. Marker writing/enrollment,
+real Excel Save/SaveAs/OneDrive retention, durable identity/revision state,
+runtime retry integration and rollover remain separate work. G1 remains open.
+
 ## Pre-commit and validation checks
 
 ```bash
