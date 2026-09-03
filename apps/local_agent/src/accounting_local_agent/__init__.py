@@ -38,6 +38,15 @@ from accounting_local_agent.xlsx_snapshot_acquisition import (
     XlsxSourcePolicyError,
     open_stable_xlsx_snapshot,
 )
+from accounting_local_agent.xlsx_source_identity import (
+    XLSX_SOURCE_IDENTITY_MAX_METADATA_BYTES,
+    XLSX_SOURCE_IDENTITY_PROPERTY_NAME,
+    XLSX_SOURCE_IDENTITY_VERSION,
+    IdentifiedXlsxSource,
+    XlsxSourceIdentityError,
+    XlsxSourceIdentityReason,
+    read_identified_xlsx_source,
+)
 from accounting_local_agent.xlsx_source_reader import (
     XLSX_SOURCE_READER_VERSION,
     SourceRowLocation,
@@ -55,6 +64,13 @@ from accounting_local_agent.xlsx_source_reader import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "XLSX_SOURCE_IDENTITY_MAX_METADATA_BYTES",
+    "XLSX_SOURCE_IDENTITY_PROPERTY_NAME",
+    "XLSX_SOURCE_IDENTITY_VERSION",
+    "IdentifiedXlsxSource",
+    "XlsxSourceIdentityError",
+    "XlsxSourceIdentityReason",
+    "read_identified_xlsx_source",
     "DEFAULT_COPY_CHUNK_SIZE",
     "SAVE_DEBOUNCE_NS",
     "SAVE_IMPORT_COORDINATOR_VERSION",
