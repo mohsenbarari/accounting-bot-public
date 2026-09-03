@@ -1,0 +1,827 @@
+WORK PACKAGE: WP-12 / xlsx-source-identity.v1
+PHASE: 1
+RECORDED AT UTC: 2026-09-03T10:45:38.940747+00:00
+BRANCH: codex/phase-01-xlsx-source-identity
+EXECUTION BASELINE: 82eb695658262bf092dedbe337fdd0eacebba9ba
+FINAL TESTED CODE: 8cb4fb408eeefe718ae0dcd96d41532021392b18
+INITIAL CODE / MUTATION EVIDENCE: 4e4d5e0ec54240d7dc9e1e50abd7887b5f4138e7
+DELIVERY: following documentation-only commit; actual SHA reported after creation.
+PLATFORM: native local Windows, Python 3.13.15. Linux local NOT RUN; native PR CI PENDING.
+ENVIRONMENT: frozen isolated .venv; PYTEST_DEBUG_TEMPROOT points to workspace tmp;
+UV_CACHE_DIR and UV_PYTHON select the previously installed pinned local runtime.
+Original combined stdout/stderr bytes and exact argv are retained in the local
+work/reviews/wp12-implementation-20260903 evidence directory. Captured output below
+normalizes line endings and removes trailing whitespace for Git; no substantive
+output is replaced. SHA-256 entries refer to the original bytes. The full node
+index includes baseline synthetic XML parameter values; only the 148 new nodes
+are reproduced as an explicitly derived index below, not as full raw output.
+
+CHECK: sync
+COMMAND: uv sync --frozen --all-packages --all-groups
+RECORDED AT UTC: 2026-09-03T10:40:57.273577+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: de1040c2ebd2100cd58535dbbc383ab18d7f6eb84e6042e48b20461268ed45a6
+CAPTURED OUTPUT:
+Checked 85 packages in 7ms
+
+CHECK: lock
+COMMAND: uv lock --check
+RECORDED AT UTC: 2026-09-03T10:40:57.307124+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 25accce011ab42e093b14ff9d81b04ea809fc961a05520d0def2157df1f11319
+CAPTURED OUTPUT:
+Resolved 88 packages in 1ms
+
+CHECK: format
+COMMAND: uv run ruff format --check .
+RECORDED AT UTC: 2026-09-03T10:38:18.587890+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: e540c8427c224fd685bda71cb704448f5f98f01496a5ad22e5c656a56a0955ae
+CAPTURED OUTPUT:
+107 files already formatted
+
+CHECK: lint
+COMMAND: uv run ruff check .
+RECORDED AT UTC: 2026-09-03T10:38:18.663428+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+CAPTURED OUTPUT:
+All checks passed!
+
+CHECK: mypy
+COMMAND: uv run mypy .
+RECORDED AT UTC: 2026-09-03T10:38:19.095404+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: e3d016cf2c893ddbe69030325a8cdd808664c7592d6c2402a28c264361fefb86
+CAPTURED OUTPUT:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 43 source files
+
+CHECK: mypy-win32
+COMMAND: uv run mypy --platform win32 .
+RECORDED AT UTC: 2026-09-03T10:38:19.508204+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: e3d016cf2c893ddbe69030325a8cdd808664c7592d6c2402a28c264361fefb86
+CAPTURED OUTPUT:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 43 source files
+
+CHECK: dedicated
+COMMAND: uv run pytest tests/test_xlsx_source_identity.py tests/test_xlsx_source_identity_lifecycle.py -v
+RECORDED AT UTC: 2026-09-03T10:38:35.027534+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 4b7298d8e054db48e31ccd407c10c07b6bee061e0d7fd84ad921e16364ba8b7d
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 148 items
+
+tests\test_xlsx_source_identity.py ..................................... [ 25%]
+........................................................................ [ 73%]
+..                                                                       [ 75%]
+tests\test_xlsx_source_identity_lifecycle.py ........................... [ 93%]
+..........                                                               [100%]
+
+============================ 148 passed in 14.95s =============================
+
+CHECK: collect
+COMMAND: uv run pytest --collect-only -q
+RECORDED AT UTC: 2026-09-03T10:38:36.054598+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 4d3f0d2fab2d706a7a55fb4134ed5ffcf5b747749e9da8f920eefd0af1d79d05
+CAPTURED OUTPUT:
+tests/test_architecture_guard.py: 14
+tests/test_canonical_date.py: 10
+tests/test_canonical_hashing.py: 18
+tests/test_imports.py: 7
+tests/test_raw_input_contracts.py: 15
+tests/test_save_import_coordinator.py: 40
+tests/test_source_binding.py: 71
+tests/test_source_change_plan.py: 25
+tests/test_source_fiscal_evidence.py: 56
+tests/test_source_requiredness.py: 53
+tests/test_source_watch_runtime.py: 33
+tests/test_source_watch_runtime_native.py: 3
+tests/test_xlsx_snapshot_acquisition.py: 74
+tests/test_xlsx_source_identity.py: 111
+tests/test_xlsx_source_identity_lifecycle.py: 37
+tests/test_xlsx_source_reader.py: 45
+tests/test_xlsx_source_reader_raw_contract_regressions.py: 7
+tests/test_xlsx_source_reader_sst_activity_regressions.py: 59
+
+CHECK: full
+COMMAND: uv run pytest -v
+RECORDED AT UTC: 2026-09-03T10:39:50.207668+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: d9c145b8f1e31568d7d21877ce1075b51f0e60948a9c3241b7f85eebfaa8e163
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 678 items
+
+tests\test_architecture_guard.py ..............                          [  2%]
+tests\test_canonical_date.py ..........                                  [  3%]
+tests\test_canonical_hashing.py ..................                       [  6%]
+tests\test_imports.py .......                                            [  7%]
+tests\test_raw_input_contracts.py ...............                        [  9%]
+tests\test_save_import_coordinator.py .................................. [ 14%]
+......                                                                   [ 15%]
+tests\test_source_binding.py ........................................... [ 21%]
+............................                                             [ 25%]
+tests\test_source_change_plan.py .........................               [ 29%]
+tests\test_source_fiscal_evidence.py ................................... [ 34%]
+.....................                                                    [ 37%]
+tests\test_source_requiredness.py ...................................... [ 43%]
+...............                                                          [ 45%]
+tests\test_source_watch_runtime.py .................................     [ 50%]
+tests\test_source_watch_runtime_native.py ...                            [ 50%]
+tests\test_xlsx_snapshot_acquisition.py ......s..............s....s...s. [ 55%]
+..s.......
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 2.8372s | baseline_current_rss_mib: 30.07 MiB | call_peak_rss_mib: 61.20 MiB | rows: 15000 | file_bytes: 549787 | file_sha: f60f65a4502b267316a5e190ea487859085fd23364c4625b0006f882f2926aea | platform: win32
+................................                               [ 61%]
+tests\test_xlsx_source_identity.py ..................................... [ 67%]
+........................................................................ [ 77%]
+..                                                                       [ 78%]
+tests\test_xlsx_source_identity_lifecycle.py ........................... [ 82%]
+..........                                                               [ 83%]
+tests\test_xlsx_source_reader.py ......................................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 2.8119s | baseline_current_rss_mib: 30.20 MiB | call_peak_rss_mib: 61.68 MiB | rows: 15000 | platform: win32
+. [ 89%]
+......                                                                   [ 90%]
+tests\test_xlsx_source_reader_raw_contract_regressions.py .......        [ 91%]
+tests\test_xlsx_source_reader_sst_activity_regressions.py .............. [ 93%]
+.............................................                            [100%]
+
+=========================== short test summary info ===========================
+SKIPPED [4] tests\test_xlsx_snapshot_acquisition.py:134: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+SKIPPED [1] tests\test_xlsx_snapshot_acquisition.py:1174: POSIX permission check only applicable on POSIX
+================== 673 passed, 5 skipped in 72.65s (0:01:12) ==================
+
+CHECK: benchmark-xi14
+COMMAND: uv run pytest tests/test_xlsx_source_identity.py::test_xi14_combined_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T10:39:56.453089+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 2fb799f6e1d5e3b9773215791dbca3205918e6f69fd3606898c96a66c08c89d4
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_source_identity.py {"fixture_seconds": 2.0942757999291644, "peak_rss_mib": 82.3046875, "rows": 15000, "seconds": 2.6683120999950916}
+.
+
+============================== 1 passed in 5.68s ==============================
+
+CHECK: benchmark-xr12
+COMMAND: uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T10:40:03.511366+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 46ce8ccbe497855f63832f11213782ff29c4516a18c19ae3113806381c1218b4
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_source_reader.py
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 2.8061s | baseline_current_rss_mib: 30.15 MiB | call_peak_rss_mib: 59.36 MiB | rows: 15000 | platform: win32
+.
+
+============================== 1 passed in 6.51s ==============================
+
+CHECK: benchmark-sa14
+COMMAND: uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T10:40:11.821045+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: fc1bee63df2fa7c9975cc3499771826d2321bbd02334ebc92ad9e2f622a9c87c
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_snapshot_acquisition.py
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 2.9449s | baseline_current_rss_mib: 30.03 MiB | call_peak_rss_mib: 59.04 MiB | rows: 15000 | file_bytes: 549787 | file_sha: d3329f9c2a2816f28ef0246773e09f6c82cd993ea6d87c09aa7547d2baf3891e | platform: win32
+.
+
+============================== 1 passed in 7.75s ==============================
+
+CHECK: derived new-node index
+COMMAND: uv run pytest --collect-only -q -o addopts=
+EXIT CODE: 0
+ORIGINAL FULL NODE LOG SHA256: 4a10486feeb2b7c931a56cb2863fe42f2659cd7fa836f8ae678d27a0dc2c10de
+DERIVED OUTPUT (148 new nodes; 530 baseline nodes retained):
+tests/test_xlsx_source_identity.py::test_xi01_exports_signature_and_guarded_fresh_import
+tests/test_xlsx_source_identity.py::test_xi02_literal_valid_marker_and_raw[utf-8-transitional]
+tests/test_xlsx_source_identity.py::test_xi02_literal_valid_marker_and_raw[utf-8-strict]
+tests/test_xlsx_source_identity.py::test_xi02_literal_valid_marker_and_raw[utf-16-transitional]
+tests/test_xlsx_source_identity.py::test_xi02_literal_valid_marker_and_raw[utf-16-strict]
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[no-relation]
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[orphan]
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[no-property]
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[empty]
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[undated]
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[mixed]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[relationships]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[external-duplicate]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[invalid-duplicate]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[relation-id]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[properties]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[case-property]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[numeric-pid]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[override]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[zip-duplicate]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[rels-alias]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[types-alias]
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[property-alias]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v2|00000000-0000-7000-8000-0000000003e7|1405]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1/00000000-0000-7000-8000-0000000003e7|1405]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|1405|x]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003E7|1405]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-4000-8000-0000000003e7|1405]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-c000-0000000003e7|1405]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-0000-0000000003e7|1405]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|\u06f1\u06f4\u06f0\u06f5]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[ xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|1405]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|1405\n]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|0000]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|9378]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|-001]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|14050]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-_x0069_dentity.v1|00000000-0000-7000-8000-0000000003e7|1405]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-000000000ggg|1405]
+tests/test_xlsx_source_identity.py::test_xi05_declared_year_boundaries[1]
+tests/test_xlsx_source_identity.py::test_xi05_declared_year_boundaries[1404]
+tests/test_xlsx_source_identity.py::test_xi05_declared_year_boundaries[1405]
+tests/test_xlsx_source_identity.py::test_xi05_declared_year_boundaries[9377]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[name-case]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[fmtid]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-absent]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-zero]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-negative]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-large]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-long]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[name-empty]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[type]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[value-namespace]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[root-namespace]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[family-mismatch]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[nested]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[alternate]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[link]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[empty-link]
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[wrapper]
+tests/test_xlsx_source_identity.py::test_xi05_unrelated_values_links_and_comments_ignored
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[https://example.invalid/a]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[../custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/../custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[//docProps/custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps//custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/custom.xml/]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/./custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps\\custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/%63ustom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/custom.xml?q]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/custom.xml#f]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[]
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[missing.xml]
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[external]
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[target-mode-case]
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[missing-override]
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[wrong-type]
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[override-case]
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[missing-member]
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[missing-rels]
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[missing-types]
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-8-_rels/.rels]
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-8-[Content_Types].xml]
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-8-docProps/custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-16-_rels/.rels]
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-16-[Content_Types].xml]
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-16-docProps/custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[-1-_rels/.rels]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[-1-[Content_Types].xml]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[-1-docProps/custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[0-_rels/.rels]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[0-[Content_Types].xml]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[0-docProps/custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[1-_rels/.rels]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[1-[Content_Types].xml]
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[1-docProps/custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_actual_decompression_is_bounded[_rels/.rels]
+tests/test_xlsx_source_identity.py::test_xi06_actual_decompression_is_bounded[[Content_Types].xml]
+tests/test_xlsx_source_identity.py::test_xi06_actual_decompression_is_bounded[docProps/custom.xml]
+tests/test_xlsx_source_identity.py::test_xi06_malformed_xml_has_fixed_private_error[_rels/.rels]
+tests/test_xlsx_source_identity.py::test_xi06_malformed_xml_has_fixed_private_error[[Content_Types].xml]
+tests/test_xlsx_source_identity.py::test_xi06_malformed_xml_has_fixed_private_error[docProps/custom.xml]
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[invalid_input0]
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[SYNTHETIC-SECRET]
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[invalid_input1]
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[None]
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[1]
+tests/test_xlsx_source_identity.py::test_xi12_result_invariants_and_private_repr
+tests/test_xlsx_source_identity.py::test_xi13_independent_marker_property_oracle
+tests/test_xlsx_source_identity.py::test_xi14_combined_15000_row_benchmark
+tests/test_xlsx_source_identity_lifecycle.py::test_xi07_one_leased_zip_keeps_generation_a_when_live_path_becomes_b
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_lease_mutation_never_returns[tamper-between-marker-and-raw]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_lease_mutation_never_returns[tamper-after-parsing]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_lease_mutation_never_returns[replace-between-marker-and-raw]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_lease_mutation_never_returns[replace-after-parsing]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_delivery_waits_for_exit_ack[zip-close]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_delivery_waits_for_exit_ack[lease-exit]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-acquisition]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-identity]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-raw]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-zip-open]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-zip-close]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-acquisition]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-identity]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-raw]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-zip-open]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-zip-close]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_zip_failures_have_fixed_typed_wrappers[io-open]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_zip_failures_have_fixed_typed_wrappers[io-close]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_zip_failures_have_fixed_typed_wrappers[corrupt-open]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_zip_failures_have_fixed_typed_wrappers[corrupt-close]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_independent_read_close_integrity_cleanup_failures[False]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_independent_read_close_integrity_cleanup_failures[True]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_member_read_and_close_preserve_both_errors
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[False-_rels/.rels]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[False-[Content_Types].xml]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[False-docProps/custom.xml]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[True-_rels/.rels]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[True-[Content_Types].xml]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[True-docProps/custom.xml]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_cleanup_failure_alone_prevents_success
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_raw_member_retains_package_taxonomy[crc]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_raw_member_retains_package_taxonomy[local-header]
+tests/test_xlsx_source_identity_lifecycle.py::test_xi10_raw_invariance_and_one_edit_with_planner_oracle
+tests/test_xlsx_source_identity_lifecycle.py::test_xi11_explicit_binding_requiredness_fiscal_and_planner_composition
+tests/test_xlsx_source_identity_lifecycle.py::test_xi15_delegated_policy_and_missing_source
+tests/test_xlsx_source_identity_lifecycle.py::test_xi15_source_read_only_and_forbidden_downstream_guard
+
+CHECK: mutation
+COMMAND: python ../mutation_probe.py
+EXIT CODE: 1 (EXPECTED ASSERTION REJECTION on initial code SHA; actual parser/oracle unchanged by correction)
+ORIGINAL LOG SHA256: ce3b1fb26c1c4e15fc120667948855e4631073fc1af3965298a42388851ab142
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 1 item
+
+tests/test_xlsx_source_identity.py::test_xi13_independent_marker_property_oracle FAILED [100%]
+
+================================== FAILURES ===================================
+________________ test_xi13_independent_marker_property_oracle _________________
+tests\test_xlsx_source_identity.py:663: in test_xi13_independent_marker_property_oracle
+    max_examples=30,
+               ^^^^^^
+tests\test_xlsx_source_identity.py:703: in test_xi13_independent_marker_property_oracle
+    assert first.key == key
+E   AssertionError: assert SourceBindingKey(source_id=UUID('00000000-0000-7000-8000-0000000003e7'), fiscal_year=1405) == SourceBindingKey(source_id=UUID('00000000-0000-7000-8000-000000000001'), fiscal_year=1)
+E
+E     Differing attributes:
+E     ['source_id', 'fiscal_year']
+E
+E     Drill down into differing attribute source_id:
+E       source_id: UUID('00000000-0000-7000-8000-0000000003e7') != UUID('00000000-0000-7000-8000-000000000001')
+E
+E     Drill down into differing attribute fiscal_year:
+E       fiscal_year: 1405 != 1
+E   Failing test case: test_xi13_independent_marker_property_oracle(
+E       # The test always failed when commented parts were varied together.
+E       tmp_path=WindowsPath('C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp12-implementation-20260903/tmp/pytest-of-mmcha/pytest-5/test_xi13_independent_marker_p0'),
+E       strict=False,  # or any other generated value
+E       reverse=False,  # or any other generated value
+E       index=1,  # or any other generated value
+E       year=1,  # or any other generated value
+E       part='docProps/custom.xml',  # or any other generated value
+E       prefix='p',  # or any other generated value
+E   )
+=========================== short test summary info ===========================
+FAILED tests/test_xlsx_source_identity.py::test_xi13_independent_marker_property_oracle - AssertionError: assert SourceBindingKey(source_id=UUID('00000000-0000-7000-8000-0000000003e7'), fiscal_year=1405) == SourceBindingKey(source_id=UUID('00000000-0000-7000-8000-000000000001'), fiscal_year=1)
+
+  Differing attributes:
+  ['source_id', 'fiscal_year']
+
+  Drill down into differing attribute source_id:
+    source_id: UUID('00000000-0000-7000-8000-0000000003e7') != UUID('00000000-0000-7000-8000-000000000001')
+
+  Drill down into differing attribute fiscal_year:
+    fiscal_year: 1405 != 1
+Failing test case: test_xi13_independent_marker_property_oracle(
+    # The test always failed when commented parts were varied together.
+    tmp_path=WindowsPath('C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp12-implementation-20260903/tmp/pytest-of-mmcha/pytest-5/test_xi13_independent_marker_p0'),
+    strict=False,  # or any other generated value
+    reverse=False,  # or any other generated value
+    index=1,  # or any other generated value
+    year=1,  # or any other generated value
+    part='docProps/custom.xml',  # or any other generated value
+    prefix='p',  # or any other generated value
+)
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+============================= 1 failed in 21.79s ==============================
+
+CHECK: rollback
+COMMAND: python ../verify_final_rollback.py
+EXIT CODE: 0 (each executed Git command and status follows)
+ORIGINAL LOG SHA256: 1e6ee6921239f40d02f1444f62efcce43ea5ca6a9ea48a3f1afbac71565b41f3
+CAPTURED OUTPUT:
+cwd: wp12-implementation-20260903
+$ git clone --no-hardlinks --single-branch --branch codex/phase-01-xlsx-source-identity C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\rollback-final-checkout
+Cloning into 'C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\rollback-final-checkout'...
+done.
+
+EXIT: 0
+
+cwd: rollback-final-checkout
+$ git rev-parse HEAD
+8cb4fb408eeefe718ae0dcd96d41532021392b18
+
+EXIT: 0
+
+cwd: rollback-final-checkout
+$ git status --porcelain
+
+EXIT: 0
+
+cwd: rollback-final-checkout
+$ git switch -c scratch/wp12-final-rollback
+Switched to a new branch 'scratch/wp12-final-rollback'
+
+EXIT: 0
+
+cwd: rollback-final-checkout
+$ git revert --no-commit 8cb4fb408eeefe718ae0dcd96d41532021392b18 4e4d5e0ec54240d7dc9e1e50abd7887b5f4138e7
+
+EXIT: 0
+
+cwd: rollback-final-checkout
+$ git diff --quiet 82eb695658262bf092dedbe337fdd0eacebba9ba
+
+EXIT: 0
+
+cwd: rollback-final-checkout
+$ git diff --cached --quiet 82eb695658262bf092dedbe337fdd0eacebba9ba
+
+EXIT: 0
+
+cwd: checkout
+$ git rev-parse HEAD
+8cb4fb408eeefe718ae0dcd96d41532021392b18
+
+EXIT: 0
+
+cwd: checkout
+$ git status --porcelain
+
+EXIT: 0
+
+CHECK: code-scan
+COMMAND: python ../scan_implementation.py
+EXIT CODE: 0
+ORIGINAL LOG SHA256: ccf63cac1a0648783a2dbad19fa63b58b0e609fb94c5da72f5b39788d2fc2c40
+CAPTURED OUTPUT:
+{"branch_blobs_scanned": 11, "finding_count": 0, "findings": [], "head": "8cb4fb408eeefe718ae0dcd96d41532021392b18", "tracked_files": 144}
+
+CHECK: scope
+COMMAND: python ../verify_delivery.py
+EXIT CODE: 0 (pre-packaging code verification)
+ORIGINAL LOG SHA256: cb5277529cb8bacae2db6ddb5fb43f75fa4199a26939cb502af946955c30fd1b
+CAPTURED OUTPUT:
+{
+  "baseline": "82eb695658262bf092dedbe337fdd0eacebba9ba",
+  "tested_code_sha": "8cb4fb408eeefe718ae0dcd96d41532021392b18",
+  "delivery_head": "8cb4fb408eeefe718ae0dcd96d41532021392b18",
+  "changed_files": [
+    "apps/local_agent/README.md",
+    "apps/local_agent/src/accounting_local_agent/__init__.py",
+    "apps/local_agent/src/accounting_local_agent/xlsx_source_identity.py",
+    "tests/test_xlsx_source_identity.py",
+    "tests/test_xlsx_source_identity_lifecycle.py",
+    "tests/xlsx_source_identity_benchmark.py",
+    "tests/xlsx_source_identity_fixtures.py",
+    "tests/xlsx_source_identity_import_probe.py"
+  ],
+  "baseline_nodes_retained": 530,
+  "added_nodes": 148,
+  "total_nodes": 678,
+  "windows_local": "673 passed, 5 skipped; four symlink privilege skips and one POSIX skip",
+  "linux_local": "NOT RUN; no Linux execution host used",
+  "windows_linux_ci": "PENDING publication and PR",
+  "raw_log_sha256": {
+    "format.log": "e540c8427c224fd685bda71cb704448f5f98f01496a5ad22e5c656a56a0955ae",
+    "lint.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "mypy.log": "e3d016cf2c893ddbe69030325a8cdd808664c7592d6c2402a28c264361fefb86",
+    "mypy-win32.log": "e3d016cf2c893ddbe69030325a8cdd808664c7592d6c2402a28c264361fefb86",
+    "dedicated.log": "4b7298d8e054db48e31ccd407c10c07b6bee061e0d7fd84ad921e16364ba8b7d",
+    "sync.log": "de1040c2ebd2100cd58535dbbc383ab18d7f6eb84e6042e48b20461268ed45a6",
+    "lock.log": "25accce011ab42e093b14ff9d81b04ea809fc961a05520d0def2157df1f11319",
+    "collect.log": "4d3f0d2fab2d706a7a55fb4134ed5ffcf5b747749e9da8f920eefd0af1d79d05",
+    "nodes.log": "4a10486feeb2b7c931a56cb2863fe42f2659cd7fa836f8ae678d27a0dc2c10de",
+    "full.log": "d9c145b8f1e31568d7d21877ce1075b51f0e60948a9c3241b7f85eebfaa8e163",
+    "benchmark-xi14.log": "2fb799f6e1d5e3b9773215791dbca3205918e6f69fd3606898c96a66c08c89d4",
+    "benchmark-xr12.log": "46ce8ccbe497855f63832f11213782ff29c4516a18c19ae3113806381c1218b4",
+    "benchmark-sa14.log": "fc1bee63df2fa7c9975cc3499771826d2321bbd02334ebc92ad9e2f622a9c87c"
+  },
+  "mutation": "Runtime constant-key parser mutation rejected by independent expected-key assertion; no mutation committed",
+  "rollback": "Fixed code SHA inverse in isolated checkout exactly equals baseline",
+  "gate_g1": "OPEN / IN PROGRESS",
+  "result": "PASS"
+}
+
+CHECK: independent-review
+COMMAND: Independent non-author commands recorded below
+EXIT CODE: 0
+ORIGINAL LOG SHA256: d7b89b4828477d801d72084b110c7cb523cd24daf970a6881ab4a936e1c16900
+CAPTURED OUTPUT:
+WP-12 independent review: 2026-09-03T10:40:36.512245+00:00
+CWD: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout
+PYTEST_DEBUG_TEMPROOT: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\tmp-review
+TEMP/TMP: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\tmp-review\os-temp
+PYTHONDONTWRITEBYTECODE=1; CI/GITHUB_ACTIONS unset; Hypothesis storage under tmp-review.
+
+CHECK: identity
+COMMAND: git rev-parse HEAD 8cb4fb408eeefe718ae0dcd96d41532021392b18 82eb695658262bf092dedbe337fdd0eacebba9ba
+EXIT_CODE: 0
+OUTPUT:
+8cb4fb408eeefe718ae0dcd96d41532021392b18
+8cb4fb408eeefe718ae0dcd96d41532021392b18
+82eb695658262bf092dedbe337fdd0eacebba9ba
+
+
+CHECK: dedicated
+COMMAND: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout\.venv\Scripts\python.exe -m pytest tests/test_xlsx_source_identity.py tests/test_xlsx_source_identity_lifecycle.py -v -s -o addopts= -o cache_dir=C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\tmp-review\pytest-cache
+EXIT_CODE: 0
+OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout\.venv\Scripts\python.exe
+cachedir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\tmp-review\pytest-cache
+hypothesis profile 'default'
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 148 items
+
+tests/test_xlsx_source_identity.py::test_xi01_exports_signature_and_guarded_fresh_import PASSED
+tests/test_xlsx_source_identity.py::test_xi02_literal_valid_marker_and_raw[utf-8-transitional] PASSED
+tests/test_xlsx_source_identity.py::test_xi02_literal_valid_marker_and_raw[utf-8-strict] PASSED
+tests/test_xlsx_source_identity.py::test_xi02_literal_valid_marker_and_raw[utf-16-transitional] PASSED
+tests/test_xlsx_source_identity.py::test_xi02_literal_valid_marker_and_raw[utf-16-strict] PASSED
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[no-relation] PASSED
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[orphan] PASSED
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[no-property] PASSED
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[empty] PASSED
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[undated] PASSED
+tests/test_xlsx_source_identity.py::test_xi03_missing_marker_never_guesses[mixed] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[relationships] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[external-duplicate] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[invalid-duplicate] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[relation-id] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[properties] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[case-property] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[numeric-pid] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[override] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[zip-duplicate] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[rels-alias] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[types-alias] PASSED
+tests/test_xlsx_source_identity.py::test_xi04_duplicate_candidates[property-alias] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v2|00000000-0000-7000-8000-0000000003e7|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1/00000000-0000-7000-8000-0000000003e7|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|1405|x] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003E7|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-4000-8000-0000000003e7|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-c000-0000000003e7|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-0000-0000000003e7|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|\u06f1\u06f4\u06f0\u06f5] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[ xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|1405\n] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|0000] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|9378] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|-001] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-0000000003e7|14050] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-_x0069_dentity.v1|00000000-0000-7000-8000-0000000003e7|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_wire_values[xlsx-source-identity.v1|00000000-0000-7000-8000-000000000ggg|1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_declared_year_boundaries[1] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_declared_year_boundaries[1404] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_declared_year_boundaries[1405] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_declared_year_boundaries[9377] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[name-case] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[fmtid] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-absent] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-zero] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-negative] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-large] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[pid-long] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[name-empty] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[type] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[value-namespace] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[root-namespace] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[family-mismatch] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[nested] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[alternate] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[link] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[empty-link] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_invalid_property_profile[wrapper] PASSED
+tests/test_xlsx_source_identity.py::test_xi05_unrelated_values_links_and_comments_ignored PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[https://example.invalid/a] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[../custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/../custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[//docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps//custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/custom.xml/] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/./custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps\\custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/%63ustom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/custom.xml?q] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[docProps/custom.xml#f] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_invalid_targets[missing.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[external] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[target-mode-case] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[missing-override] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[wrong-type] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[override-case] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[missing-member] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[missing-rels] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_package_profile[missing-types] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-8-_rels/.rels] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-8-[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-8-docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-16-_rels/.rels] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-16-[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_unsafe_xml_rejected[utf-16-docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[-1-_rels/.rels] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[-1-[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[-1-docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[0-_rels/.rels] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[0-[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[0-docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[1-_rels/.rels] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[1-[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_metadata_size_boundary[1-docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_actual_decompression_is_bounded[_rels/.rels] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_actual_decompression_is_bounded[[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_actual_decompression_is_bounded[docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_malformed_xml_has_fixed_private_error[_rels/.rels] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_malformed_xml_has_fixed_private_error[[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi06_malformed_xml_has_fixed_private_error[docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[invalid_input0] PASSED
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[SYNTHETIC-SECRET] PASSED
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[invalid_input1] PASSED
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[None] PASSED
+tests/test_xlsx_source_identity.py::test_xi12_error_enum_is_exact_and_sanitized[1] PASSED
+tests/test_xlsx_source_identity.py::test_xi12_result_invariants_and_private_repr PASSED
+tests/test_xlsx_source_identity.py::test_xi13_independent_marker_property_oracle PASSED
+tests/test_xlsx_source_identity.py::test_xi14_combined_15000_row_benchmark {"fixture_seconds": 2.0824148999527097, "peak_rss_mib": 83.18359375, "rows": 15000, "seconds": 2.639666000031866}
+PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi07_one_leased_zip_keeps_generation_a_when_live_path_becomes_b PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_lease_mutation_never_returns[tamper-between-marker-and-raw] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_lease_mutation_never_returns[tamper-after-parsing] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_lease_mutation_never_returns[replace-between-marker-and-raw] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_lease_mutation_never_returns[replace-after-parsing] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_delivery_waits_for_exit_ack[zip-close] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi08_delivery_waits_for_exit_ack[lease-exit] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-acquisition] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-identity] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-raw] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-zip-open] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[False-zip-close] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-acquisition] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-identity] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-raw] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-zip-open] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_single_failure_identity_and_cause[True-zip-close] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_zip_failures_have_fixed_typed_wrappers[io-open] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_zip_failures_have_fixed_typed_wrappers[io-close] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_zip_failures_have_fixed_typed_wrappers[corrupt-open] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_zip_failures_have_fixed_typed_wrappers[corrupt-close] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_independent_read_close_integrity_cleanup_failures[False] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_independent_read_close_integrity_cleanup_failures[True] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_member_read_and_close_preserve_both_errors PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[False-_rels/.rels] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[False-[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[False-docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[True-_rels/.rels] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[True-[Content_Types].xml] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_deflate_metadata_is_typed[True-docProps/custom.xml] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_cleanup_failure_alone_prevents_success PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_raw_member_retains_package_taxonomy[crc] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi09_corrupt_raw_member_retains_package_taxonomy[local-header] PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi10_raw_invariance_and_one_edit_with_planner_oracle PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi11_explicit_binding_requiredness_fiscal_and_planner_composition PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi15_delegated_policy_and_missing_source PASSED
+tests/test_xlsx_source_identity_lifecycle.py::test_xi15_source_read_only_and_forbidden_downstream_guard PASSED
+
+============================ 148 passed in 11.87s =============================
+
+
+CHECK: deflate-independent-probe
+COMMAND: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\checkout\.venv\Scripts\python.exe C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp12-implementation-20260903\independent_deflate_probe.py
+EXIT_CODE: 0
+OUTPUT:
+{
+  "scratch": "C:\\Users\\mmcha\\OneDrive\\Documents\\ChatGPT\\accounting_bot\\work\\reviews\\wp12-implementation-20260903\\review-corrupt-deflate-cary7plj",
+  "results": [
+    {
+      "member": "_rels/.rels",
+      "exception_type": "accounting_local_agent.xlsx_source_reader.XlsxPackageError",
+      "message": "XLSX read error: XLSX_PACKAGE_CORRUPT_ZIP",
+      "reason": "XLSX_PACKAGE_CORRUPT_ZIP",
+      "cause_type": "zlib.error",
+      "leases_clean": true,
+      "source_unchanged": true
+    },
+    {
+      "member": "[Content_Types].xml",
+      "exception_type": "accounting_local_agent.xlsx_source_reader.XlsxPackageError",
+      "message": "XLSX read error: XLSX_PACKAGE_CORRUPT_ZIP",
+      "reason": "XLSX_PACKAGE_CORRUPT_ZIP",
+      "cause_type": "zlib.error",
+      "leases_clean": true,
+      "source_unchanged": true
+    },
+    {
+      "member": "docProps/custom.xml",
+      "exception_type": "accounting_local_agent.xlsx_source_reader.XlsxPackageError",
+      "message": "XLSX read error: XLSX_PACKAGE_CORRUPT_ZIP",
+      "reason": "XLSX_PACKAGE_CORRUPT_ZIP",
+      "cause_type": "zlib.error",
+      "leases_clean": true,
+      "source_unchanged": true
+    }
+  ]
+}
+
+
+CHECK: scope
+COMMAND: git diff --exit-code 82eb695658262bf092dedbe337fdd0eacebba9ba..8cb4fb408eeefe718ae0dcd96d41532021392b18 -- tests :!tests/test_xlsx_source_identity.py :!tests/test_xlsx_source_identity_lifecycle.py :!tests/xlsx_source_identity_benchmark.py :!tests/xlsx_source_identity_fixtures.py :!tests/xlsx_source_identity_import_probe.py ROADMAP.md docs .agents .github packages uv.lock pyproject.toml
+EXIT_CODE: 0
+OUTPUT:
+
+
+CHECK: whitespace
+COMMAND: git diff --check 82eb695658262bf092dedbe337fdd0eacebba9ba...HEAD
+EXIT_CODE: 0
+OUTPUT:
+
+
+CHECK: status
+COMMAND: git status --short
+EXIT_CODE: 0
+OUTPUT:
+warning: unable to access 'C:\Users\mmcha/.config/git/ignore': Permission denied
+warning: unable to access 'C:\Users\mmcha/.config/git/ignore': Permission denied
+
+CHECK: whitespace
+COMMAND: git diff --check 82eb695658262bf092dedbe337fdd0eacebba9ba...HEAD
+EXIT CODE: 0
+CAPTURED OUTPUT: empty
+
+FINAL SUMMARY
+Final tested code 8cb4fb408eeefe718ae0dcd96d41532021392b18:
+148 dedicated tests passed in 14.95s. All 530 baseline nodes remain unchanged;
+678 total collected; 673 passed and 5 skipped in 72.65s. Four local symlink
+privilege skips and one POSIX-only skip are disclosed, not counted as passes.
+Ruff format/lint and both full mypy commands passed. No thread warning was emitted.
+XI-14: 2.668312s / 82.304688 MiB; fixture 2.094276s separate.
+WP-05: 2.8061s / 59.36 MiB. WP-06: 2.9449s / 59.04 MiB.
+Non-author independent dedicated run: 148 passed in 11.87s; R1/R2 closed.
+Native Linux local NOT RUN; Linux/Windows PR CI PENDING; final Handoff review PENDING.
+Fixed two-code-commit inverse matched baseline in both index and working tree.
+No protected real assets, baseline tests, dependencies, CI or authority files changed.
+No publication, merge, deployment or next package performed by this implementation.
+G1 remains OPEN / IN PROGRESS.
+
+CHECK: handoff
+COMMAND: python .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-12-xlsx-source-identity
+RECORDED AT UTC: 2026-09-03T10:45:39.193238+00:00
+EXIT CODE: 0
+CAPTURED OUTPUT:
+Handoff validation passed.
