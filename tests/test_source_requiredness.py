@@ -20,11 +20,10 @@ Covers acceptance criteria SR-01 through SR-14 under ADR-0012:
 from __future__ import annotations
 
 import builtins
-import importlib
 import inspect
 import socket
+import subprocess
 import sys
-import threading
 import time
 import uuid
 from dataclasses import FrozenInstanceError
@@ -237,53 +236,222 @@ def test_sr01_version_exports_and_inert_pure_library() -> None:
     assert SOURCE_CHANGE_PLAN_VERSION == "source-change-plan.v1"
 
 
-def test_sr01_fresh_import_under_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    """SR-01: Fresh module import executes inertly under a side-effect guard."""
-    target_mod_name = "accounting_contracts.source_requiredness"
+_SUBPROCESS_PROBE_SCRIPT = r"""
+import sys
+import io
+import os
+import builtins
+import pathlib
+import socket
+import threading
+import time
+import uuid
 
-    # Ensure module is evicted from sys.modules so import is guaranteed fresh
-    sys.modules.pop(target_mod_name, None)
+py_lib_dir = os.path.abspath(sys.base_prefix)
+workspace_dir = os.path.abspath(os.getcwd())
+target_pkg_dir = os.path.abspath(
+    os.path.join(workspace_dir, "packages", "contracts", "src", "accounting_contracts")
+)
 
-    def _forbidden_call(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("Forbidden side-effect invoked during pure module import!")
+orig_builtins_open = builtins.open
+orig_io_open = io.open
+orig_os_open = os.open
+orig_path_open = pathlib.Path.open
 
-    monkeypatch.setattr(socket, "socket", _forbidden_call)
-    monkeypatch.setattr(time, "time", _forbidden_call)
-    monkeypatch.setattr(time, "monotonic", _forbidden_call)
-    monkeypatch.setattr(time, "monotonic_ns", _forbidden_call)
-    monkeypatch.setattr(uuid, "uuid4", _forbidden_call)
-    if hasattr(uuid, "uuid7"):
-        monkeypatch.setattr(uuid, "uuid7", _forbidden_call)
-    monkeypatch.setattr(threading.Thread, "start", _forbidden_call)
-    monkeypatch.setattr(Path, "write_bytes", _forbidden_call)
-    monkeypatch.setattr(Path, "write_text", _forbidden_call)
+def _fail_side_effect(msg):
+    raise AssertionError(f"Forbidden side-effect: {msg}")
 
-    # Permit Python module-loader reads while rejecting writes or data reads
-    orig_open = builtins.open
+socket.socket = lambda *args, **kwargs: _fail_side_effect("socket")
+time.time = lambda *args, **kwargs: _fail_side_effect("time.time")
+time.monotonic = lambda *args, **kwargs: _fail_side_effect("time.monotonic")
+time.monotonic_ns = lambda *args, **kwargs: _fail_side_effect("time.monotonic_ns")
+uuid.uuid4 = lambda *args, **kwargs: _fail_side_effect("uuid4")
+if hasattr(uuid, "uuid7"):
+    uuid.uuid7 = lambda *args, **kwargs: _fail_side_effect("uuid7")
+threading.Thread.start = lambda *args, **kwargs: _fail_side_effect("Thread.start")
+pathlib.Path.write_bytes = lambda *args, **kwargs: _fail_side_effect("Path.write_bytes")
+pathlib.Path.write_text = lambda *args, **kwargs: _fail_side_effect("Path.write_text")
 
-    def guarded_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
-        if any(m in mode for m in ("w", "a", "+", "x")):
-            raise AssertionError(f"File write forbidden during module import: {file}")
-        f_str = str(file)
-        if not (
-            f_str.endswith(".py")
-            or f_str.endswith(".pyc")
-            or f_str.endswith(".so")
-            or "/lib/" in f_str
-            or "/site-packages/" in f_str
-            or "/packages/" in f_str
-        ):
-            raise AssertionError(
-                f"Application data read forbidden during module import: {file}"
-            )
-        return orig_open(file, mode, *args, **kwargs)
+def _check_file_access(path, mode, op_name):
+    mode_str = str(mode)
+    if any(m in mode_str for m in ("w", "a", "+", "x")):
+        _fail_side_effect(f"{op_name} write mode {mode_str} on {path}")
+    norm_path = os.path.abspath(str(path))
+    is_code = norm_path.endswith((".py", ".pyc", ".so"))
+    is_in_std = (
+        norm_path.startswith(py_lib_dir)
+        or "/site-packages/" in norm_path
+        or "/lib/python" in norm_path
+        or "/usr/lib" in norm_path
+    )
+    is_in_contracts = norm_path.startswith(target_pkg_dir) and is_code
+    is_zoneinfo = (
+        "/usr/share/zoneinfo" in norm_path
+        or "/zoneinfo" in norm_path
+        or "tzdata" in norm_path
+    )
+    if not ((is_code and is_in_std) or is_in_contracts or is_zoneinfo):
+        _fail_side_effect(f"{op_name} application data read on {path}")
 
-    monkeypatch.setattr(builtins, "open", guarded_open)
+def guarded_builtins_open(file, mode="r", *args, **kwargs):
+    _check_file_access(file, mode, "builtins.open")
+    return orig_builtins_open(file, mode, *args, **kwargs)
 
-    # Import module afresh under guard
-    mod = importlib.import_module(target_mod_name)
-    assert mod is sys.modules[target_mod_name]
-    assert mod.SOURCE_REQUIREDNESS_VERSION == "source-requiredness.v1"
+def guarded_io_open(file, mode="r", *args, **kwargs):
+    _check_file_access(file, mode, "io.open")
+    return orig_io_open(file, mode, *args, **kwargs)
+
+def guarded_os_open(path, flags, *args, **kwargs):
+    if flags & (
+        os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_EXCL", 0)
+    ):
+        _fail_side_effect(f"os.open write flags {flags} on {path}")
+    _check_file_access(path, "r", "os.open")
+    return orig_os_open(path, flags, *args, **kwargs)
+
+def guarded_path_open(self, mode="r", *args, **kwargs):
+    _check_file_access(self, mode, "Path.open")
+    return orig_path_open(self, mode, *args, **kwargs)
+
+builtins.open = guarded_builtins_open
+io.open = guarded_io_open
+os.open = guarded_os_open
+pathlib.Path.open = guarded_path_open
+
+action = sys.argv[1] if len(sys.argv) > 1 else "normal"
+if action == "write_canary":
+    canary = sys.argv[2]
+    pathlib.Path(canary).open("w").write("canary")
+elif action == "read_data":
+    data_file = sys.argv[2]
+    pathlib.Path(data_file).open("r").read()
+
+import importlib
+mod = importlib.import_module("accounting_contracts.source_requiredness")
+assert mod.SOURCE_REQUIREDNESS_VERSION == "source-requiredness.v1"
+
+import accounting_contracts
+assert (
+    accounting_contracts.SourceRequirednessIssueReason
+    is mod.SourceRequirednessIssueReason
+)
+assert (
+    accounting_contracts.SourceRequirednessIssue
+    is mod.SourceRequirednessIssue
+)
+assert (
+    accounting_contracts.SourceRequirednessReport
+    is mod.SourceRequirednessReport
+)
+assert (
+    accounting_contracts.SourceRequirednessInputError
+    is mod.SourceRequirednessInputError
+)
+assert (
+    accounting_contracts.evaluate_source_requiredness
+    is mod.evaluate_source_requiredness
+)
+
+u = uuid.UUID("01955f00-0000-7000-8000-000000000001")
+iss = accounting_contracts.SourceRequirednessIssue(
+    sheet_name="خرید-فروش",
+    stable_id=u,
+    field_name="date_raw",
+    reason=mod.SourceRequirednessIssueReason.MISSING_VALUE,
+)
+assert iss.reason is accounting_contracts.SourceRequirednessIssueReason.MISSING_VALUE
+print("PROBE_OK")
+"""
+
+
+def test_sr01_fresh_import_subprocess_probe() -> None:
+    """SR-01: Fresh module import executes completely inertly in isolated probe."""
+    res = subprocess.run(
+        [sys.executable, "-c", _SUBPROCESS_PROBE_SCRIPT, "normal"],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"Probe failed with stderr: {res.stderr}"
+    assert "PROBE_OK" in res.stdout
+
+
+def test_sr01_fresh_import_negative_controls(tmp_path: Path) -> None:
+    """SR-01: Bounded negative controls: write is rejected and data read is rejected."""
+    # Negative control 1: deliberate application write via Path.open
+    canary_path = tmp_path / "canary_probe.txt"
+    res_w = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _SUBPROCESS_PROBE_SCRIPT,
+            "write_canary",
+            str(canary_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert res_w.returncode != 0
+    assert (
+        "Forbidden side-effect" in res_w.stderr
+        or "Path.open write mode" in res_w.stderr
+    )
+    assert not canary_path.exists(), "Canary file must not be created!"
+
+    # Negative control 2: deliberate application data read via Path.open
+    data_path = tmp_path / "application_data.xlsx"
+    data_path.write_bytes(b"PK_fake_xlsx")
+    res_r = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _SUBPROCESS_PROBE_SCRIPT,
+            "read_data",
+            str(data_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert res_r.returncode != 0
+    assert (
+        "Forbidden side-effect" in res_r.stderr
+        or "application data read" in res_r.stderr
+    )
+
+
+def test_sr01_public_and_submodule_exports_identity_retention() -> None:
+    """SR-01: Public and submodule exports remain strictly identical by identity."""
+    import accounting_contracts
+    import accounting_contracts.source_requiredness as submod
+
+    assert (
+        accounting_contracts.SourceRequirednessIssueReason
+        is submod.SourceRequirednessIssueReason
+    )
+    assert (
+        accounting_contracts.SourceRequirednessIssue is submod.SourceRequirednessIssue
+    )
+    assert (
+        accounting_contracts.SourceRequirednessReport is submod.SourceRequirednessReport
+    )
+    assert (
+        accounting_contracts.SourceRequirednessInputError
+        is submod.SourceRequirednessInputError
+    )
+    assert (
+        accounting_contracts.evaluate_source_requiredness
+        is submod.evaluate_source_requiredness
+    )
+
+    u = uuid.UUID("01955f00-0000-7000-8000-000000000001")
+    iss = accounting_contracts.SourceRequirednessIssue(
+        sheet_name="خرید-فروش",
+        stable_id=u,
+        field_name="date_raw",
+        reason=submod.SourceRequirednessIssueReason.MISSING_VALUE,
+    )
+    assert (
+        iss.reason is accounting_contracts.SourceRequirednessIssueReason.MISSING_VALUE
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1260,8 +1428,8 @@ def _independent_oracle(
 
 
 def test_sr12_property_all_four_sheets_permutations_and_independent_oracle() -> None:
-    """SR-12: Four-sheet inputs, inverted UUID byte order, and bounded permutations."""
-    # 1. Generate 4-sheet rows with input order inverted from UUID byte order
+    """SR-12: Four-sheet inputs, row order, dict key order, and sheet permutations."""
+    # 1. Base multi-row specs across all 4 sheets
     u_bs_high = uuid.UUID("01955f00-0000-7000-8000-000000000009")
     u_bs_low = uuid.UUID("01955f00-0000-7000-8000-000000000001")
 
@@ -1337,7 +1505,7 @@ def test_sr12_property_all_four_sheets_permutations_and_independent_oracle() -> 
         (u_bp_low, r_bp_low),
     ]
 
-    sheet_specs: dict[str, list[tuple[uuid.UUID, dict[str, Any]]]] = {
+    sheet_specs_base: dict[str, list[tuple[uuid.UUID, dict[str, Any]]]] = {
         "خرید-فروش": bs_rows,
         "دریافت-پرداخت": rp_rows,
         "ورود-خروج": im_rows,
@@ -1346,36 +1514,60 @@ def test_sr12_property_all_four_sheets_permutations_and_independent_oracle() -> 
 
     # Oracle expectation derived directly from input specs
     oracle_issues, oracle_checked, oracle_failed, oracle_count, oracle_passes = (
-        _independent_oracle(sheet_specs)
+        _independent_oracle(sheet_specs_base)
     )
 
-    # 2. Test multiple actual permutations of sheet order
-    permutations = [
-        # Reversed order
-        [
-            SourceSheetInput(sheet_name="لیست کسبه", rows=bp_rows),
-            SourceSheetInput(sheet_name="ورود-خروج", rows=im_rows),
-            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rp_rows),
-            SourceSheetInput(sheet_name="خرید-فروش", rows=bs_rows),
-        ],
-        # Rotated order
-        [
-            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rp_rows),
-            SourceSheetInput(sheet_name="لیست کسبه", rows=bp_rows),
-            SourceSheetInput(sheet_name="خرید-فروش", rows=bs_rows),
-            SourceSheetInput(sheet_name="ورود-خروج", rows=im_rows),
-        ],
-        # Another permutation
-        [
-            SourceSheetInput(sheet_name="ورود-خروج", rows=im_rows),
-            SourceSheetInput(sheet_name="خرید-فروش", rows=bs_rows),
-            SourceSheetInput(sheet_name="لیست کسبه", rows=bp_rows),
-            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rp_rows),
-        ],
+    # 2. Bounded variant 1: Row order only reversed on multi-row sheets
+    sheet_specs_row_rev = {
+        s: list(reversed(rows)) for s, rows in sheet_specs_base.items()
+    }
+    for s in sheet_specs_base:
+        assert [u for u, _ in sheet_specs_row_rev[s]] != [
+            u for u, _ in sheet_specs_base[s]
+        ]
+
+    # 3. Bounded variant 2: Raw dictionary insertion order only reversed for all rows
+    sheet_specs_key_rev = {
+        s: [(u, dict(reversed(list(r.items())))) for u, r in rows]
+        for s, rows in sheet_specs_base.items()
+    }
+    for s in sheet_specs_base:
+        orig_map = dict(sheet_specs_base[s])
+        for u, r in sheet_specs_key_rev[s]:
+            assert list(r.keys()) != list(orig_map[u].keys())
+            assert list(r.keys()) == list(reversed(list(orig_map[u].keys())))
+
+    # 4. Bounded variant 3: Both row order and dictionary insertion order reversed
+    sheet_specs_both_rev = {
+        s: [(u, dict(reversed(list(r.items())))) for u, r in reversed(rows)]
+        for s, rows in sheet_specs_base.items()
+    }
+    for s in sheet_specs_base:
+        assert [u for u, _ in sheet_specs_both_rev[s]] != [
+            u for u, _ in sheet_specs_base[s]
+        ]
+        orig_map = dict(sheet_specs_base[s])
+        for u, r in sheet_specs_both_rev[s]:
+            assert list(r.keys()) != list(orig_map[u].keys())
+            assert list(r.keys()) == list(reversed(list(orig_map[u].keys())))
+
+    # 5. Test all variants across distinct sheet-order permutations
+    test_cases = [
+        (sheet_specs_base, ["خرید-فروش", "دریافت-پرداخت", "ورود-خروج", "لیست کسبه"]),
+        (sheet_specs_row_rev, ["لیست کسبه", "ورود-خروج", "دریافت-پرداخت", "خرید-فروش"]),
+        (sheet_specs_key_rev, ["دریافت-پرداخت", "لیست کسبه", "خرید-فروش", "ورود-خروج"]),
+        (
+            sheet_specs_both_rev,
+            ["ورود-خروج", "خرید-فروش", "لیست کسبه", "دریافت-پرداخت"],
+        ),
     ]
 
-    for p_inputs in permutations:
-        snap = build_source_workbook_snapshot(p_inputs)
+    for spec_map, sheet_order in test_cases:
+        inputs = [
+            SourceSheetInput(sheet_name=s_name, rows=spec_map[s_name])
+            for s_name in sheet_order
+        ]
+        snap = build_source_workbook_snapshot(inputs)
         report = evaluate_source_requiredness(snap)
 
         assert report.checked_row_count == oracle_checked == 8
@@ -1577,6 +1769,40 @@ def test_sr12_hypothesis_randomized_presence_combinations(
         for iss in report.issues
     )
     assert prod_issue_tuples == oracle_issues
+
+    # Also evaluate transformed variant with reversed rows and reversed mapping keys
+    sheet_specs_trans = {
+        s: [(u, dict(reversed(list(r.items())))) for u, r in reversed(rows)]
+        for s, rows in sheet_specs.items()
+    }
+    snap_trans = build_source_workbook_snapshot(
+        [
+            SourceSheetInput(
+                sheet_name="لیست کسبه", rows=sheet_specs_trans["لیست کسبه"]
+            ),
+            SourceSheetInput(
+                sheet_name="ورود-خروج", rows=sheet_specs_trans["ورود-خروج"]
+            ),
+            SourceSheetInput(
+                sheet_name="دریافت-پرداخت", rows=sheet_specs_trans["دریافت-پرداخت"]
+            ),
+            SourceSheetInput(
+                sheet_name="خرید-فروش", rows=sheet_specs_trans["خرید-فروش"]
+            ),
+        ]
+    )
+    rep_trans = evaluate_source_requiredness(snap_trans)
+    assert rep_trans.checked_row_count == oracle_checked
+    assert rep_trans.failed_row_count == oracle_failed
+    assert rep_trans.issue_count == oracle_count
+    assert rep_trans.passes_requiredness == oracle_passes
+    assert (
+        tuple(
+            (iss.sheet_name, iss.stable_id, iss.field_name, iss.reason.value)
+            for iss in rep_trans.issues
+        )
+        == oracle_issues
+    )
 
 
 # ---------------------------------------------------------------------------
