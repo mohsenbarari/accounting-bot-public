@@ -64,3 +64,31 @@ The source requiredness module (`accounting_contracts.source_requiredness`) impl
   - Optional fields (notes, discount, auxiliary codes/flags, phone numbers, purity) do not emit issues when null or blank.
 - **Raw Preservation & Masked Repr:** Original raw mappings, types, and source hashes are preserved without mutation. The report excludes the snapshot from `repr` and issue objects store no raw cell values.
 - **Deterministic Issue Ordering:** Issues are aggregated in registry sheet order, UUID bytes, and registry raw-column order.
+
+## Source Fiscal Evidence (`source_fiscal_evidence`)
+
+`source-fiscal-evidence.v1` implements ADR-0013 over an existing complete
+`ValidatedSourceWorkbookSnapshot`:
+
+```python
+from accounting_contracts import evaluate_source_fiscal_evidence
+
+report = evaluate_source_fiscal_evidence(snapshot)
+assert report.snapshot is snapshot
+observed_years = report.observed_years
+undated_rows = report.undated_row_count
+```
+
+`SourceFiscalEvidenceReport(snapshot)` computes the same immutable report. Each
+transaction row contributes sheet/UUID/year metadata, with `None` for a missing
+date. Rows follow registry sheet order and UUID bytes; positive year counts are
+sorted by year. Business-party rows are counted separately and never supply dates.
+The snapshot and all raw values/hashes remain intact; ordinary report repr excludes
+raw snapshot values. Invalid public input/metadata raises the fixed-message
+`SourceFiscalEvidenceInputError` (signature misuse can raise `TypeError`).
+
+Empty, undated and mixed-year snapshots all produce observations. The report
+selects no operational year and grants no import, deletion or archive permission.
+Requiredness, source binding, fiscal/archive eligibility, opening balances and
+persistence require their own checks. Evaluation uses the existing Jalali parser
+without filesystem, network, clock or random access.

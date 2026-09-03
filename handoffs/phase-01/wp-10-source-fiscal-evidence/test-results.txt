@@ -1,0 +1,1369 @@
+WORK PACKAGE: WP-10 source-fiscal-evidence.v1
+PHASE: 1 / G1 OPEN / IN PROGRESS
+RECORDED AT UTC: 2026-09-03T07:21:43.975619+00:00
+TESTED CODE SHA: b9230689c3d9273231d017d71a1ce6873bd8c2a7
+BASELINE: d14ef4abbe858ca99501d5eac2c44c7179388410
+
+The tested working tree was committed unchanged as the code SHA above.
+Original command logs are retained locally in REVIEW_ROOT/windows-evidence.
+Below, workspace/tool/user-profile prefixes are normalized; XML/angle delimiters
+are entity-escaped for the handoff validator; trailing whitespace is trimmed.
+Commands, exit statuses, node IDs, counts and timing values are preserved.
+
+Native Windows only. Linux local NOT RUN (only Docker Desktop WSL is installed;
+the Docker Linux engine is unavailable). Windows/Linux CI and non-author review
+are PENDING. Static win32 typing is not native CI.
+
+Initial execution used CI=true deliberately to test the mandatory symlink gate.
+The four preconditions failed with Windows privilege error 1314, proving the
+test suite does not silently skip absent symlinks in CI. This is NOT passing
+symlink evidence. Normal local execution unsets CI/GITHUB_ACTIONS and uses a fresh
+pytest cache directory; it records the existing four permission skips and one
+POSIX-only skip. No tests, CI policy or machine privilege settings were changed.
+Initial cache warnings reflect the local sandbox/host cache ownership boundary;
+the final full local run with its separate cache has no warning.
+
+PLATFORM: windows; CHECK: sync; ENVIRONMENT: CI=true
+$ uv sync --frozen --all-packages --all-groups --offline
+Checked 85 packages in 8ms
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: lock; ENVIRONMENT: CI=true
+$ uv lock --check --offline
+Resolved 88 packages in 2ms
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: format; ENVIRONMENT: CI=true
+$ uv run --offline ruff format --check .
+88 files already formatted
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: lint; ENVIRONMENT: CI=true
+$ uv run --offline ruff check .
+All checks passed!
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: mypy; ENVIRONMENT: CI=true
+$ uv run --offline mypy .
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 34 source files
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: mypy-win32; ENVIRONMENT: CI=true
+$ uv run --offline mypy --platform win32 .
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 34 source files
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: baseline-collection; ENVIRONMENT: CI=true
+$ uv run --offline pytest --collect-only -q --ignore=tests/test_source_fiscal_evidence.py
+tests/test_architecture_guard.py: 14
+tests/test_canonical_date.py: 10
+tests/test_canonical_hashing.py: 18
+tests/test_imports.py: 7
+tests/test_raw_input_contracts.py: 15
+tests/test_save_import_coordinator.py: 40
+tests/test_source_change_plan.py: 25
+tests/test_source_requiredness.py: 53
+tests/test_source_watch_runtime.py: 33
+tests/test_source_watch_runtime_native.py: 3
+tests/test_xlsx_snapshot_acquisition.py: 74
+tests/test_xlsx_source_reader.py: 45
+tests/test_xlsx_source_reader_raw_contract_regressions.py: 7
+tests/test_xlsx_source_reader_sst_activity_regressions.py: 59
+
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: wp10; ENVIRONMENT: CI=true
+$ uv run --offline pytest tests/test_source_fiscal_evidence.py -v -s -o addopts= --basetemp 'REVIEW_ROOT\windows-evidence\tmp-wp10'
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- REVIEW_CHECKOUT\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'ci' -&gt; database=None, deadline=None, print_blob=True, derandomize=True, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: REVIEW_CHECKOUT
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 56 items
+
+tests/test_source_fiscal_evidence.py::test_fe01_public_contract_and_guarded_fresh_import PASSED
+tests/test_source_fiscal_evidence.py::test_fe02_one_year_all_transaction_sheets_both_entrypoints PASSED
+tests/test_source_fiscal_evidence.py::test_fe03_mixed_years_complete_ordered_evidence PASSED
+tests/test_source_fiscal_evidence.py::test_fe04_missing_dates_remain_independent_of_requiredness[years0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe04_missing_dates_remain_independent_of_requiredness[years1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe05_empty_party_only_and_complete_transaction_deletion PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1403/01/01-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\u06f1\u06f4\u06f0\u06f3/\u06f0\u06f1/\u06f0\u06f1-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\u0661\u0664\u0660\u0663/\u0660\u0661/\u0660\u0661-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[  1403-01-01\t-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\n\u06f1\u06f3\u06f9\u06f9/\u06f1\u06f2/\u06f3\u06f0 -1399] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1403/12/30-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1404/01/01-1404] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1402/12/29-1402] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[1402/12/30] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[1403/13/01] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[2024-03-20T00:00:00] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[bad-date] PASSED
+tests/test_source_fiscal_evidence.py::test_fe07_non_date_fields_and_uuid_time_do_not_select_year PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[unknown-SYNTHETIC-MARKER] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[sheet5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[SYNTHETIC-ID] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[00000000-0000-7000-8000-000000000001] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[identity4] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[identity5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[False] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[SYNTHETIC-MARKER] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[1403.0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[year5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[-1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[10000] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[False] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[1.0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[-1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_valid_metadata_types_and_no_current_year_bounds PASSED
+tests/test_source_fiscal_evidence.py::test_fe09_computed_constructor_immutability_and_private_repr PASSED
+tests/test_source_fiscal_evidence.py::test_fe10_property_oracle_real_permutations_and_date_transition PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_purity_repeatability_identity_and_guard_control PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_unexpected_parser_failure_propagates_by_identity[failure0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_unexpected_parser_failure_propagates_by_identity[failure1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe12_synthetic_15000_rows_complete_oracle_and_retention FE-12 fixture_seconds=0.830156 evaluation_seconds=0.098809 transaction_rows=13500 parties=1500
+PASSED
+tests/test_source_fiscal_evidence.py::test_fe13_xlsx_generations_requiredness_and_independent_planner PASSED
+
+============================== warnings summary ===============================
+.venv\Lib\site-packages\_pytest\cacheprovider.py:469
+  REVIEW_CHECKOUT\.venv\Lib\site-packages\_pytest\cacheprovider.py:469: PytestCacheWarning: could not create cache path REVIEW_CHECKOUT\.pytest_cache\v\cache\nodeids: [WinError 5] Access is denied: 'REVIEW_CHECKOUT\\.pytest_cache\\v\\cache'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 56 passed, 1 warning in 2.03s ========================
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: full-ci-precondition; ENVIRONMENT: CI=true
+$ uv run --offline pytest -v -s -o addopts= -W error::pytest.PytestUnhandledThreadExceptionWarning --basetemp 'REVIEW_ROOT\windows-evidence\tmp-full'
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- REVIEW_CHECKOUT\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'ci' -&gt; database=None, deadline=None, print_blob=True, derandomize=True, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: REVIEW_CHECKOUT
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 459 items
+
+tests/test_architecture_guard.py::test_domain_has_no_forbidden_imports PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import fastapi\n-fastapi] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from fastapi import APIRouter\n-fastapi] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import aiogram\n-aiogram] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from aiogram.types import Message\n-aiogram] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import sqlalchemy\n-sqlalchemy] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from sqlalchemy.orm import Session\n-sqlalchemy] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import playwright\n-playwright] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from playwright.async_api import async_playwright\n-playwright] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import win32com.client\n-win32com] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from accounting_persistence import models\n-accounting_persistence] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from accounting_reporting import generator\n-accounting_reporting] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import httpx\n-httpx] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import pydantic\n-pydantic] PASSED
+tests/test_canonical_date.py::test_jalali_date_version_constant PASSED
+tests/test_canonical_date.py::test_digit_normalization PASSED
+tests/test_canonical_date.py::test_nowruz_parsing PASSED
+tests/test_canonical_date.py::test_leap_and_non_leap_esfand_30 PASSED
+tests/test_canonical_date.py::test_all_month_end_families PASSED
+tests/test_canonical_date.py::test_round_trip_gregorian_conversion PASSED
+tests/test_canonical_date.py::test_accepted_digit_and_separator_variants PASSED
+tests/test_canonical_date.py::test_none_input_handling PASSED
+tests/test_canonical_date.py::test_invalid_dates_rejected PASSED
+tests/test_canonical_date.py::test_to_iran_time_conversion PASSED
+tests/test_canonical_hashing.py::test_version_constants PASSED
+tests/test_canonical_hashing.py::test_golden_vector_buy_sell_row PASSED
+tests/test_canonical_hashing.py::test_golden_vector_receipts_payments_row PASSED
+tests/test_canonical_hashing.py::test_golden_vector_inventory_movements_row PASSED
+tests/test_canonical_hashing.py::test_golden_vector_business_parties_row PASSED
+tests/test_canonical_hashing.py::test_golden_vector_empty_snapshot PASSED
+tests/test_canonical_hashing.py::test_golden_vector_two_row_snapshot PASSED
+tests/test_canonical_hashing.py::test_mapping_order_independence PASSED
+tests/test_canonical_hashing.py::test_missing_or_extra_fields_rejected PASSED
+tests/test_canonical_hashing.py::test_null_vs_empty_text_distinction PASSED
+tests/test_canonical_hashing.py::test_raw_text_whitespace_and_unicode_preservation PASSED
+tests/test_canonical_hashing.py::test_invalid_type_tag_raises_canonical_value_error PASSED
+tests/test_canonical_hashing.py::test_number_canonicalization_and_type_rejections PASSED
+tests/test_canonical_hashing.py::test_every_raw_field_mutation_changes_source_hash PASSED
+tests/test_canonical_hashing.py::test_snapshot_permutation_invariance_and_sensitivity PASSED
+tests/test_canonical_hashing.py::test_snapshot_uuid_and_hash_validations PASSED
+tests/test_canonical_hashing.py::test_property_source_hash_determinism PASSED
+tests/test_canonical_hashing.py::test_property_snapshot_arbitrary_permutation_invariance PASSED
+tests/test_imports.py::test_import_domain PASSED
+tests/test_imports.py::test_import_contracts PASSED
+tests/test_imports.py::test_import_persistence PASSED
+tests/test_imports.py::test_import_reporting PASSED
+tests/test_imports.py::test_import_local_agent PASSED
+tests/test_imports.py::test_import_server_api PASSED
+tests/test_imports.py::test_import_worker PASSED
+tests/test_raw_input_contracts.py::test_contract_version PASSED
+tests/test_raw_input_contracts.py::test_registry_approved_sheets PASSED
+tests/test_raw_input_contracts.py::test_stable_id_technical_headers PASSED
+tests/test_raw_input_contracts.py::test_buy_sell_contract_specification PASSED
+tests/test_raw_input_contracts.py::test_receipts_payments_contract_specification PASSED
+tests/test_raw_input_contracts.py::test_inventory_movements_contract_specification PASSED
+tests/test_raw_input_contracts.py::test_business_parties_contract_specification PASSED
+tests/test_raw_input_contracts.py::test_no_float_kind_in_any_contract PASSED
+tests/test_raw_input_contracts.py::test_excel_column_boundary_validation PASSED
+tests/test_raw_input_contracts.py::test_cell_classification_rules PASSED
+tests/test_raw_input_contracts.py::test_unknown_sheet_lookup_fails PASSED
+tests/test_raw_input_contracts.py::test_immutability_and_frozen_contracts PASSED
+tests/test_raw_input_contracts.py::test_contract_validation_rejects_field_name_collisions PASSED
+tests/test_raw_input_contracts.py::test_contract_validation_rejects_invalid_definitions PASSED
+tests/test_raw_input_contracts.py::test_property_classification_invariants PASSED
+tests/test_save_import_coordinator.py::test_sc01_public_api_exports_and_version PASSED
+tests/test_save_import_coordinator.py::test_sc01_source_read_attempt_immutability PASSED
+tests/test_save_import_coordinator.py::test_sc01_safe_repr_no_path_leakage PASSED
+tests/test_save_import_coordinator.py::test_sc01_save_coordinator_view_invariants PASSED
+tests/test_save_import_coordinator.py::test_sc02_configuration_path_validation PASSED
+tests/test_save_import_coordinator.py::test_sc02_notification_path_and_kind_filtering PASSED
+tests/test_save_import_coordinator.py::test_sc03_move_into_and_out_of_target PASSED
+tests/test_save_import_coordinator.py::test_sc04_idle_construction_and_clock_boundaries PASSED
+tests/test_save_import_coordinator.py::test_sc05_burst_coalescing_and_past_deadline PASSED
+tests/test_save_import_coordinator.py::test_sc06_concurrent_due_takes_yield_single_token PASSED
+tests/test_save_import_coordinator.py::test_sc06_token_security_and_invalid_finish_outcomes PASSED
+tests/test_save_import_coordinator.py::test_sc07_followup_notices_during_running_state PASSED
+tests/test_save_import_coordinator.py::test_sc08_source_not_ready_automatic_retry_scheduling PASSED
+tests/test_save_import_coordinator.py::test_sc09_reader_rejected_no_timer_retry_unless_newer_notice PASSED
+tests/test_save_import_coordinator.py::test_sc10_faulted_state_and_explicit_resume PASSED
+tests/test_save_import_coordinator.py::test_sc11_read_due_source_zero_io_when_not_due PASSED
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_success_lifecycle PASSED
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_missing_file_source_not_ready PASSED
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_reader_rejected_corrupt_file PASSED
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_integrity_failure_faults_coordinator PASSED
+tests/test_save_import_coordinator.py::test_sc12_cancellation_keyboard_interrupt_faults_coordinator PASSED
+tests/test_save_import_coordinator.py::test_sc13_notice_responsiveness_during_blocked_io PASSED
+tests/test_save_import_coordinator.py::test_sc14_change_planner_oracle_zero_false_changes PASSED
+tests/test_save_import_coordinator.py::test_sc15_hypothesis_property_state_machine_oracle PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_01_reader_error_with_faulty_finish_preserves_both_causes PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_01_success_with_faulty_finish_fails_closed_no_false_success PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_01_base_exception_in_finish_propagates_and_faults_active_token PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_01_guard_does_not_mutate_new_or_foreign_token PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_01_reader_and_finish_and_guard_all_failing_preserves_three_causes PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_01_cancellation_in_guard_with_failing_reader_and_finish PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_01_guard_failure_after_real_recovery_execution PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_01_success_reader_with_faulty_finish_and_guard_fails_closed PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_02_take_due_error_injection_rollback_and_subsequent_success PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_02_take_due_thread_contention_with_injected_error PASSED
+tests/test_save_import_coordinator.py::test_w7_r3_01_concurrency_oracle_rejects_zero_token_winner_after_transient_error PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_02_concurrency_oracle_rejects_unexpected_worker_errors PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_04_constant_safe_error_messages_no_path_or_secret_leakage PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_05_strict_types_for_time_and_enums PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_06_source_not_ready_to_success_retry_lifecycle_without_new_notice PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_06_notice_responsiveness_during_blocked_lease_cleanup PASSED
+tests/test_source_change_plan.py::test_public_version_constant PASSED
+tests/test_source_change_plan.py::test_full_snapshot_all_four_sheets_required PASSED
+tests/test_source_change_plan.py::test_full_snapshot_duplicate_sheet_rejected PASSED
+tests/test_source_change_plan.py::test_full_snapshot_unknown_sheet_rejected PASSED
+tests/test_source_change_plan.py::test_full_snapshot_empty_workbook_and_empty_sheet_accepted PASSED
+tests/test_source_change_plan.py::test_forged_snapshot_cannot_bypass_or_authorize_voids PASSED
+tests/test_source_change_plan.py::test_forged_prior_registry_invariants_rejected PASSED
+tests/test_source_change_plan.py::test_all_rows_by_id_exact_object_matching_and_count_types PASSED
+tests/test_source_change_plan.py::test_hash_validation_rejects_trailing_or_leading_newlines PASSED
+tests/test_source_change_plan.py::test_global_uuid_uniqueness_across_sheets PASSED
+tests/test_source_change_plan.py::test_invalid_uuid_rejected_in_row_input PASSED
+tests/test_source_change_plan.py::test_row_rebuilds_source_hash_matching_wp03_directly PASSED
+tests/test_source_change_plan.py::test_transition_table_all_actions PASSED
+tests/test_source_change_plan.py::test_identity_relocation_between_sheets_raises_error PASSED
+tests/test_source_change_plan.py::test_order_invariance_sheet_and_row_permutations PASSED
+tests/test_source_change_plan.py::test_state_advancement_for_all_four_transitions PASSED
+tests/test_source_change_plan.py::test_null_vs_empty_text_distinction_in_change_plan PASSED
+tests/test_source_change_plan.py::test_single_field_sensitivity_and_canonical_equivalences PASSED
+tests/test_source_change_plan.py::test_empty_sheet_voids_all_prior_active_identities PASSED
+tests/test_source_change_plan.py::test_per_sheet_counts_breakdown PASSED
+tests/test_source_change_plan.py::test_constructor_defensive_copies_prevent_external_mutation PASSED
+tests/test_source_change_plan.py::test_immutability_and_tamper_resistance_across_all_models PASSED
+tests/test_source_change_plan.py::test_synthetic_15000_row_complexity_benchmark
+[BENCHMARK] 15,000 rows -&gt; build_duration: 1.0687s | plan_duration: 0.0676s
+PASSED
+tests/test_source_change_plan.py::test_raw_values_key_order_strictly_matches_registry_for_all_sheets PASSED
+tests/test_source_change_plan.py::test_property_change_plan_expanded_permutations_invariance PASSED
+tests/test_source_fiscal_evidence.py::test_fe01_public_contract_and_guarded_fresh_import PASSED
+tests/test_source_fiscal_evidence.py::test_fe02_one_year_all_transaction_sheets_both_entrypoints PASSED
+tests/test_source_fiscal_evidence.py::test_fe03_mixed_years_complete_ordered_evidence PASSED
+tests/test_source_fiscal_evidence.py::test_fe04_missing_dates_remain_independent_of_requiredness[years0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe04_missing_dates_remain_independent_of_requiredness[years1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe05_empty_party_only_and_complete_transaction_deletion PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1403/01/01-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\u06f1\u06f4\u06f0\u06f3/\u06f0\u06f1/\u06f0\u06f1-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\u0661\u0664\u0660\u0663/\u0660\u0661/\u0660\u0661-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[  1403-01-01\t-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\n\u06f1\u06f3\u06f9\u06f9/\u06f1\u06f2/\u06f3\u06f0 -1399] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1403/12/30-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1404/01/01-1404] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1402/12/29-1402] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[1402/12/30] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[1403/13/01] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[2024-03-20T00:00:00] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[bad-date] PASSED
+tests/test_source_fiscal_evidence.py::test_fe07_non_date_fields_and_uuid_time_do_not_select_year PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[unknown-SYNTHETIC-MARKER] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[sheet5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[SYNTHETIC-ID] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[00000000-0000-7000-8000-000000000001] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[identity4] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[identity5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[False] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[SYNTHETIC-MARKER] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[1403.0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[year5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[-1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[10000] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[False] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[1.0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[-1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_valid_metadata_types_and_no_current_year_bounds PASSED
+tests/test_source_fiscal_evidence.py::test_fe09_computed_constructor_immutability_and_private_repr PASSED
+tests/test_source_fiscal_evidence.py::test_fe10_property_oracle_real_permutations_and_date_transition PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_purity_repeatability_identity_and_guard_control PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_unexpected_parser_failure_propagates_by_identity[failure0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_unexpected_parser_failure_propagates_by_identity[failure1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe12_synthetic_15000_rows_complete_oracle_and_retention FE-12 fixture_seconds=1.167426 evaluation_seconds=0.112214 transaction_rows=13500 parties=1500
+PASSED
+tests/test_source_fiscal_evidence.py::test_fe13_xlsx_generations_requiredness_and_independent_planner PASSED
+tests/test_source_requiredness.py::test_sr01_version_exports_and_inert_pure_library PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_subprocess_probe PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[path_write] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[builtins_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[io_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[os_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[path_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[code_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[zoneinfo_read] PASSED
+tests/test_source_requiredness.py::test_sr01_public_and_submodule_exports_identity_retention PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-date_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-transaction_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-quantity_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-unit_price_toman_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-date_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-entry_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-amount_toman_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-date_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-movement_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-quantity_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_multiple_rows_and_fields_aggregate_all_missing_issues PASSED
+tests/test_source_requiredness.py::test_sr02_omission_of_transaction_type_raw_is_detected PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-transaction_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-entry_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-movement_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_omission_of_receipts_payments_blank_entry_type_is_detected PASSED
+tests/test_source_requiredness.py::test_sr03_date_presence_and_upstream_rejection PASSED
+tests/test_source_requiredness.py::test_sr04_numeric_zero_signed_values_and_type_preservation PASSED
+tests/test_source_requiredness.py::test_sr05_optional_fields_null_and_blank_permitted PASSED
+tests/test_source_requiredness.py::test_sr06_mixed_four_sheet_snapshot_issue_aggregation_and_counts PASSED
+tests/test_source_requiredness.py::test_sr07_four_empty_sheets_and_upstream_structure_rejection PASSED
+tests/test_source_requiredness.py::test_sr08_constructor_invariants_immutability_and_tamper_resistance PASSED
+tests/test_source_requiredness.py::test_sr09_error_messages_and_repr_masking_without_raw_leakage PASSED
+tests/test_source_requiredness.py::test_sr10_purity_repeatability_and_raw_preservation PASSED
+tests/test_source_requiredness.py::test_sr11_xlsx_reader_integration_synthetic_workbooks PASSED
+tests/test_source_requiredness.py::test_sr12_property_all_four_sheets_permutations_and_independent_oracle PASSED
+tests/test_source_requiredness.py::test_sr12_property_single_value_mutation_transitions PASSED
+tests/test_source_requiredness.py::test_sr12_property_exact_snapshot_raw_and_hash_retention PASSED
+tests/test_source_requiredness.py::test_sr12_hypothesis_randomized_presence_combinations PASSED
+tests/test_source_requiredness.py::test_sr13_scale_15000_row_synthetic_benchmark
+[SR-13 SCALE BENCHMARK] 15,000 rows -&gt; eval_seconds: 0.0094s | fixture_build_seconds: 1.2427s | checked_rows: 15000 | failed_rows: 3000 | issues: 3000
+PASSED
+tests/test_source_requiredness.py::test_sr14_existing_suite_retention_and_contracts_integrity PASSED
+tests/test_source_watch_runtime.py::test_wr01_public_api_exports_and_version PASSED
+tests/test_source_watch_runtime.py::test_wr01_source_watch_runtime_view_invariants PASSED
+tests/test_source_watch_runtime.py::test_wr01_safe_repr_no_path_leakage PASSED
+tests/test_source_watch_runtime.py::test_wr01_constructor_lexical_validation_and_containment PASSED
+tests/test_source_watch_runtime.py::test_wr01_consumer_validation_and_invalid_transition PASSED
+tests/test_source_watch_runtime.py::test_wr02_captured_observer_factory_and_no_alloc_on_init PASSED
+tests/test_source_watch_runtime.py::test_wr03_watchdog_event_adapter_table_driven_mapping PASSED
+tests/test_source_watch_runtime.py::test_wr04_callback_boundary_fault_handling PASSED
+tests/test_source_watch_runtime.py::test_wr05_initial_hint_and_preexisting_file_read PASSED
+tests/test_source_watch_runtime.py::test_wr06_fake_clock_deadline_boundaries_and_liveness_wait PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_a_stop_while_waiting_intermediate_and_final_state PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_a2_intermediate_stopping_state_held_in_teardown PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_b_stop_vs_cycle_admission_drains_result PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_c_fault_before_consumer_admission_suppresses_consumer PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prevention PASSED
+tests/test_source_watch_runtime.py::test_wr08_burst_coalescing_and_responsiveness_during_blocking PASSED
+tests/test_source_watch_runtime.py::test_wr09_case_1_notready_retries_automatically PASSED
+tests/test_source_watch_runtime.py::test_wr09_case_2_reader_rejection_enters_idle_without_retry PASSED
+tests/test_source_watch_runtime.py::test_wr09_case_3_reader_rejection_with_followup_notice_retries PASSED
+tests/test_source_watch_runtime.py::test_wr10_consumer_delivery_and_stop_draining PASSED
+tests/test_source_watch_runtime.py::test_wr11_concurrent_run_calls_single_winner_losers_invalid_transition PASSED
+tests/test_source_watch_runtime.py::test_wr11_stop_requested_during_startup_before_run_loop PASSED
+tests/test_source_watch_runtime.py::test_wr12_partial_startup_failure_teardown PASSED
+tests/test_source_watch_runtime.py::test_wr13_emitter_death_detected_at_loop_boundary PASSED
+tests/test_source_watch_runtime.py::test_wr13_dispatcher_death_detected_while_emitters_remain_alive PASSED
+tests/test_source_watch_runtime.py::test_wr13_empty_emitters_set_detected_at_loop_boundary PASSED
+tests/test_source_watch_runtime.py::test_wr14_raw_base_exception_passthrough PASSED
+tests/test_source_watch_runtime.py::test_wr14_primary_cause_preserved_with_async_delivery_error PASSED
+tests/test_source_watch_runtime.py::test_wr14_shared_cause_preserved_across_driver_and_stop_failures PASSED
+tests/test_source_watch_runtime.py::test_wr14_async_error_during_start_with_teardown_failure_grouping PASSED
+tests/test_source_watch_runtime.py::test_wr14_three_simultaneous_standard_exceptions_cause_identities PASSED
+tests/test_source_watch_runtime.py::test_wr14_worker_thread_join_failure_wrapped_in_shutdown_failed PASSED
+tests/test_source_watch_runtime.py::test_wr14_mixed_cancellation_and_normal_stop_failure_base_exception_group PASSED
+tests/test_source_watch_runtime_native.py::test_wr15_native_startup_read_and_inplace_and_atomic_save PASSED
+tests/test_source_watch_runtime_native.py::test_wr16_native_absent_source_lifecycle_and_thread_cleanup PASSED
+tests/test_source_watch_runtime_native.py::test_wr17_end_to_end_wp04_planner_composition PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_public_api_exports_and_version PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_stable_xlsx_snapshot_invariants PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_error_taxonomy_reasons_and_retryability PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_no_path_or_secret_leakage_in_messages_and_repr PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_two_observations_and_sleeper PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_invalid_arguments_and_policy_rejections PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_initial_source_symlink_rejection FAILED
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_non_regular_file_rejection_policy PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa03_source_immutability_on_success_and_failures PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa04_missing_and_disappearing_source_handling PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa04_inaccessible_file_permission_lock PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_observation] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[before_copy_open] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_copy_chunk] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[before_source_reverify] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_source_reverify] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_observation] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[before_copy_open] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_copy_chunk] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[before_source_reverify] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_source_reverify] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_source_symlink_race_mutation_with_same_inode FAILED
+tests/test_xlsx_snapshot_acquisition.py::test_sa06_streaming_copy_bounded_chunks PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa06_bounded_stream_wrapper_verification PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_zip_central_directory_only_and_no_testzip_or_open_called PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_invalid_container_and_storage_faults PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_candidate_symlink_rejection_leaves_target_untouched FAILED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_pre_existing_final_snapshot_not_overwritten_or_deleted PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_real_stream_io_faults_and_short_write PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa08_promoted_path_and_source_mutation_isolation PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa08_posix_private_file_permissions SKIPPED
+tests/test_xlsx_snapshot_acquisition.py::test_sa08_snapshot_path_never_resolves_externally PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_lease_mutation_and_deletion_detection PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_atomic_os_replace_during_lease_preserves_replacement_file PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_symlink_replacement_during_lease FAILED
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_acquisition_and_cleanup_coincident_exception_group PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_consumer_and_cleanup_coincident_exception_group PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_consumer_integrity_and_cleanup_coincident_exception_group PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa11_concurrent_disjoint_acquisitions PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa12_end_to_end_reader_and_planner_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa13_source_change_prevents_partial_planner_voids PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa14_hypothesis_chunk_and_interval_properties PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -&gt; duration: 2.8428s | baseline_current_rss_mib: 29.84 MiB | call_peak_rss_mib: 62.15 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 8b2ad367a33de65e80fd9e244cf6e3fc72584d9caabbd6da217b1bd015923b7b | platform: win32
+PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_01_anchor_failure_between_mkdir_and_open_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_02_anchor_failure_on_fstat_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_03_qpart_foreign_destination_not_overwritten_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_04_qfinal_foreign_destination_not_overwritten_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_05_qdir_foreign_destination_not_overwritten_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_06_restore_foreign_destination_not_overwritten_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_07_safe_typed_error_messages_no_path_or_raw_oserror_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_08_candidate_fstat_transient_failure_no_replacement_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_09_candidate_fstat_failure_with_path_replacement_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_10_first_lease_lstat_transient_failure_no_replacement_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_11_atomic_promotion_failure_cleans_owned_artifacts_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_12_atomic_promotion_with_foreign_final_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_13_real_lease_exit_race_between_lstat_and_open_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_14_simulated_identity_collision_protection_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_15_real_mtime_zero_integrity_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_16_real_identity_unavailable_provider_fallback_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_01_link_unlink_api_not_used_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_02_quarantine_foreign_source_survived_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_03_promotion_foreign_part_survived_and_displaced_owned_survived_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_04_rename_noreplace_unavailable_fails_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_05_empty_foreign_qdir_survived_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_06_qpart_postverify_after_hook_replaces_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_07_qfinal_postverify_after_hook_replaces_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_08_qdir_postverify_after_hook_replaces_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r10_01_fresh_subprocess_import_and_wintypes_independence PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r10_02_windows_file_id_info_success_and_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r13_01_pre_existing_candidate_file_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r13_01_candidate_hardlink_to_source_immutability_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r11_01_windows_handle_protect_from_close_native_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_10_windows_runtime_full_lifecycle_platform_conditional PASSED
+tests/test_xlsx_source_reader.py::test_r1_dtd_and_external_entities_parser_driven_rejection PASSED
+tests/test_xlsx_source_reader.py::test_r1_invalid_row_and_cell_hierarchy_reproduction_rejection PASSED
+tests/test_xlsx_source_reader.py::test_r1_utf16_and_cdata_comments_dtd_handling PASSED
+tests/test_xlsx_source_reader.py::test_r2_missing_content_types_and_macro_enabled_rejection PASSED
+tests/test_xlsx_source_reader.py::test_r5_strict_numeric_xml_grammar_and_rejections PASSED
+tests/test_xlsx_source_reader.py::test_r5_xml_exponent_parsed_directly_to_decimal PASSED
+tests/test_xlsx_source_reader.py::test_r6_read_only_integrity_and_handle_cleanup PASSED
+tests/test_xlsx_source_reader.py::test_xr02_required_headers_validation_and_rejections PASSED
+tests/test_xlsx_source_reader.py::test_xr04_formula_exclusion_and_coverage_intervals PASSED
+tests/test_xlsx_source_reader.py::test_xr05_row_activity_and_identity_validation PASSED
+tests/test_xlsx_source_reader.py::test_xr06_hidden_rows_dimensions_and_coordinates PASSED
+tests/test_xlsx_source_reader.py::test_r1_dtd_in_utf8_and_utf16_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r1_cdata_and_comments_containing_doctype_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r1_predefined_and_numeric_xml_entities_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r1_valid_utf16_workbook_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r2_invalid_wrapper_inside_si_and_is_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r2_foreign_namespace_si_in_sst_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r2_phonetic_direct_rph_under_is_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r2_rich_text_runs_and_per_fragment_escapes_decoded PASSED
+tests/test_xlsx_source_reader.py::test_r3_unused_sst_entries_not_decoded_or_retained PASSED
+tests/test_xlsx_source_reader.py::test_r4_ambiguous_officedocument_relationships_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r4_ambiguous_sharedstrings_relationships_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r4_ambiguous_sheets_containers_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r5_duplicate_uuid_raises_xlsx_identity_error PASSED
+tests/test_xlsx_source_reader.py::test_r5_textual_scientific_exponent_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r5_native_xml_numeric_exponent_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r5_uuid_casing_canonicalized_by_snapshot PASSED
+tests/test_xlsx_source_reader.py::test_r6_planner_full_lifecycle_transitions_and_idempotency PASSED
+tests/test_xlsx_source_reader.py::test_r6_hypothesis_comprehensive_invariance_property PASSED
+tests/test_xlsx_source_reader.py::test_r6_direct_construction_comprehensive_matrix PASSED
+tests/test_xlsx_source_reader.py::test_r6_all_or_nothing_fourth_sheet_late_failure PASSED
+tests/test_xlsx_source_reader.py::test_r6_read_only_integrity_and_clean_cleanup PASSED
+tests/test_xlsx_source_reader.py::test_r4_01_negative_unsupported_tags_in_leaf_nodes_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r4_01_comment_nodes_in_leaf_text_preserved PASSED
+tests/test_xlsx_source_reader.py::test_r4_01_root_connection_and_extlst_nested_worksheet PASSED
+tests/test_xlsx_source_reader.py::test_r4_02_required_headers_and_technical_id_matrix PASSED
+tests/test_xlsx_source_reader.py::test_r4_03_sst_selection_and_classification_positive_negative PASSED
+tests/test_xlsx_source_reader.py::test_r4_04_strict_sst_index_grammar_and_error_boundaries PASSED
+tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark
+[WP-05 BENCHMARK] 15,000 active rows -&gt; read_build_seconds: 2.7943s | baseline_current_rss_mib: 29.92 MiB | call_peak_rss_mib: 58.36 MiB | rows: 15000 | platform: win32
+PASSED
+tests/test_xlsx_source_reader.py::test_r6_windows_memory_probe_structure_and_types PASSED
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_probe_and_sampler PASSED
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_worker_error_propagation PASSED
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_termination_guard PASSED
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_lifecycle_and_validation PASSED
+tests/test_xlsx_source_reader.py::test_r6_linux_proc_status_vmrss_parser_rejections PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_text_in_numeric_columns_raw_preservation PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_numeric_xml_financial_preservation PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_numeric_xml_in_raw_text_fields_across_all_four_sheets PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_namespace_strict_validation PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_coordinate_ascii_and_fullmatch_validation PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_negative_and_blank_activity_cases PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_independent_oracle_all_four_sheets PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_inlinestr_activity_with_sst_id_and_date_across_all_four_sheets PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_inlinestr_zeros_persian_and_ascii_count_as_activity PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitional[False] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitional[True] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain-&lt;is&gt;&lt;t&gt;\u0645\u062a\u0646 \u0633\u0627\u062f\u0647&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0633\u0627\u062f\u0647-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain-&lt;is&gt;&lt;t&gt;\u0645\u062a\u0646 \u0633\u0627\u062f\u0647&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0633\u0627\u062f\u0647-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain-&lt;is&gt;&lt;t&gt;\u0645\u062a\u0646 \u0633\u0627\u062f\u0647&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0633\u0627\u062f\u0647-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain-&lt;is&gt;&lt;t&gt;\u0645\u062a\u0646 \u0633\u0627\u062f\u0647&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0633\u0627\u062f\u0647-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs-&lt;is&gt;&lt;r&gt;&lt;t&gt;\u0645\u062a\u0646 &lt;/t&gt;&lt;/r&gt;&lt;r&gt;&lt;t&gt;\u062a\u0631\u06a9\u06cc\u0628\u06cc&lt;/t&gt;&lt;/r&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u062a\u0631\u06a9\u06cc\u0628\u06cc-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs-&lt;is&gt;&lt;r&gt;&lt;t&gt;\u0645\u062a\u0646 &lt;/t&gt;&lt;/r&gt;&lt;r&gt;&lt;t&gt;\u062a\u0631\u06a9\u06cc\u0628\u06cc&lt;/t&gt;&lt;/r&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u062a\u0631\u06a9\u06cc\u0628\u06cc-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs-&lt;is&gt;&lt;r&gt;&lt;t&gt;\u0645\u062a\u0646 &lt;/t&gt;&lt;/r&gt;&lt;r&gt;&lt;t&gt;\u062a\u0631\u06a9\u06cc\u0628\u06cc&lt;/t&gt;&lt;/r&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u062a\u0631\u06a9\u06cc\u0628\u06cc-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs-&lt;is&gt;&lt;r&gt;&lt;t&gt;\u0645\u062a\u0646 &lt;/t&gt;&lt;/r&gt;&lt;r&gt;&lt;t&gt;\u062a\u0631\u06a9\u06cc\u0628\u06cc&lt;/t&gt;&lt;/r&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u062a\u0631\u06a9\u06cc\u0628\u06cc-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail-&lt;is&gt;&lt;t&gt;&lt;!--cmt--&gt;\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail-&lt;is&gt;&lt;t&gt;&lt;!--cmt--&gt;\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail-&lt;is&gt;&lt;t&gt;&lt;!--cmt--&gt;\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail-&lt;is&gt;&lt;t&gt;&lt;!--cmt--&gt;\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero-&lt;is&gt;&lt;t&gt;0&lt;/t&gt;&lt;/is&gt;-0-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero-&lt;is&gt;&lt;t&gt;0&lt;/t&gt;&lt;/is&gt;-0-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero-&lt;is&gt;&lt;t&gt;0&lt;/t&gt;&lt;/is&gt;-0-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero-&lt;is&gt;&lt;t&gt;0&lt;/t&gt;&lt;/is&gt;-0-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero-&lt;is&gt;&lt;t&gt;\u06f0&lt;/t&gt;&lt;/is&gt;-\u06f0-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero-&lt;is&gt;&lt;t&gt;\u06f0&lt;/t&gt;&lt;/is&gt;-\u06f0-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero-&lt;is&gt;&lt;t&gt;\u06f0&lt;/t&gt;&lt;/is&gt;-\u06f0-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero-&lt;is&gt;&lt;t&gt;\u06f0&lt;/t&gt;&lt;/is&gt;-\u06f0-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x0020_] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x0009_] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x000D_] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x00A0_] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_single_pass_escaped_literal_is_active PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_nul_control_char_is_active_and_preserved PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_oversized_sst_index_on_inactive_row_is_safely_ignored PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_oversized_sst_index_on_active_row_fails_with_cell_error PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_active_row_corrupt_sst_has_exact_consumer_coordinates PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_malformed_activity_controls_and_error_coordinates[inline_unknown_leaf-&lt;is&gt;&lt;t&gt;&lt;unknownleaf&gt;\u0645\u062a\u0646&lt;/unknownleaf&gt;&lt;/t&gt;&lt;/is&gt;] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_malformed_activity_controls_and_error_coordinates[direct_unknown_leaf-&lt;v&gt;&lt;unknownleaf&gt;\u0645\u062a\u0646&lt;/unknownleaf&gt;&lt;/v&gt;] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[abc] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[-1] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[01] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[1.5] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_missing_sst_v_element_on_active_row_fails_and_inactive_row_ignored PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_equivalent_representations_and_row_cell_permutation PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_read_only_integrity_and_cleanup_on_failure PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_raw_text_numeric_appearance_leading_zeros_and_spaces PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_stream_passes_and_selective_sst_decoding_bounds[1] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_stream_passes_and_selective_sst_decoding_bounds[200] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_01_inactive_inlinestr_empty_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_02_inactive_inlinestr_whitespace_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_03_inactive_str_whitespace_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_04_inactive_sst_empty_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_05_inactive_sst_whitespace_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_06_inactive_covered_literal_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_07_inactive_unsupported_leaf_in_date PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_08_inactive_unsupported_leaf_in_id PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_09_covered_formula_cache_on_active_row PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_10_activity_with_xml_comment_and_sst_id PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_paired_control_corrupt_sst_in_active_row_fails PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_shared_sst_entry_between_inactive_and_active_consumers PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_invalid_sst_index_in_activity_column_raises_typed_error PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_activity_and_sst_across_all_four_sheets PASSED
+
+================================== FAILURES ===================================
+_________________ test_sa02_initial_source_symlink_rejection __________________
+
+tmp_path = WindowsPath('REVIEW_ROOT/windows-evidence/tmp-full/test_sa02_initial_source_symli0')
+
+    def test_sa02_initial_source_symlink_rejection(tmp_path: Path) -&gt; None:
+        """SA-02 & R2-02: Initial symlink source rejected with policy error."""
+&gt;       _assert_or_skip_symlink_capability(tmp_path)
+
+tests\test_xlsx_snapshot_acquisition.py:476:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('REVIEW_ROOT/windows-evidence/tmp-full/test_sa02_initial_source_symli0')
+
+    def _assert_or_skip_symlink_capability(tmp_path: Path) -&gt; None:
+        """Check symlink capability. In CI environments, lack of capability fails;
+        in local unprivileged dev, skips with precise reason.
+        """
+        can_symlink, skip_reason = _probe_symlink_capability(tmp_path)
+        if not can_symlink:
+            is_ci = (
+                os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+            )
+            if is_ci:
+&gt;               pytest.fail(f"CI environment symlink precondition failure: {skip_reason}")
+E               Failed: CI environment symlink precondition failure: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+
+tests\test_xlsx_snapshot_acquisition.py:133: Failed
+___________ test_sa05_source_symlink_race_mutation_with_same_inode ____________
+
+tmp_path = WindowsPath('REVIEW_ROOT/windows-evidence/tmp-full/test_sa05_source_symlink_race_0')
+
+    def test_sa05_source_symlink_race_mutation_with_same_inode(
+        tmp_path: Path,
+    ) -&gt; None:
+        """SA-05 & R2-02: Renaming source and replacing with symlink is detected."""
+&gt;       _assert_or_skip_symlink_capability(tmp_path)
+
+tests\test_xlsx_snapshot_acquisition.py:737:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('REVIEW_ROOT/windows-evidence/tmp-full/test_sa05_source_symlink_race_0')
+
+    def _assert_or_skip_symlink_capability(tmp_path: Path) -&gt; None:
+        """Check symlink capability. In CI environments, lack of capability fails;
+        in local unprivileged dev, skips with precise reason.
+        """
+        can_symlink, skip_reason = _probe_symlink_capability(tmp_path)
+        if not can_symlink:
+            is_ci = (
+                os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+            )
+            if is_ci:
+&gt;               pytest.fail(f"CI environment symlink precondition failure: {skip_reason}")
+E               Failed: CI environment symlink precondition failure: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+
+tests\test_xlsx_snapshot_acquisition.py:133: Failed
+________ test_sa07_candidate_symlink_rejection_leaves_target_untouched ________
+
+tmp_path = WindowsPath('REVIEW_ROOT/windows-evidence/tmp-full/test_sa07_candidate_symlink_re0')
+
+    def test_sa07_candidate_symlink_rejection_leaves_target_untouched(
+        tmp_path: Path,
+    ) -&gt; None:
+        """SA-07 & R2-01: Candidate symlink fails and leaves target untouched."""
+&gt;       _assert_or_skip_symlink_capability(tmp_path)
+
+tests\test_xlsx_snapshot_acquisition.py:963:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('REVIEW_ROOT/windows-evidence/tmp-full/test_sa07_candidate_symlink_re0')
+
+    def _assert_or_skip_symlink_capability(tmp_path: Path) -&gt; None:
+        """Check symlink capability. In CI environments, lack of capability fails;
+        in local unprivileged dev, skips with precise reason.
+        """
+        can_symlink, skip_reason = _probe_symlink_capability(tmp_path)
+        if not can_symlink:
+            is_ci = (
+                os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+            )
+            if is_ci:
+&gt;               pytest.fail(f"CI environment symlink precondition failure: {skip_reason}")
+E               Failed: CI environment symlink precondition failure: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+
+tests\test_xlsx_snapshot_acquisition.py:133: Failed
+_________________ test_sa09_symlink_replacement_during_lease __________________
+
+tmp_path = WindowsPath('REVIEW_ROOT/windows-evidence/tmp-full/test_sa09_symlink_replacement_0')
+
+    def test_sa09_symlink_replacement_during_lease(tmp_path: Path) -&gt; None:
+        """SA-09 & R2-01: Replacing snapshot with a symlink raises integrity error."""
+&gt;       _assert_or_skip_symlink_capability(tmp_path)
+
+tests\test_xlsx_snapshot_acquisition.py:1292:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('REVIEW_ROOT/windows-evidence/tmp-full/test_sa09_symlink_replacement_0')
+
+    def _assert_or_skip_symlink_capability(tmp_path: Path) -&gt; None:
+        """Check symlink capability. In CI environments, lack of capability fails;
+        in local unprivileged dev, skips with precise reason.
+        """
+        can_symlink, skip_reason = _probe_symlink_capability(tmp_path)
+        if not can_symlink:
+            is_ci = (
+                os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+            )
+            if is_ci:
+&gt;               pytest.fail(f"CI environment symlink precondition failure: {skip_reason}")
+E               Failed: CI environment symlink precondition failure: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+
+tests\test_xlsx_snapshot_acquisition.py:133: Failed
+============================== warnings summary ===============================
+.venv\Lib\site-packages\_pytest\cacheprovider.py:469
+  REVIEW_CHECKOUT\.venv\Lib\site-packages\_pytest\cacheprovider.py:469: PytestCacheWarning: could not create cache path REVIEW_CHECKOUT\.pytest_cache\v\cache\nodeids: [WinError 5] Access is denied: 'REVIEW_CHECKOUT\\.pytest_cache\\v\\cache'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+.venv\Lib\site-packages\_pytest\cacheprovider.py:423
+  REVIEW_CHECKOUT\.venv\Lib\site-packages\_pytest\cacheprovider.py:423: PytestCacheWarning: could not create cache path REVIEW_CHECKOUT\.pytest_cache\v\cache\lastfailed: [WinError 5] Access is denied: 'REVIEW_CHECKOUT\\.pytest_cache\\v\\cache'
+    config.cache.set("cache/lastfailed", self.lastfailed)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_xlsx_snapshot_acquisition.py::test_sa02_initial_source_symlink_rejection - Failed: CI environment symlink precondition failure: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+FAILED tests/test_xlsx_snapshot_acquisition.py::test_sa05_source_symlink_race_mutation_with_same_inode - Failed: CI environment symlink precondition failure: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+FAILED tests/test_xlsx_snapshot_acquisition.py::test_sa07_candidate_symlink_rejection_leaves_target_untouched - Failed: CI environment symlink precondition failure: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+FAILED tests/test_xlsx_snapshot_acquisition.py::test_sa09_symlink_replacement_during_lease - Failed: CI environment symlink precondition failure: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+============ 4 failed, 454 passed, 1 skipped, 2 warnings in 56.48s ============
+
+EXIT_CODE=1
+
+PLATFORM: windows; CHECK: full; ENVIRONMENT: CI/GITHUB_ACTIONS unset; native local mode
+$ uv run --offline pytest -v -s -o addopts= -W error::pytest.PytestUnhandledThreadExceptionWarning --basetemp 'REVIEW_ROOT\windows-evidence\tmp-full-local' -o 'cache_dir=REVIEW_ROOT\windows-evidence\pytest-local-cache'
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- REVIEW_CHECKOUT\.venv\Scripts\python.exe
+cachedir: REVIEW_ROOT\windows-evidence\pytest-local-cache
+hypothesis profile 'default'
+rootdir: REVIEW_CHECKOUT
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 459 items
+
+tests/test_architecture_guard.py::test_domain_has_no_forbidden_imports PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import fastapi\n-fastapi] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from fastapi import APIRouter\n-fastapi] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import aiogram\n-aiogram] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from aiogram.types import Message\n-aiogram] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import sqlalchemy\n-sqlalchemy] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from sqlalchemy.orm import Session\n-sqlalchemy] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import playwright\n-playwright] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from playwright.async_api import async_playwright\n-playwright] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import win32com.client\n-win32com] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from accounting_persistence import models\n-accounting_persistence] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[from accounting_reporting import generator\n-accounting_reporting] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import httpx\n-httpx] PASSED
+tests/test_architecture_guard.py::test_synthetic_negative_forbidden_import_detection[import pydantic\n-pydantic] PASSED
+tests/test_canonical_date.py::test_jalali_date_version_constant PASSED
+tests/test_canonical_date.py::test_digit_normalization PASSED
+tests/test_canonical_date.py::test_nowruz_parsing PASSED
+tests/test_canonical_date.py::test_leap_and_non_leap_esfand_30 PASSED
+tests/test_canonical_date.py::test_all_month_end_families PASSED
+tests/test_canonical_date.py::test_round_trip_gregorian_conversion PASSED
+tests/test_canonical_date.py::test_accepted_digit_and_separator_variants PASSED
+tests/test_canonical_date.py::test_none_input_handling PASSED
+tests/test_canonical_date.py::test_invalid_dates_rejected PASSED
+tests/test_canonical_date.py::test_to_iran_time_conversion PASSED
+tests/test_canonical_hashing.py::test_version_constants PASSED
+tests/test_canonical_hashing.py::test_golden_vector_buy_sell_row PASSED
+tests/test_canonical_hashing.py::test_golden_vector_receipts_payments_row PASSED
+tests/test_canonical_hashing.py::test_golden_vector_inventory_movements_row PASSED
+tests/test_canonical_hashing.py::test_golden_vector_business_parties_row PASSED
+tests/test_canonical_hashing.py::test_golden_vector_empty_snapshot PASSED
+tests/test_canonical_hashing.py::test_golden_vector_two_row_snapshot PASSED
+tests/test_canonical_hashing.py::test_mapping_order_independence PASSED
+tests/test_canonical_hashing.py::test_missing_or_extra_fields_rejected PASSED
+tests/test_canonical_hashing.py::test_null_vs_empty_text_distinction PASSED
+tests/test_canonical_hashing.py::test_raw_text_whitespace_and_unicode_preservation PASSED
+tests/test_canonical_hashing.py::test_invalid_type_tag_raises_canonical_value_error PASSED
+tests/test_canonical_hashing.py::test_number_canonicalization_and_type_rejections PASSED
+tests/test_canonical_hashing.py::test_every_raw_field_mutation_changes_source_hash PASSED
+tests/test_canonical_hashing.py::test_snapshot_permutation_invariance_and_sensitivity PASSED
+tests/test_canonical_hashing.py::test_snapshot_uuid_and_hash_validations PASSED
+tests/test_canonical_hashing.py::test_property_source_hash_determinism PASSED
+tests/test_canonical_hashing.py::test_property_snapshot_arbitrary_permutation_invariance PASSED
+tests/test_imports.py::test_import_domain PASSED
+tests/test_imports.py::test_import_contracts PASSED
+tests/test_imports.py::test_import_persistence PASSED
+tests/test_imports.py::test_import_reporting PASSED
+tests/test_imports.py::test_import_local_agent PASSED
+tests/test_imports.py::test_import_server_api PASSED
+tests/test_imports.py::test_import_worker PASSED
+tests/test_raw_input_contracts.py::test_contract_version PASSED
+tests/test_raw_input_contracts.py::test_registry_approved_sheets PASSED
+tests/test_raw_input_contracts.py::test_stable_id_technical_headers PASSED
+tests/test_raw_input_contracts.py::test_buy_sell_contract_specification PASSED
+tests/test_raw_input_contracts.py::test_receipts_payments_contract_specification PASSED
+tests/test_raw_input_contracts.py::test_inventory_movements_contract_specification PASSED
+tests/test_raw_input_contracts.py::test_business_parties_contract_specification PASSED
+tests/test_raw_input_contracts.py::test_no_float_kind_in_any_contract PASSED
+tests/test_raw_input_contracts.py::test_excel_column_boundary_validation PASSED
+tests/test_raw_input_contracts.py::test_cell_classification_rules PASSED
+tests/test_raw_input_contracts.py::test_unknown_sheet_lookup_fails PASSED
+tests/test_raw_input_contracts.py::test_immutability_and_frozen_contracts PASSED
+tests/test_raw_input_contracts.py::test_contract_validation_rejects_field_name_collisions PASSED
+tests/test_raw_input_contracts.py::test_contract_validation_rejects_invalid_definitions PASSED
+tests/test_raw_input_contracts.py::test_property_classification_invariants PASSED
+tests/test_save_import_coordinator.py::test_sc01_public_api_exports_and_version PASSED
+tests/test_save_import_coordinator.py::test_sc01_source_read_attempt_immutability PASSED
+tests/test_save_import_coordinator.py::test_sc01_safe_repr_no_path_leakage PASSED
+tests/test_save_import_coordinator.py::test_sc01_save_coordinator_view_invariants PASSED
+tests/test_save_import_coordinator.py::test_sc02_configuration_path_validation PASSED
+tests/test_save_import_coordinator.py::test_sc02_notification_path_and_kind_filtering PASSED
+tests/test_save_import_coordinator.py::test_sc03_move_into_and_out_of_target PASSED
+tests/test_save_import_coordinator.py::test_sc04_idle_construction_and_clock_boundaries PASSED
+tests/test_save_import_coordinator.py::test_sc05_burst_coalescing_and_past_deadline PASSED
+tests/test_save_import_coordinator.py::test_sc06_concurrent_due_takes_yield_single_token PASSED
+tests/test_save_import_coordinator.py::test_sc06_token_security_and_invalid_finish_outcomes PASSED
+tests/test_save_import_coordinator.py::test_sc07_followup_notices_during_running_state PASSED
+tests/test_save_import_coordinator.py::test_sc08_source_not_ready_automatic_retry_scheduling PASSED
+tests/test_save_import_coordinator.py::test_sc09_reader_rejected_no_timer_retry_unless_newer_notice PASSED
+tests/test_save_import_coordinator.py::test_sc10_faulted_state_and_explicit_resume PASSED
+tests/test_save_import_coordinator.py::test_sc11_read_due_source_zero_io_when_not_due PASSED
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_success_lifecycle PASSED
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_missing_file_source_not_ready PASSED
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_reader_rejected_corrupt_file PASSED
+tests/test_save_import_coordinator.py::test_sc12_read_due_source_integrity_failure_faults_coordinator PASSED
+tests/test_save_import_coordinator.py::test_sc12_cancellation_keyboard_interrupt_faults_coordinator PASSED
+tests/test_save_import_coordinator.py::test_sc13_notice_responsiveness_during_blocked_io PASSED
+tests/test_save_import_coordinator.py::test_sc14_change_planner_oracle_zero_false_changes PASSED
+tests/test_save_import_coordinator.py::test_sc15_hypothesis_property_state_machine_oracle PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_01_reader_error_with_faulty_finish_preserves_both_causes PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_01_success_with_faulty_finish_fails_closed_no_false_success PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_01_base_exception_in_finish_propagates_and_faults_active_token PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_01_guard_does_not_mutate_new_or_foreign_token PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_01_reader_and_finish_and_guard_all_failing_preserves_three_causes PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_01_cancellation_in_guard_with_failing_reader_and_finish PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_01_guard_failure_after_real_recovery_execution PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_01_success_reader_with_faulty_finish_and_guard_fails_closed PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_02_take_due_error_injection_rollback_and_subsequent_success PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_02_take_due_thread_contention_with_injected_error PASSED
+tests/test_save_import_coordinator.py::test_w7_r3_01_concurrency_oracle_rejects_zero_token_winner_after_transient_error PASSED
+tests/test_save_import_coordinator.py::test_w7_r2_02_concurrency_oracle_rejects_unexpected_worker_errors PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_04_constant_safe_error_messages_no_path_or_secret_leakage PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_05_strict_types_for_time_and_enums PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_06_source_not_ready_to_success_retry_lifecycle_without_new_notice PASSED
+tests/test_save_import_coordinator.py::test_w7_r1_06_notice_responsiveness_during_blocked_lease_cleanup PASSED
+tests/test_source_change_plan.py::test_public_version_constant PASSED
+tests/test_source_change_plan.py::test_full_snapshot_all_four_sheets_required PASSED
+tests/test_source_change_plan.py::test_full_snapshot_duplicate_sheet_rejected PASSED
+tests/test_source_change_plan.py::test_full_snapshot_unknown_sheet_rejected PASSED
+tests/test_source_change_plan.py::test_full_snapshot_empty_workbook_and_empty_sheet_accepted PASSED
+tests/test_source_change_plan.py::test_forged_snapshot_cannot_bypass_or_authorize_voids PASSED
+tests/test_source_change_plan.py::test_forged_prior_registry_invariants_rejected PASSED
+tests/test_source_change_plan.py::test_all_rows_by_id_exact_object_matching_and_count_types PASSED
+tests/test_source_change_plan.py::test_hash_validation_rejects_trailing_or_leading_newlines PASSED
+tests/test_source_change_plan.py::test_global_uuid_uniqueness_across_sheets PASSED
+tests/test_source_change_plan.py::test_invalid_uuid_rejected_in_row_input PASSED
+tests/test_source_change_plan.py::test_row_rebuilds_source_hash_matching_wp03_directly PASSED
+tests/test_source_change_plan.py::test_transition_table_all_actions PASSED
+tests/test_source_change_plan.py::test_identity_relocation_between_sheets_raises_error PASSED
+tests/test_source_change_plan.py::test_order_invariance_sheet_and_row_permutations PASSED
+tests/test_source_change_plan.py::test_state_advancement_for_all_four_transitions PASSED
+tests/test_source_change_plan.py::test_null_vs_empty_text_distinction_in_change_plan PASSED
+tests/test_source_change_plan.py::test_single_field_sensitivity_and_canonical_equivalences PASSED
+tests/test_source_change_plan.py::test_empty_sheet_voids_all_prior_active_identities PASSED
+tests/test_source_change_plan.py::test_per_sheet_counts_breakdown PASSED
+tests/test_source_change_plan.py::test_constructor_defensive_copies_prevent_external_mutation PASSED
+tests/test_source_change_plan.py::test_immutability_and_tamper_resistance_across_all_models PASSED
+tests/test_source_change_plan.py::test_synthetic_15000_row_complexity_benchmark
+[BENCHMARK] 15,000 rows -&gt; build_duration: 0.8579s | plan_duration: 0.0585s
+PASSED
+tests/test_source_change_plan.py::test_raw_values_key_order_strictly_matches_registry_for_all_sheets PASSED
+tests/test_source_change_plan.py::test_property_change_plan_expanded_permutations_invariance PASSED
+tests/test_source_fiscal_evidence.py::test_fe01_public_contract_and_guarded_fresh_import PASSED
+tests/test_source_fiscal_evidence.py::test_fe02_one_year_all_transaction_sheets_both_entrypoints PASSED
+tests/test_source_fiscal_evidence.py::test_fe03_mixed_years_complete_ordered_evidence PASSED
+tests/test_source_fiscal_evidence.py::test_fe04_missing_dates_remain_independent_of_requiredness[years0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe04_missing_dates_remain_independent_of_requiredness[years1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe05_empty_party_only_and_complete_transaction_deletion PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1403/01/01-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\u06f1\u06f4\u06f0\u06f3/\u06f0\u06f1/\u06f0\u06f1-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\u0661\u0664\u0660\u0663/\u0660\u0661/\u0660\u0661-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[  1403-01-01\t-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[\n\u06f1\u06f3\u06f9\u06f9/\u06f1\u06f2/\u06f3\u06f0 -1399] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1403/12/30-1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1404/01/01-1404] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_canonical_date_vectors[1402/12/29-1402] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[1402/12/30] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[1403/13/01] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[2024-03-20T00:00:00] PASSED
+tests/test_source_fiscal_evidence.py::test_fe06_invalid_dates_fail_upstream[bad-date] PASSED
+tests/test_source_fiscal_evidence.py::test_fe07_non_date_fields_and_uuid_time_do_not_select_year PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[unknown-SYNTHETIC-MARKER] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_sheets[sheet5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[SYNTHETIC-ID] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[00000000-0000-7000-8000-000000000001] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[identity4] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_identities[identity5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[False] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[1403] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[SYNTHETIC-MARKER] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[1403.0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[year5] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[-1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_years[10000] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[None] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[True] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[False] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[1.0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_invalid_metadata_counts[-1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe08_valid_metadata_types_and_no_current_year_bounds PASSED
+tests/test_source_fiscal_evidence.py::test_fe09_computed_constructor_immutability_and_private_repr PASSED
+tests/test_source_fiscal_evidence.py::test_fe10_property_oracle_real_permutations_and_date_transition PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_purity_repeatability_identity_and_guard_control PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_unexpected_parser_failure_propagates_by_identity[failure0] PASSED
+tests/test_source_fiscal_evidence.py::test_fe11_unexpected_parser_failure_propagates_by_identity[failure1] PASSED
+tests/test_source_fiscal_evidence.py::test_fe12_synthetic_15000_rows_complete_oracle_and_retention FE-12 fixture_seconds=1.047958 evaluation_seconds=0.144873 transaction_rows=13500 parties=1500
+PASSED
+tests/test_source_fiscal_evidence.py::test_fe13_xlsx_generations_requiredness_and_independent_planner PASSED
+tests/test_source_requiredness.py::test_sr01_version_exports_and_inert_pure_library PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_subprocess_probe PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[path_write] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[builtins_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[io_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[os_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[path_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[code_read] PASSED
+tests/test_source_requiredness.py::test_sr01_fresh_import_negative_controls[zoneinfo_read] PASSED
+tests/test_source_requiredness.py::test_sr01_public_and_submodule_exports_identity_retention PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-date_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-transaction_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-quantity_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-unit_price_toman_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-date_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-entry_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-amount_toman_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-date_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-movement_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-quantity_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_missing_value_for_every_required_field_across_all_four_sheets[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr02_multiple_rows_and_fields_aggregate_all_missing_issues PASSED
+tests/test_source_requiredness.py::test_sr02_omission_of_transaction_type_raw_is_detected PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-transaction_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a-entry_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-movement_type_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c-item_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_required_text_presence_matrix_across_all_nine_text_fields[\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647-party_name_raw] PASSED
+tests/test_source_requiredness.py::test_sr03_omission_of_receipts_payments_blank_entry_type_is_detected PASSED
+tests/test_source_requiredness.py::test_sr03_date_presence_and_upstream_rejection PASSED
+tests/test_source_requiredness.py::test_sr04_numeric_zero_signed_values_and_type_preservation PASSED
+tests/test_source_requiredness.py::test_sr05_optional_fields_null_and_blank_permitted PASSED
+tests/test_source_requiredness.py::test_sr06_mixed_four_sheet_snapshot_issue_aggregation_and_counts PASSED
+tests/test_source_requiredness.py::test_sr07_four_empty_sheets_and_upstream_structure_rejection PASSED
+tests/test_source_requiredness.py::test_sr08_constructor_invariants_immutability_and_tamper_resistance PASSED
+tests/test_source_requiredness.py::test_sr09_error_messages_and_repr_masking_without_raw_leakage PASSED
+tests/test_source_requiredness.py::test_sr10_purity_repeatability_and_raw_preservation PASSED
+tests/test_source_requiredness.py::test_sr11_xlsx_reader_integration_synthetic_workbooks PASSED
+tests/test_source_requiredness.py::test_sr12_property_all_four_sheets_permutations_and_independent_oracle PASSED
+tests/test_source_requiredness.py::test_sr12_property_single_value_mutation_transitions PASSED
+tests/test_source_requiredness.py::test_sr12_property_exact_snapshot_raw_and_hash_retention PASSED
+tests/test_source_requiredness.py::test_sr12_hypothesis_randomized_presence_combinations PASSED
+tests/test_source_requiredness.py::test_sr13_scale_15000_row_synthetic_benchmark
+[SR-13 SCALE BENCHMARK] 15,000 rows -&gt; eval_seconds: 0.0088s | fixture_build_seconds: 1.0865s | checked_rows: 15000 | failed_rows: 3000 | issues: 3000
+PASSED
+tests/test_source_requiredness.py::test_sr14_existing_suite_retention_and_contracts_integrity PASSED
+tests/test_source_watch_runtime.py::test_wr01_public_api_exports_and_version PASSED
+tests/test_source_watch_runtime.py::test_wr01_source_watch_runtime_view_invariants PASSED
+tests/test_source_watch_runtime.py::test_wr01_safe_repr_no_path_leakage PASSED
+tests/test_source_watch_runtime.py::test_wr01_constructor_lexical_validation_and_containment PASSED
+tests/test_source_watch_runtime.py::test_wr01_consumer_validation_and_invalid_transition PASSED
+tests/test_source_watch_runtime.py::test_wr02_captured_observer_factory_and_no_alloc_on_init PASSED
+tests/test_source_watch_runtime.py::test_wr03_watchdog_event_adapter_table_driven_mapping PASSED
+tests/test_source_watch_runtime.py::test_wr04_callback_boundary_fault_handling PASSED
+tests/test_source_watch_runtime.py::test_wr05_initial_hint_and_preexisting_file_read PASSED
+tests/test_source_watch_runtime.py::test_wr06_fake_clock_deadline_boundaries_and_liveness_wait PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_a_stop_while_waiting_intermediate_and_final_state PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_a2_intermediate_stopping_state_held_in_teardown PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_b_stop_vs_cycle_admission_drains_result PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_c_fault_before_consumer_admission_suppresses_consumer PASSED
+tests/test_source_watch_runtime.py::test_wr07_case_d_notice_between_predicate_inspection_and_wait_lost_wake_prevention PASSED
+tests/test_source_watch_runtime.py::test_wr08_burst_coalescing_and_responsiveness_during_blocking PASSED
+tests/test_source_watch_runtime.py::test_wr09_case_1_notready_retries_automatically PASSED
+tests/test_source_watch_runtime.py::test_wr09_case_2_reader_rejection_enters_idle_without_retry PASSED
+tests/test_source_watch_runtime.py::test_wr09_case_3_reader_rejection_with_followup_notice_retries PASSED
+tests/test_source_watch_runtime.py::test_wr10_consumer_delivery_and_stop_draining PASSED
+tests/test_source_watch_runtime.py::test_wr11_concurrent_run_calls_single_winner_losers_invalid_transition PASSED
+tests/test_source_watch_runtime.py::test_wr11_stop_requested_during_startup_before_run_loop PASSED
+tests/test_source_watch_runtime.py::test_wr12_partial_startup_failure_teardown PASSED
+tests/test_source_watch_runtime.py::test_wr13_emitter_death_detected_at_loop_boundary PASSED
+tests/test_source_watch_runtime.py::test_wr13_dispatcher_death_detected_while_emitters_remain_alive PASSED
+tests/test_source_watch_runtime.py::test_wr13_empty_emitters_set_detected_at_loop_boundary PASSED
+tests/test_source_watch_runtime.py::test_wr14_raw_base_exception_passthrough PASSED
+tests/test_source_watch_runtime.py::test_wr14_primary_cause_preserved_with_async_delivery_error PASSED
+tests/test_source_watch_runtime.py::test_wr14_shared_cause_preserved_across_driver_and_stop_failures PASSED
+tests/test_source_watch_runtime.py::test_wr14_async_error_during_start_with_teardown_failure_grouping PASSED
+tests/test_source_watch_runtime.py::test_wr14_three_simultaneous_standard_exceptions_cause_identities PASSED
+tests/test_source_watch_runtime.py::test_wr14_worker_thread_join_failure_wrapped_in_shutdown_failed PASSED
+tests/test_source_watch_runtime.py::test_wr14_mixed_cancellation_and_normal_stop_failure_base_exception_group PASSED
+tests/test_source_watch_runtime_native.py::test_wr15_native_startup_read_and_inplace_and_atomic_save PASSED
+tests/test_source_watch_runtime_native.py::test_wr16_native_absent_source_lifecycle_and_thread_cleanup PASSED
+tests/test_source_watch_runtime_native.py::test_wr17_end_to_end_wp04_planner_composition PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_public_api_exports_and_version PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_stable_xlsx_snapshot_invariants PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_error_taxonomy_reasons_and_retryability PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa01_no_path_or_secret_leakage_in_messages_and_repr PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_two_observations_and_sleeper PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_invalid_arguments_and_policy_rejections PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_initial_source_symlink_rejection SKIPPED
+tests/test_xlsx_snapshot_acquisition.py::test_sa02_non_regular_file_rejection_policy PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa03_source_immutability_on_success_and_failures PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa04_missing_and_disappearing_source_handling PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa04_inaccessible_file_permission_lock PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_observation] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[before_copy_open] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_copy_chunk] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[before_source_reverify] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_race_mutation_fault_injections[during_source_reverify] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_observation] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[before_copy_open] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_copy_chunk] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[before_source_reverify] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_atomic_os_replace_at_every_race_point[during_source_reverify] PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa05_source_symlink_race_mutation_with_same_inode SKIPPED
+tests/test_xlsx_snapshot_acquisition.py::test_sa06_streaming_copy_bounded_chunks PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa06_bounded_stream_wrapper_verification PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_zip_central_directory_only_and_no_testzip_or_open_called PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_invalid_container_and_storage_faults PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_candidate_symlink_rejection_leaves_target_untouched SKIPPED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_pre_existing_final_snapshot_not_overwritten_or_deleted PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa07_real_stream_io_faults_and_short_write PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa08_promoted_path_and_source_mutation_isolation PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa08_posix_private_file_permissions SKIPPED
+tests/test_xlsx_snapshot_acquisition.py::test_sa08_snapshot_path_never_resolves_externally PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_lease_mutation_and_deletion_detection PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_atomic_os_replace_during_lease_preserves_replacement_file PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa09_symlink_replacement_during_lease SKIPPED
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_acquisition_and_cleanup_coincident_exception_group PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_consumer_and_cleanup_coincident_exception_group PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa10_consumer_integrity_and_cleanup_coincident_exception_group PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa11_concurrent_disjoint_acquisitions PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa12_end_to_end_reader_and_planner_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa13_source_change_prevents_partial_planner_voids PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa14_hypothesis_chunk_and_interval_properties PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -&gt; duration: 2.8286s | baseline_current_rss_mib: 29.87 MiB | call_peak_rss_mib: 60.96 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 5be949cc5635d719e93e6e51e1797806a2b0cee4cca1dd7e23093f6b7350fb80 | platform: win32
+PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_01_anchor_failure_between_mkdir_and_open_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_02_anchor_failure_on_fstat_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_03_qpart_foreign_destination_not_overwritten_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_04_qfinal_foreign_destination_not_overwritten_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_05_qdir_foreign_destination_not_overwritten_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_06_restore_foreign_destination_not_overwritten_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_07_safe_typed_error_messages_no_path_or_raw_oserror_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_08_candidate_fstat_transient_failure_no_replacement_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_09_candidate_fstat_failure_with_path_replacement_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_10_first_lease_lstat_transient_failure_no_replacement_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_11_atomic_promotion_failure_cleans_owned_artifacts_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_12_atomic_promotion_with_foreign_final_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_13_real_lease_exit_race_between_lstat_and_open_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_14_simulated_identity_collision_protection_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_15_real_mtime_zero_integrity_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r8_16_real_identity_unavailable_provider_fallback_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_01_link_unlink_api_not_used_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_02_quarantine_foreign_source_survived_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_03_promotion_foreign_part_survived_and_displaced_owned_survived_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_04_rename_noreplace_unavailable_fails_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_05_empty_foreign_qdir_survived_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_06_qpart_postverify_after_hook_replaces_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_07_qfinal_postverify_after_hook_replaces_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_08_qdir_postverify_after_hook_replaces_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r10_01_fresh_subprocess_import_and_wintypes_independence PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r10_02_windows_file_id_info_success_and_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r13_01_pre_existing_candidate_file_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r13_01_candidate_hardlink_to_source_immutability_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_09_windows_handle_anchor_creation_and_fail_closed_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r11_01_windows_handle_protect_from_close_native_oracle PASSED
+tests/test_xlsx_snapshot_acquisition.py::test_r9_10_windows_runtime_full_lifecycle_platform_conditional PASSED
+tests/test_xlsx_source_reader.py::test_r1_dtd_and_external_entities_parser_driven_rejection PASSED
+tests/test_xlsx_source_reader.py::test_r1_invalid_row_and_cell_hierarchy_reproduction_rejection PASSED
+tests/test_xlsx_source_reader.py::test_r1_utf16_and_cdata_comments_dtd_handling PASSED
+tests/test_xlsx_source_reader.py::test_r2_missing_content_types_and_macro_enabled_rejection PASSED
+tests/test_xlsx_source_reader.py::test_r5_strict_numeric_xml_grammar_and_rejections PASSED
+tests/test_xlsx_source_reader.py::test_r5_xml_exponent_parsed_directly_to_decimal PASSED
+tests/test_xlsx_source_reader.py::test_r6_read_only_integrity_and_handle_cleanup PASSED
+tests/test_xlsx_source_reader.py::test_xr02_required_headers_validation_and_rejections PASSED
+tests/test_xlsx_source_reader.py::test_xr04_formula_exclusion_and_coverage_intervals PASSED
+tests/test_xlsx_source_reader.py::test_xr05_row_activity_and_identity_validation PASSED
+tests/test_xlsx_source_reader.py::test_xr06_hidden_rows_dimensions_and_coordinates PASSED
+tests/test_xlsx_source_reader.py::test_r1_dtd_in_utf8_and_utf16_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r1_cdata_and_comments_containing_doctype_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r1_predefined_and_numeric_xml_entities_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r1_valid_utf16_workbook_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r2_invalid_wrapper_inside_si_and_is_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r2_foreign_namespace_si_in_sst_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r2_phonetic_direct_rph_under_is_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r2_rich_text_runs_and_per_fragment_escapes_decoded PASSED
+tests/test_xlsx_source_reader.py::test_r3_unused_sst_entries_not_decoded_or_retained PASSED
+tests/test_xlsx_source_reader.py::test_r4_ambiguous_officedocument_relationships_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r4_ambiguous_sharedstrings_relationships_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r4_ambiguous_sheets_containers_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r5_duplicate_uuid_raises_xlsx_identity_error PASSED
+tests/test_xlsx_source_reader.py::test_r5_textual_scientific_exponent_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r5_native_xml_numeric_exponent_accepted PASSED
+tests/test_xlsx_source_reader.py::test_r5_uuid_casing_canonicalized_by_snapshot PASSED
+tests/test_xlsx_source_reader.py::test_r6_planner_full_lifecycle_transitions_and_idempotency PASSED
+tests/test_xlsx_source_reader.py::test_r6_hypothesis_comprehensive_invariance_property PASSED
+tests/test_xlsx_source_reader.py::test_r6_direct_construction_comprehensive_matrix PASSED
+tests/test_xlsx_source_reader.py::test_r6_all_or_nothing_fourth_sheet_late_failure PASSED
+tests/test_xlsx_source_reader.py::test_r6_read_only_integrity_and_clean_cleanup PASSED
+tests/test_xlsx_source_reader.py::test_r4_01_negative_unsupported_tags_in_leaf_nodes_rejected PASSED
+tests/test_xlsx_source_reader.py::test_r4_01_comment_nodes_in_leaf_text_preserved PASSED
+tests/test_xlsx_source_reader.py::test_r4_01_root_connection_and_extlst_nested_worksheet PASSED
+tests/test_xlsx_source_reader.py::test_r4_02_required_headers_and_technical_id_matrix PASSED
+tests/test_xlsx_source_reader.py::test_r4_03_sst_selection_and_classification_positive_negative PASSED
+tests/test_xlsx_source_reader.py::test_r4_04_strict_sst_index_grammar_and_error_boundaries PASSED
+tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark
+[WP-05 BENCHMARK] 15,000 active rows -&gt; read_build_seconds: 4.2881s | baseline_current_rss_mib: 30.16 MiB | call_peak_rss_mib: 61.93 MiB | rows: 15000 | platform: win32
+PASSED
+tests/test_xlsx_source_reader.py::test_r6_windows_memory_probe_structure_and_types PASSED
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_probe_and_sampler PASSED
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_worker_error_propagation PASSED
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_termination_guard PASSED
+tests/test_xlsx_source_reader.py::test_r6_current_process_rss_sampler_lifecycle_and_validation PASSED
+tests/test_xlsx_source_reader.py::test_r6_linux_proc_status_vmrss_parser_rejections PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_text_in_numeric_columns_raw_preservation PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_numeric_xml_financial_preservation PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_numeric_xml_in_raw_text_fields_across_all_four_sheets PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_namespace_strict_validation PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_coordinate_ascii_and_fullmatch_validation PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_negative_and_blank_activity_cases PASSED
+tests/test_xlsx_source_reader_raw_contract_regressions.py::test_r5_01_independent_oracle_all_four_sheets PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_inlinestr_activity_with_sst_id_and_date_across_all_four_sheets PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_inlinestr_zeros_persian_and_ascii_count_as_activity PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitional[False] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_sst_date_and_literal_id_with_inline_activity_strict_and_transitional[True] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain-&lt;is&gt;&lt;t&gt;\u0645\u062a\u0646 \u0633\u0627\u062f\u0647&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0633\u0627\u062f\u0647-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain-&lt;is&gt;&lt;t&gt;\u0645\u062a\u0646 \u0633\u0627\u062f\u0647&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0633\u0627\u062f\u0647-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain-&lt;is&gt;&lt;t&gt;\u0645\u062a\u0646 \u0633\u0627\u062f\u0647&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0633\u0627\u062f\u0647-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[inline_plain-&lt;is&gt;&lt;t&gt;\u0645\u062a\u0646 \u0633\u0627\u062f\u0647&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0633\u0627\u062f\u0647-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs-&lt;is&gt;&lt;r&gt;&lt;t&gt;\u0645\u062a\u0646 &lt;/t&gt;&lt;/r&gt;&lt;r&gt;&lt;t&gt;\u062a\u0631\u06a9\u06cc\u0628\u06cc&lt;/t&gt;&lt;/r&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u062a\u0631\u06a9\u06cc\u0628\u06cc-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs-&lt;is&gt;&lt;r&gt;&lt;t&gt;\u0645\u062a\u0646 &lt;/t&gt;&lt;/r&gt;&lt;r&gt;&lt;t&gt;\u062a\u0631\u06a9\u06cc\u0628\u06cc&lt;/t&gt;&lt;/r&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u062a\u0631\u06a9\u06cc\u0628\u06cc-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs-&lt;is&gt;&lt;r&gt;&lt;t&gt;\u0645\u062a\u0646 &lt;/t&gt;&lt;/r&gt;&lt;r&gt;&lt;t&gt;\u062a\u0631\u06a9\u06cc\u0628\u06cc&lt;/t&gt;&lt;/r&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u062a\u0631\u06a9\u06cc\u0628\u06cc-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[rich_runs-&lt;is&gt;&lt;r&gt;&lt;t&gt;\u0645\u062a\u0646 &lt;/t&gt;&lt;/r&gt;&lt;r&gt;&lt;t&gt;\u062a\u0631\u06a9\u06cc\u0628\u06cc&lt;/t&gt;&lt;/r&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u062a\u0631\u06a9\u06cc\u0628\u06cc-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail-&lt;is&gt;&lt;t&gt;&lt;!--cmt--&gt;\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail-&lt;is&gt;&lt;t&gt;&lt;!--cmt--&gt;\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail-&lt;is&gt;&lt;t&gt;&lt;!--cmt--&gt;\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[comment_tail-&lt;is&gt;&lt;t&gt;&lt;!--cmt--&gt;\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a&lt;/t&gt;&lt;/is&gt;-\u0645\u062a\u0646 \u0628\u0627 \u06a9\u0627\u0645\u0646\u062a-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero-&lt;is&gt;&lt;t&gt;0&lt;/t&gt;&lt;/is&gt;-0-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero-&lt;is&gt;&lt;t&gt;0&lt;/t&gt;&lt;/is&gt;-0-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero-&lt;is&gt;&lt;t&gt;0&lt;/t&gt;&lt;/is&gt;-0-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[ascii_zero-&lt;is&gt;&lt;t&gt;0&lt;/t&gt;&lt;/is&gt;-0-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero-&lt;is&gt;&lt;t&gt;\u06f0&lt;/t&gt;&lt;/is&gt;-\u06f0-\u062e\u0631\u06cc\u062f-\u0641\u0631\u0648\u0634] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero-&lt;is&gt;&lt;t&gt;\u06f0&lt;/t&gt;&lt;/is&gt;-\u06f0-\u062f\u0631\u06cc\u0627\u0641\u062a-\u067e\u0631\u062f\u0627\u062e\u062a] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero-&lt;is&gt;&lt;t&gt;\u06f0&lt;/t&gt;&lt;/is&gt;-\u06f0-\u0648\u0631\u0648\u062f-\u062e\u0631\u0648\u062c] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_01_four_sheets_five_activity_modes_matrix[persian_zero-&lt;is&gt;&lt;t&gt;\u06f0&lt;/t&gt;&lt;/is&gt;-\u06f0-\u0644\u06cc\u0633\u062a \u06a9\u0633\u0628\u0647] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x0020_] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x0009_] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x000D_] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_whitespace_in_direct_string_is_inactive[_x00A0_] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_single_pass_escaped_literal_is_active PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_02_escaped_nul_control_char_is_active_and_preserved PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_oversized_sst_index_on_inactive_row_is_safely_ignored PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_oversized_sst_index_on_active_row_fails_with_cell_error PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_active_row_corrupt_sst_has_exact_consumer_coordinates PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_malformed_activity_controls_and_error_coordinates[inline_unknown_leaf-&lt;is&gt;&lt;t&gt;&lt;unknownleaf&gt;\u0645\u062a\u0646&lt;/unknownleaf&gt;&lt;/t&gt;&lt;/is&gt;] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_malformed_activity_controls_and_error_coordinates[direct_unknown_leaf-&lt;v&gt;&lt;unknownleaf&gt;\u0645\u062a\u0646&lt;/unknownleaf&gt;&lt;/v&gt;] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[abc] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[-1] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[01] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_invalid_sst_index_grammar_fails_with_coordinates[1.5] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_03_missing_sst_v_element_on_active_row_fails_and_inactive_row_ignored PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_equivalent_representations_and_row_cell_permutation PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_read_only_integrity_and_cleanup_on_failure PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_raw_text_numeric_appearance_leading_zeros_and_spaces PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_stream_passes_and_selective_sst_decoding_bounds[1] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_rb_04_stream_passes_and_selective_sst_decoding_bounds[200] PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_01_inactive_inlinestr_empty_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_02_inactive_inlinestr_whitespace_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_03_inactive_str_whitespace_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_04_inactive_sst_empty_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_05_inactive_sst_whitespace_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_06_inactive_covered_literal_with_corrupt_id_sst PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_07_inactive_unsupported_leaf_in_date PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_08_inactive_unsupported_leaf_in_id PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_09_covered_formula_cache_on_active_row PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_case_10_activity_with_xml_comment_and_sst_id PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_paired_control_corrupt_sst_in_active_row_fails PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_shared_sst_entry_between_inactive_and_active_consumers PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_invalid_sst_index_in_activity_column_raises_typed_error PASSED
+tests/test_xlsx_source_reader_sst_activity_regressions.py::test_r5_02_activity_and_sst_across_all_four_sheets PASSED
+
+======================= 454 passed, 5 skipped in 59.35s =======================
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: reader-benchmark; ENVIRONMENT: CI/GITHUB_ACTIONS unset; native local mode
+$ uv run --offline pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s -o addopts= --basetemp 'REVIEW_ROOT\windows-evidence\tmp-reader-local' -o 'cache_dir=REVIEW_ROOT\windows-evidence\pytest-local-cache'
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- REVIEW_CHECKOUT\.venv\Scripts\python.exe
+cachedir: REVIEW_ROOT\windows-evidence\pytest-local-cache
+hypothesis profile 'default'
+rootdir: REVIEW_CHECKOUT
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 1 item
+
+tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark
+[WP-05 BENCHMARK] 15,000 active rows -&gt; read_build_seconds: 2.8131s | baseline_current_rss_mib: 30.00 MiB | call_peak_rss_mib: 60.09 MiB | rows: 15000 | platform: win32
+PASSED
+
+============================== 1 passed in 6.57s ==============================
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: acquisition-benchmark; ENVIRONMENT: CI/GITHUB_ACTIONS unset; native local mode
+$ uv run --offline pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s -o addopts= --basetemp 'REVIEW_ROOT\windows-evidence\tmp-acquisition-local' -o 'cache_dir=REVIEW_ROOT\windows-evidence\pytest-local-cache'
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- REVIEW_CHECKOUT\.venv\Scripts\python.exe
+cachedir: REVIEW_ROOT\windows-evidence\pytest-local-cache
+hypothesis profile 'default'
+rootdir: REVIEW_CHECKOUT
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 1 item
+
+tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -&gt; duration: 2.8452s | baseline_current_rss_mib: 30.02 MiB | call_peak_rss_mib: 61.66 MiB | rows: 15000 | file_bytes: 549787 | file_sha: ab4dc2e649e62ab8b5ed56deb322997b94351fd3a9ab8d8d43c5aefca2471be5 | platform: win32
+PASSED
+
+============================== 1 passed in 6.30s ==============================
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: diff-check; ENVIRONMENT: CI/GITHUB_ACTIONS unset; native local mode
+$ git diff --check d14ef4abbe858ca99501d5eac2c44c7179388410
+warning: unable to access 'USERPROFILE/.config/git/ignore': Permission denied
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: baseline-tests-unchanged; ENVIRONMENT: CI/GITHUB_ACTIONS unset; native local mode
+$ git diff --exit-code d14ef4abbe858ca99501d5eac2c44c7179388410 -- tests ':!tests/test_source_fiscal_evidence.py' ':!tests/source_fiscal_evidence_import_probe.py'
+warning: unable to access 'USERPROFILE/.config/git/ignore': Permission denied
+
+EXIT_CODE=0
+
+PLATFORM: windows; CHECK: protected-unchanged; ENVIRONMENT: CI/GITHUB_ACTIONS unset; native local mode
+$ git diff --exit-code d14ef4abbe858ca99501d5eac2c44c7179388410 -- ROADMAP.md docs .agents .github apps uv.lock pyproject.toml
+warning: unable to access 'USERPROFILE/.config/git/ignore': Permission denied
+
+EXIT_CODE=0
+
+PUBLICATION SCAN (tracked files and every new branch blob)
+$ python ../scan_delivery.py
+{"branch_blobs_scanned": 5, "finding_count": 0, "findings": [], "head": "b9230689c3d9273231d017d71a1ce6873bd8c2a7", "tracked_files": 123}
+
+EXIT_CODE=0
+
+ISOLATED ROLLBACK CONFIRMATION
+The isolated clone was created from the tested code and git revert --no-commit b9230689c3d9273231d017d71a1ce6873bd8c2a7 completed with exit 0. Read-only confirmation follows. The staged revert remains only in that disposable clone.
+$ git rev-parse HEAD
+b9230689c3d9273231d017d71a1ce6873bd8c2a7
+
+EXIT_CODE=0
+
+$ git diff --quiet d14ef4abbe858ca99501d5eac2c44c7179388410
+warning: unable to access 'USERPROFILE/.config/git/ignore': Permission denied
+
+EXIT_CODE=0
+
+$ git diff --cached --quiet d14ef4abbe858ca99501d5eac2c44c7179388410
+warning: unable to access 'USERPROFILE/.config/git/ignore': Permission denied
+
+EXIT_CODE=0
+
+$ git status --short
+M  packages/contracts/README.md
+M  packages/contracts/src/accounting_contracts/__init__.py
+D  packages/contracts/src/accounting_contracts/source_fiscal_evidence.py
+D  tests/source_fiscal_evidence_import_probe.py
+D  tests/test_source_fiscal_evidence.py
+warning: unable to access 'USERPROFILE/.config/git/ignore': Permission denied
+warning: unable to access 'USERPROFILE/.config/git/ignore': Permission denied
+
+EXIT_CODE=0
+
+FINAL SUMMARY
+Dedicated WP-10: 56 passed in 2.03s (initial local cache warning disclosed).
+Full native Windows local: 454 passed, 5 skipped in 59.35s; no warnings.
+Strict CI=true probe: 454 passed, 4 failed symlink privilege preconditions,
+1 POSIX skip in 56.48s. These four scenarios must PASS in real Windows CI.
+All 403 baseline nodes retained unchanged; 56 additional cases = 459 collected.
+Format/lint: PASS, 88 files. Full mypy and win32 mypy: PASS, 34 source files.
+FE-12 fixture 0.830156s; evaluator 0.098809s; 13,500 transaction + 1,500 party rows.
+WP-05 measured read/build 2.8131s, peak 60.09 MiB: PASS original 15s / 128 MiB.
+WP-06 measured acquisition/read 2.8452s, peak 61.66 MiB: PASS original gates.
+Source/export/tests/README code scan: 123 tracked files + 5 branch blobs, zero findings.
+Isolated code revert: index and working tree exactly match approved baseline.
+Linux local: NOT RUN. Linux and Windows CI: PENDING. Independent review: PENDING.
+FE-14 remains partial until native CI and review. No Gate acceptance is claimed.
