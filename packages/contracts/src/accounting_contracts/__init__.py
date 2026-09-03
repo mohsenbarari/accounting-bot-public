@@ -71,6 +71,14 @@ from accounting_contracts.source_change_plan import (
     build_source_workbook_snapshot,
     plan_source_changes,
 )
+from accounting_contracts.source_fiscal_evidence import (
+    SOURCE_FISCAL_EVIDENCE_VERSION,
+    SourceFiscalEvidenceInputError,
+    SourceFiscalEvidenceReport,
+    SourceFiscalRowEvidence,
+    SourceFiscalYearCount,
+    evaluate_source_fiscal_evidence,
+)
 from accounting_contracts.source_requiredness import (
     SOURCE_REQUIREDNESS_VERSION,
     SourceRequirednessInputError,
@@ -122,10 +130,15 @@ __all__ = [
     "RawSheetContract",
     "SHEET_SNAPSHOT_HASH_VERSION",
     "SOURCE_CHANGE_PLAN_VERSION",
+    "SOURCE_FISCAL_EVIDENCE_VERSION",
     "SOURCE_HASH_VERSION",
     "SOURCE_REQUIREDNESS_VERSION",
     "SheetSnapshotHashResult",
     "SourceChangePlanError",
+    "SourceFiscalEvidenceInputError",
+    "SourceFiscalEvidenceReport",
+    "SourceFiscalRowEvidence",
+    "SourceFiscalYearCount",
     "SourceHashResult",
     "SourceRequirednessInputError",
     "SourceRequirednessIssue",
@@ -147,6 +160,7 @@ __all__ = [
     "compute_sheet_snapshot_hash",
     "compute_source_hash",
     "evaluate_source_requiredness",
+    "evaluate_source_fiscal_evidence",
     "get_raw_contract_registry",
     "get_sheet_contract",
     "normalize_digits",
