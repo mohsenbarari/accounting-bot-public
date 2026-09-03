@@ -20,7 +20,7 @@
 
 Implement the seven exports and complete read-only adapter specified by
 [ADR-0015](../../../docs/adr/ADR-0015-xlsx-source-identity.md) and
-[WP-12](../../../docs/work-packages/phase-01/wp-12-xlsx-source-identity.md).
+[WP-12](../../../docs/work-packages/phase-01/WP-12-xlsx-source-identity.md).
 One WP-06 stable lease and one ZIP object supply both the versioned, unlinked
 `AccountingBot.SourceIdentity` custom property and the existing WP-05 Raw reader.
 The immutable result associates the exact `SourceBindingKey`, Raw result and
