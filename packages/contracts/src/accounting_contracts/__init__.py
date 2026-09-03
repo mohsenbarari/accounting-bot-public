@@ -97,6 +97,13 @@ from accounting_contracts.source_identity_projection import (
     SourceIdentityProjectionReason,
     project_source_prior,
 )
+from accounting_contracts.source_raw_codec import (
+    SOURCE_RAW_CODEC_VERSION,
+    SourceRawCodecError,
+    SourceRawCodecReason,
+    decode_source_raw_row,
+    encode_source_raw_row,
+)
 from accounting_contracts.source_requiredness import (
     SOURCE_REQUIREDNESS_VERSION,
     SourceRequirednessInputError,
@@ -152,6 +159,7 @@ __all__ = [
     "SOURCE_FISCAL_EVIDENCE_VERSION",
     "SOURCE_HASH_VERSION",
     "SOURCE_IDENTITY_PROJECTION_VERSION",
+    "SOURCE_RAW_CODEC_VERSION",
     "SOURCE_REQUIREDNESS_VERSION",
     "SheetSnapshotHashResult",
     "SourceChangePlanError",
@@ -170,6 +178,8 @@ __all__ = [
     "SourceIdentityCatalog",
     "SourceIdentityProjectionError",
     "SourceIdentityProjectionReason",
+    "SourceRawCodecError",
+    "SourceRawCodecReason",
     "SourceRequirednessInputError",
     "SourceRequirednessIssue",
     "SourceRequirednessIssueReason",
@@ -189,6 +199,8 @@ __all__ = [
     "classify_cell",
     "compute_sheet_snapshot_hash",
     "compute_source_hash",
+    "decode_source_raw_row",
+    "encode_source_raw_row",
     "evaluate_source_requiredness",
     "evaluate_source_fiscal_evidence",
     "get_raw_contract_registry",
