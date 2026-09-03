@@ -1,0 +1,267 @@
+LOG REPRESENTATION: Lines ending in spaces/tabs are represented as JSON_LINE: followed by a JSON string, preserving the original characters without Git trailing whitespace. All other output lines are unchanged; line endings are normalized. Original subprocess byte logs remain in windows-evidence.
+
+WORK PACKAGE: WP-11 source-binding.v1
+PHASE: 1
+RECORDED AT UTC: 2026-09-03T08:37:15.839946+00:00
+BASELINE: b9502a8f9050257c3dd4c19f9a99d19e0e608a62
+TESTED CODE SHA: e0f4ac3abe27085f726c83d0f6161e01aba692e4
+BRANCH: codex/phase-01-source-binding
+PLATFORM: Windows local / Python 3.13.15 / uv 0.12.7
+TEMP/TMP: isolated workspace test-tmp directory; UV_CACHE_DIR and UV_PYTHON point
+to the existing local dependency runtime. No CI=true override was used.
+
+SETUP NOTES
+The first dependency setup was blocked by sandbox network restrictions. The same
+frozen sync succeeded with authorized network access. The first narrow pytest run
+could not access the user's default temp directory; TEMP/TMP were then assigned to
+the isolated workspace. These setup attempts did not supply final pass evidence.
+Below are final live outputs on the fixed tested-code SHA.
+
+
+COMMAND: uv sync --frozen --all-packages --all-groups
+STARTED AT UTC: 2026-09-03T08:31:44.752757+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+Checked 85 packages in 8ms
+
+
+
+COMMAND: uv lock --check
+STARTED AT UTC: 2026-09-03T08:31:44.803827+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+Resolved 88 packages in 2ms
+
+
+
+COMMAND: uv run ruff format --check .
+STARTED AT UTC: 2026-09-03T08:31:44.838840+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+96 files already formatted
+
+
+
+COMMAND: uv run ruff check .
+STARTED AT UTC: 2026-09-03T08:31:44.976106+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+All checks passed!
+
+
+
+COMMAND: uv run mypy .
+STARTED AT UTC: 2026-09-03T08:31:45.055675+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 37 source files
+
+
+
+COMMAND: uv run mypy --platform win32 .
+STARTED AT UTC: 2026-09-03T08:31:45.482815+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 37 source files
+
+
+
+COMMAND: uv run pytest tests/test_source_binding.py -v
+STARTED AT UTC: 2026-09-03T08:31:45.906333+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp11-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 71 items
+
+tests\test_source_binding.py ........................................... [ 60%]
+............................                                             [100%]
+
+============================= 71 passed in 1.01s ==============================
+
+
+
+COMMAND: uv run pytest --collect-only -q
+STARTED AT UTC: 2026-09-03T08:31:47.506533+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+tests/test_architecture_guard.py: 14
+tests/test_canonical_date.py: 10
+tests/test_canonical_hashing.py: 18
+tests/test_imports.py: 7
+tests/test_raw_input_contracts.py: 15
+tests/test_save_import_coordinator.py: 40
+tests/test_source_binding.py: 71
+tests/test_source_change_plan.py: 25
+tests/test_source_fiscal_evidence.py: 56
+tests/test_source_requiredness.py: 53
+tests/test_source_watch_runtime.py: 33
+tests/test_source_watch_runtime_native.py: 3
+tests/test_xlsx_snapshot_acquisition.py: 74
+tests/test_xlsx_source_reader.py: 45
+tests/test_xlsx_source_reader_raw_contract_regressions.py: 7
+tests/test_xlsx_source_reader_sst_activity_regressions.py: 59
+
+
+
+
+COMMAND: uv run pytest -v
+STARTED AT UTC: 2026-09-03T08:31:49.312883+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp11-implementation-20260903\checkout
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 530 items
+
+tests\test_architecture_guard.py ..............                          [  2%]
+tests\test_canonical_date.py ..........                                  [  4%]
+tests\test_canonical_hashing.py ..................                       [  7%]
+tests\test_imports.py .......                                            [  9%]
+tests\test_raw_input_contracts.py ...............                        [ 12%]
+tests\test_save_import_coordinator.py .................................. [ 18%]
+......                                                                   [ 19%]
+tests\test_source_binding.py ........................................... [ 27%]
+............................                                             [ 33%]
+tests\test_source_change_plan.py .........................               [ 37%]
+tests\test_source_fiscal_evidence.py ................................... [ 44%]
+.....................                                                    [ 48%]
+tests\test_source_requiredness.py ...................................... [ 55%]
+...............                                                          [ 58%]
+tests\test_source_watch_runtime.py .................................     [ 64%]
+tests\test_source_watch_runtime_native.py ...                            [ 65%]
+tests\test_xlsx_snapshot_acquisition.py ......s..............s....s...s. [ 71%]
+..s.......
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 2.8511s | baseline_current_rss_mib: 29.86 MiB | call_peak_rss_mib: 60.61 MiB | rows: 15000 | file_bytes: 549787 | file_sha: b08a4a10c0649911ad191888446a97a98be727956cbc786f5f2870e66e565ef9 | platform: win32
+................................                               [ 79%]
+tests\test_xlsx_source_reader.py ......................................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 2.8346s | baseline_current_rss_mib: 29.98 MiB | call_peak_rss_mib: 59.48 MiB | rows: 15000 | platform: win32
+. [ 86%]
+......                                                                   [ 87%]
+tests\test_xlsx_source_reader_raw_contract_regressions.py .......        [ 88%]
+tests\test_xlsx_source_reader_sst_activity_regressions.py .............. [ 91%]
+.............................................                            [100%]
+
+=========================== short test summary info ===========================
+SKIPPED [4] tests\test_xlsx_snapshot_acquisition.py:134: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+SKIPPED [1] tests\test_xlsx_snapshot_acquisition.py:1174: POSIX permission check only applicable on POSIX
+======================= 525 passed, 5 skipped in 58.54s =======================
+
+
+
+COMMAND: uv run pytest tests/test_source_binding.py::test_sb13_large_prior_is_never_traversed_or_copied -v -s
+STARTED AT UTC: 2026-09-03T08:32:48.399030+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp11-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_source_binding.py SB-13 rows=15000 sources=100 lookups=1000 fixture=0.136936s construction=0.000113s resolution=0.000771s
+.
+
+============================== 1 passed in 0.40s ==============================
+
+
+
+COMMAND: uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
+STARTED AT UTC: 2026-09-03T08:32:49.348840+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp11-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+JSON_LINE: "tests\\test_xlsx_source_reader.py "
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 2.7602s | baseline_current_rss_mib: 30.03 MiB | call_peak_rss_mib: 61.19 MiB | rows: 15000 | platform: win32
+.
+
+============================== 1 passed in 5.72s ==============================
+
+
+
+COMMAND: uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
+STARTED AT UTC: 2026-09-03T08:32:55.637393+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp11-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+JSON_LINE: "tests\\test_xlsx_snapshot_acquisition.py "
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 2.8524s | baseline_current_rss_mib: 29.98 MiB | call_peak_rss_mib: 61.45 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 91c5a54b87ee7b8c595f9cee2c4de7028b29c14fa58d215a6660d2811e6e0569 | platform: win32
+.
+
+============================== 1 passed in 5.85s ==============================
+
+
+
+COMMAND: git diff --check b9502a8f9050257c3dd4c19f9a99d19e0e608a62...HEAD
+STARTED AT UTC: 2026-09-03T08:33:02.080372+00:00
+EXIT CODE: 0
+RAW OUTPUT:
+
+
+
+SCOPE VERIFICATION
+All 459 baseline cases retained; every baseline test file has the same Git blob.
+71 new dedicated cases; total 530. Product edits limited to the new module and
+exports, with README, new tests/probe and handoff files in the issued scope.
+Code scan: 132 tracked files, 5 new Git blobs, zero findings.
+
+ROLLBACK EXECUTION
+New isolated clone of tested code; initial clean status; scratch branch
+codex/wp11-rollback-check. Each command returned zero:
+git revert --no-commit e0f4ac3abe27085f726c83d0f6161e01aba692e4
+git diff --quiet b9502a8f9050257c3dd4c19f9a99d19e0e608a62
+git diff --cached --quiet b9502a8f9050257c3dd4c19f9a99d19e0e608a62
+PASS: isolated code rollback worktree and index both equal baseline b9502a8;
+later handoff documentation is excluded. Main and implementation branch unchanged.
+
+FINAL SUMMARY
+Dedicated: 71 passed in 1.01s.
+Full repository: 525 passed, 5 skipped in 58.54s (530 collected).
+Skips: 4 missing local Windows symlink privilege (1314), 1 POSIX-only case.
+Linux local NOT RUN. Native Windows/Linux CI PENDING. Independent review PENDING.
+SB-13: fixture 0.136936s, construction 0.000113s, 1000 resolutions 0.000771s;
+15000 prior rows, 100 annual records, no nested-row scan/copy during routing.
+Reader benchmark: 2.7602s / 61.19 MiB. Acquisition: 2.8524s / 61.45 MiB.
+Both original 15-second / 128-MiB gates pass.
+G1 OPEN / IN PROGRESS. Implementation evidence does not constitute acceptance.
+
+HANDOFF VALIDATION
+COMMAND: python .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-11-source-binding
+EXIT CODE: 0
+RAW OUTPUT:
+Handoff validation passed.
+
+WORKTREE WHITESPACE
+COMMAND: git diff --check
+EXIT CODE: 0
+RAW OUTPUT: (empty)
+
+The final delivery commit SHA and post-commit blob scan are recorded in the
+external delivery-status.json and final handoff message after Git creates the
+commit. This avoids changing a document to embed its own unknown commit SHA.
