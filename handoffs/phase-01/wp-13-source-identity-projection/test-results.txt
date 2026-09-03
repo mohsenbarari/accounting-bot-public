@@ -1,0 +1,973 @@
+WORK PACKAGE: WP-13 / source-identity-projection.v1
+PHASE: 1
+RECORDED AT UTC: 2026-09-03T13:03:10.655793+00:00
+BRANCH: codex/phase-01-source-identity-projection
+EXECUTION BASELINE: dd4b183a5ede1eb75e73c4268789ac7eb759fe1b
+TESTED CODE: 3ef927dd5016e463b4eed910933f29052c8c7967
+DELIVERY: following documentation-only commit; actual SHA reported after creation.
+PLATFORM: native local Windows, Python 3.13.15. Local Linux NOT RUN; native PR CI PENDING.
+ENVIRONMENT: unchanged frozen dependencies, workspace-local pytest temp root,
+previously installed pinned UV/Python runtime and cache. Both mypy commands run on
+Windows; --platform win32 is static typing, not a separate native Linux run.
+Original combined stdout/stderr bytes, argv and timestamps remain outside Git in
+work/reviews/wp13-implementation-20260903. This document normalizes line endings
+and removes trailing whitespace only; no substantive log output is substituted.
+Hashes refer to original log bytes. The full node log includes existing synthetic
+XML parameter values; only the 105 added nodes are reproduced as a DERIVED index.
+An initial blocked-network sync log is retained as sync-sandbox-failure.log; the
+same frozen command succeeded with authorized PyPI access and no manifest changes.
+
+CHECK: sync
+COMMAND: uv sync --frozen --all-packages --all-groups
+RECORDED AT UTC: 2026-09-03T12:29:21.829792+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: c1f994b6340198f4a1ac0432ba51c839c7392644e2ad88f705a1a43d3c37e8a8
+CAPTURED OUTPUT:
+Building accounting-contracts @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/contracts
+   Building accounting-domain @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/domain
+   Building accounting-local-agent @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/local_agent
+   Building accounting-persistence @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/persistence
+   Building accounting-reporting @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/reporting
+   Building accounting-server-api @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/server_api
+   Building accounting-worker @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/worker
+      Built accounting-persistence @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/persistence
+      Built accounting-local-agent @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/local_agent
+      Built accounting-server-api @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/server_api
+      Built accounting-reporting @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/reporting
+      Built accounting-contracts @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/contracts
+      Built accounting-worker @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/worker
+      Built accounting-domain @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/domain
+Prepared 7 packages in 2.20s
+Installed 85 packages in 4.01s
+ + accounting-contracts==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/contracts)
+ + accounting-domain==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/domain)
+ + accounting-local-agent==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/local_agent)
+ + accounting-persistence==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/persistence)
+ + accounting-reporting==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/packages/reporting)
+ + accounting-server-api==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/server_api)
+ + accounting-worker==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp13-implementation-20260903/checkout/apps/worker)
+ + aiofiles==25.1.0
+ + aiogram==3.31.0
+ + aiohappyeyeballs==2.7.1
+ + aiohttp==3.14.3
+ + aiosignal==1.4.0
+ + alembic==1.19.1
+ + altgraph==0.17.5
+ + annotated-doc==0.0.5
+ + annotated-types==0.8.0
+ + anyio==4.14.2
+ + ast-serialize==0.8.0
+ + attrs==26.1.0
+ + certifi==2026.7.22
+ + cffi==2.1.1
+ + charset-normalizer==3.5.1
+ + click==8.5.0
+ + colorama==0.4.6
+ + cryptography==50.0.1
+ + docker==7.2.0
+ + fastapi==0.141.1
+ + frozenlist==1.8.0
+ + greenlet==3.5.5
+ + h11==0.16.0
+ + httpcore==1.0.9
+ + httptools==0.8.0
+ + httpx==0.28.1
+ + hypothesis==6.167.0
+ + idna==3.19
+ + iniconfig==2.3.0
+ + jinja2==3.1.6
+ + librt==0.15.0
+ + lxml==6.1.2
+ + magic-filter==1.0.12
+ + mako==1.4.1
+ + markupsafe==3.0.3
+ + multidict==6.7.1
+ + mypy==2.3.1
+ + mypy-extensions==1.1.0
+ + packaging==26.3
+ + pathspec==1.1.1
+ + pefile==2024.8.26
+ + persiantools==6.2.0
+ + playwright==1.62.0
+ + pluggy==1.6.0
+ + propcache==0.5.2
+ + psycopg==3.3.4
+ + psycopg-binary==3.3.4
+ + pycparser==3.0
+ + pydantic==2.13.5
+ + pydantic-core==2.46.5
+ + pydantic-settings==2.15.0
+ + pyee==13.0.1
+ + pygments==2.21.0
+ + pyinstaller==6.22.2
+ + pyinstaller-hooks-contrib==2026.7
+ + pytest==9.1.1
+ + pytest-asyncio==1.4.0
+ + python-dotenv==1.2.3
+ + pywin32==312
+ + pywin32-ctypes==0.2.3
+ + pyyaml==6.0.3
+ + requests==2.34.2
+ + ruff==0.16.5
+ + setuptools==84.0.0
+ + sortedcontainers==2.4.0
+ + sqlalchemy==2.0.52
+ + starlette==1.6.0
+ + testcontainers==4.15.0
+ + typing-extensions==4.16.0
+ + typing-inspection==0.4.4
+ + tzdata==2026.3
+ + urllib3==2.7.0
+ + uvicorn==0.52.4
+ + watchdog==6.0.0
+ + watchfiles==1.2.0
+ + websockets==17.1
+ + wrapt==2.4.0
+ + yarl==1.24.5
+
+CHECK: lock
+COMMAND: uv lock --check
+RECORDED AT UTC: 2026-09-03T12:29:21.866771+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 07c6ff62d7ceb5ba18416873caf5c7b56d6e25553e40875dbce13c14ed5e846d
+CAPTURED OUTPUT:
+Resolved 88 packages in 2ms
+
+CHECK: format
+COMMAND: uv run ruff format --check .
+RECORDED AT UTC: 2026-09-03T12:58:44.874751+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 0e25936f296d6783c9ed43fd68bade26a8911c0a0482012f92297f6a797443ff
+CAPTURED OUTPUT:
+120 files already formatted
+
+CHECK: lint
+COMMAND: uv run ruff check .
+RECORDED AT UTC: 2026-09-03T12:58:44.962070+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+CAPTURED OUTPUT:
+All checks passed!
+
+CHECK: mypy
+COMMAND: uv run mypy .
+RECORDED AT UTC: 2026-09-03T12:58:45.532530+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 187e2eda67d5137d80066ba855f6f602d91fa65a769e3a1f2a22f231b462d0fc
+CAPTURED OUTPUT:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 49 source files
+
+CHECK: mypy-win32
+COMMAND: uv run mypy --platform win32 .
+RECORDED AT UTC: 2026-09-03T12:58:45.982340+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 187e2eda67d5137d80066ba855f6f602d91fa65a769e3a1f2a22f231b462d0fc
+CAPTURED OUTPUT:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 49 source files
+
+CHECK: dedicated
+COMMAND: uv run pytest tests/test_source_identity_projection.py tests/test_source_identity_projection_composition.py -v
+RECORDED AT UTC: 2026-09-03T12:58:50.043666+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 6e0dd57f27e7cc7a6294a62304efe321af91cdfe504fe19c0b43051f8d937302
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 105 items
+
+tests\test_source_identity_projection.py ............................... [ 29%]
+....................................................................     [ 94%]
+tests\test_source_identity_projection_composition.py ......              [100%]
+
+============================= 105 passed in 3.48s =============================
+
+CHECK: collect
+COMMAND: uv run pytest --collect-only -q
+RECORDED AT UTC: 2026-09-03T12:58:51.155397+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 27f7b40f4ecdba72ed1035be7b6128d635ae8acceb5527fe7ad69130e732d52d
+CAPTURED OUTPUT:
+tests/test_architecture_guard.py: 14
+tests/test_canonical_date.py: 10
+tests/test_canonical_hashing.py: 18
+tests/test_imports.py: 7
+tests/test_raw_input_contracts.py: 15
+tests/test_save_import_coordinator.py: 40
+tests/test_source_binding.py: 71
+tests/test_source_change_plan.py: 25
+tests/test_source_fiscal_evidence.py: 56
+tests/test_source_identity_projection.py: 99
+tests/test_source_identity_projection_composition.py: 6
+tests/test_source_requiredness.py: 53
+tests/test_source_watch_runtime.py: 33
+tests/test_source_watch_runtime_native.py: 3
+tests/test_xlsx_snapshot_acquisition.py: 74
+tests/test_xlsx_source_identity.py: 111
+tests/test_xlsx_source_identity_lifecycle.py: 37
+tests/test_xlsx_source_reader.py: 45
+tests/test_xlsx_source_reader_raw_contract_regressions.py: 7
+tests/test_xlsx_source_reader_sst_activity_regressions.py: 59
+
+CHECK: full
+COMMAND: uv run pytest -v
+RECORDED AT UTC: 2026-09-03T13:00:09.495235+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 2e9aae4baa58263dc66adbbd60e51ccf5153e124bb95799897cc72937045fcab
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 783 items
+
+tests\test_architecture_guard.py ..............                          [  1%]
+tests\test_canonical_date.py ..........                                  [  3%]
+tests\test_canonical_hashing.py ..................                       [  5%]
+tests\test_imports.py .......                                            [  6%]
+tests\test_raw_input_contracts.py ...............                        [  8%]
+tests\test_save_import_coordinator.py .................................. [ 12%]
+......                                                                   [ 13%]
+tests\test_source_binding.py ........................................... [ 18%]
+............................                                             [ 22%]
+tests\test_source_change_plan.py .........................               [ 25%]
+tests\test_source_fiscal_evidence.py ................................... [ 30%]
+.....................                                                    [ 32%]
+tests\test_source_identity_projection.py ............................... [ 36%]
+....................................................................     [ 45%]
+tests\test_source_identity_projection_composition.py ......              [ 46%]
+tests\test_source_requiredness.py ...................................... [ 50%]
+...............                                                          [ 52%]
+tests\test_source_watch_runtime.py .................................     [ 57%]
+tests\test_source_watch_runtime_native.py ...                            [ 57%]
+tests\test_xlsx_snapshot_acquisition.py ......s..............s....s...s. [ 61%]
+..s.......
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 2.8724s | baseline_current_rss_mib: 29.98 MiB | call_peak_rss_mib: 60.77 MiB | rows: 15000 | file_bytes: 549787 | file_sha: c06e6cc58b49b2330c2232bd1120285b67d9e3b29e0d87784d6faf4ebc5c44c3 | platform: win32
+................................                               [ 66%]
+tests\test_xlsx_source_identity.py ..................................... [ 71%]
+........................................................................ [ 80%]
+..                                                                       [ 81%]
+tests\test_xlsx_source_identity_lifecycle.py ........................... [ 84%]
+..........                                                               [ 85%]
+tests\test_xlsx_source_reader.py ......................................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 2.8601s | baseline_current_rss_mib: 30.26 MiB | call_peak_rss_mib: 60.79 MiB | rows: 15000 | platform: win32
+. [ 90%]
+......                                                                   [ 91%]
+tests\test_xlsx_source_reader_raw_contract_regressions.py .......        [ 92%]
+tests\test_xlsx_source_reader_sst_activity_regressions.py .............. [ 94%]
+.............................................                            [100%]
+
+=========================== short test summary info ===========================
+SKIPPED [4] tests\test_xlsx_snapshot_acquisition.py:134: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+SKIPPED [1] tests\test_xlsx_snapshot_acquisition.py:1174: POSIX permission check only applicable on POSIX
+================== 778 passed, 5 skipped in 68.48s (0:01:08) ==================
+
+CHECK: benchmark-ip14
+COMMAND: uv run pytest tests/test_source_identity_projection_composition.py -k ip14 -v -s
+RECORDED AT UTC: 2026-09-03T13:00:12.712069+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 0684bc8330e23c35681a4f1ae3db8037bd6ae79e2153c67af10bc3a7bf2dbcb9
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 6 items / 3 deselected / 3 selected
+
+tests\test_source_identity_projection_composition.py ..{"archive_memberships": 11250, "catalog_seconds": 0.023533500032499433, "fixture_seconds": 1.5332331000827253, "global_identities": 15000, "peak_rss_mib": 86.91015625, "planner_items_checked": 11250, "planner_seconds": 0.05154749995563179, "projected_identities": 11250, "projection_seconds": 0.013217800064012408}
+.
+
+======================= 3 passed, 3 deselected in 2.61s =======================
+
+CHECK: benchmark-xi14
+COMMAND: uv run pytest tests/test_xlsx_source_identity.py::test_xi14_combined_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T13:00:19.124441+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 950cb9d95910142f44ca7b0f2a973a508271c4bfbd4f1c288f1b475eff526939
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_source_identity.py {"fixture_seconds": 2.297831399948336, "peak_rss_mib": 84.01171875, "rows": 15000, "seconds": 2.634347200044431}
+.
+
+============================== 1 passed in 5.85s ==============================
+
+CHECK: benchmark-xr12
+COMMAND: uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T13:00:25.556349+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 776e79d4a0c88927a8b2203e5747ec1759b1c12fef900da7eb231bfcfae9fa15
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_source_reader.py
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 2.7735s | baseline_current_rss_mib: 30.25 MiB | call_peak_rss_mib: 60.95 MiB | rows: 15000 | platform: win32
+.
+
+============================== 1 passed in 5.79s ==============================
+
+CHECK: benchmark-sa14
+COMMAND: uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T13:00:33.770476+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: cd2ea968bce65de4717366345c50fc700cbc86aab55f36ab1798fe1289c0dff6
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_snapshot_acquisition.py
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 2.9163s | baseline_current_rss_mib: 30.02 MiB | call_peak_rss_mib: 60.59 MiB | rows: 15000 | file_bytes: 549787 | file_sha: da05097e64bdc9daf39323e13c0aed9e1591e779ec6a5ecf21c286241b7f23df | platform: win32
+.
+
+============================== 1 passed in 7.62s ==============================
+
+CHECK: derived node index
+COMMAND: uv run pytest --collect-only -q -o addopts=
+EXIT CODE: 0
+ORIGINAL FULL NODE LOG SHA256: c078ec12cfd6503417c593c5cb40556e0dddfedebc7dc794c2a1296daed5dd90
+DERIVED OUTPUT (105 added nodes; all 678 baseline nodes retained):
+tests/test_source_identity_projection.py::test_ip01_exports_constructors_and_immutability
+tests/test_source_identity_projection.py::test_ip01_guarded_fresh_import[normal-0]
+tests/test_source_identity_projection.py::test_ip01_guarded_fresh_import[inject_write-73]
+tests/test_source_identity_projection.py::test_ip02_catalog_global_heads_ignore_year_and_preserve_equal_objects
+tests/test_source_identity_projection.py::test_ip02_empty_and_archive_only_catalog[False]
+tests/test_source_identity_projection.py::test_ip02_empty_and_archive_only_catalog[True]
+tests/test_source_identity_projection.py::test_ip02_semantically_equal_state_subclasses_preserve_objects[False-False]
+tests/test_source_identity_projection.py::test_ip02_semantically_equal_state_subclasses_preserve_objects[False-True]
+tests/test_source_identity_projection.py::test_ip02_semantically_equal_state_subclasses_preserve_objects[True-False]
+tests/test_source_identity_projection.py::test_ip02_semantically_equal_state_subclasses_preserve_objects[True-True]
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[home]
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[owner-active]
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[owner-voided]
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[hash-tie]
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[life-tie]
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[older-tie]
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[stale-active]
+tests/test_source_identity_projection.py::test_ip04_exact_key_routes_and_cause[archive]
+tests/test_source_identity_projection.py::test_ip04_exact_key_routes_and_cause[unknown]
+tests/test_source_identity_projection.py::test_ip04_exact_key_routes_and_cause[unknown-same-year]
+tests/test_source_identity_projection.py::test_ip04_exact_key_routes_and_cause[wrong-year]
+tests/test_source_identity_projection.py::test_ip05_exact_projection_scope_and_no_archive_void
+tests/test_source_identity_projection.py::test_ip06_new_source_party_borrows_existing_revision[same-unchanged-None]
+tests/test_source_identity_projection.py::test_ip06_new_source_party_borrows_existing_revision[edit-edit-8]
+tests/test_source_identity_projection.py::test_ip06_new_source_party_borrows_existing_revision[voided-edit-9]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[insert-0]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[insert-1]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[insert-2]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[insert-3]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[unchanged-0]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[unchanged-1]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[unchanged-2]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[unchanged-3]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[edit-0]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[edit-1]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[edit-2]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[edit-3]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[void-0]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[void-1]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[void-2]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[void-3]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[settled-0]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[settled-1]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[settled-2]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[settled-3]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[reactivate-0]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[reactivate-1]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[reactivate-2]
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[reactivate-3]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-0-1]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-0-2]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-0-3]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-1-0]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-1-2]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-1-3]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-2-0]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-2-1]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-2-3]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-3-0]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-3-1]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-3-2]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-0-1]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-0-2]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-0-3]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-1-0]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-1-2]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-1-3]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-2-0]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-2-1]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-2-3]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-3-0]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-3-1]
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-3-2]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[same-0]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[same-1]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[same-2]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[edit-0]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[edit-1]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[edit-2]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[voided-0]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[voided-1]
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[voided-2]
+tests/test_source_identity_projection.py::test_ip09_independent_multiyear_membership_evolution
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[None]
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[True]
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[1]
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[SYNTHETIC-SECRET]
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[invalid4]
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[invalid5]
+tests/test_source_identity_projection.py::test_ip10_reason_strictness_and_representations
+tests/test_source_identity_projection.py::test_ip10_cancellation_identity[exception0]
+tests/test_source_identity_projection.py::test_ip10_cancellation_identity[exception1]
+tests/test_source_identity_projection.py::test_ip10_resolver_preserves_existing_cause
+tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[false-void]
+tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[revision-reset]
+tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[foreign-owner]
+tests/test_source_identity_projection.py::test_ip10_catalog_cancellation_is_not_wrapped[error0]
+tests/test_source_identity_projection.py::test_ip10_catalog_cancellation_is_not_wrapped[error1]
+tests/test_source_identity_projection.py::test_ip15_purity_and_injected_write_control
+tests/test_source_identity_projection_composition.py::test_ip11_identified_xlsx_multiyear_composition
+tests/test_source_identity_projection_composition.py::test_ip12_generated_history_matches_independent_model
+tests/test_source_identity_projection_composition.py::test_ip12_generated_conflict_below_head_is_rejected
+tests/test_source_identity_projection_composition.py::test_ip14_projection_never_revisits_archive[1]
+tests/test_source_identity_projection_composition.py::test_ip14_projection_never_revisits_archive[1000]
+tests/test_source_identity_projection_composition.py::test_ip14_15000_identity_projection_benchmark
+
+CHECK: mutation false VOID
+COMMAND: python ../mutation_probe.py false-void
+EXIT CODE: 1 (EXPECTED semantic assertion failure)
+ORIGINAL LOG SHA256: e6d84c6a34b82fd6cdffbb165a8f3469068296839f278f4e09cb144fcd506953
+CAPTURED OUTPUT:
+IN_MEMORY_MUTATION: false-void
+REPLACEMENT: projected = dict(catalog._global_heads)
+F                                                                        [100%]
+================================== FAILURES ===================================
+_______________ test_ip13_semantic_mutation_oracles[false-void] _______________
+
+case = 'false-void'
+
+    @pytest.mark.parametrize("case", ["false-void", "revision-reset", "foreign-owner"])
+    def test_ip13_semantic_mutation_oracles(case: str) -> None:
+        current = snapshot([(3 if case != "foreign-owner" else 0, 1, "base")])
+        archive = record(1404, prior=prior_from_snapshot(current, 7))
+        active = record(1405, active=True)
+        catalog = SourceIdentityCatalog(SourceBindingRegistry([archive, active]))
+        if case == "false-void":
+            current = snapshot()
+        try:
+            projected = projection.project_source_prior(active.key, current, catalog)
+            plan = plan_source_changes(current, projected)
+            outcome: object = [
+                (item.stable_id, item.action.value, item.planned_revision)
+                for item in plan.items
+            ]
+        except SourceIdentityProjectionError as exc:
+            outcome = ("error", exc.reason.value)
+        expected: dict[str, object] = {
+            "false-void": [],
+            "revision-reset": [(uid(1), "unchanged", None)],
+            "foreign-owner": ("error", "transaction_source_conflict"),
+        }
+>       assert outcome == expected[case]
+E       AssertionError: assert [(UUID('00000...), 'void', 8)] == []
+E
+E         Left contains one more item: (UUID('00000000-0000-7000-8000-000000000001'), 'void', 8)
+E         Use -v to get more diff
+
+tests\test_source_identity_projection.py:545: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[false-void]
+1 failed in 0.27s
+
+CHECK: mutation revision reset
+COMMAND: python ../mutation_probe.py revision-reset
+EXIT CODE: 1 (EXPECTED semantic assertion failure)
+ORIGINAL LOG SHA256: e802667f933a7196429dbc2a3e2279212ac01f54cea64a4aead98ec53c711648
+CAPTURED OUTPUT:
+IN_MEMORY_MUTATION: revision-reset
+REPLACEMENT: pass  # injected dropped borrow
+F                                                                        [100%]
+================================== FAILURES ===================================
+_____________ test_ip13_semantic_mutation_oracles[revision-reset] _____________
+
+case = 'revision-reset'
+
+    @pytest.mark.parametrize("case", ["false-void", "revision-reset", "foreign-owner"])
+    def test_ip13_semantic_mutation_oracles(case: str) -> None:
+        current = snapshot([(3 if case != "foreign-owner" else 0, 1, "base")])
+        archive = record(1404, prior=prior_from_snapshot(current, 7))
+        active = record(1405, active=True)
+        catalog = SourceIdentityCatalog(SourceBindingRegistry([archive, active]))
+        if case == "false-void":
+            current = snapshot()
+        try:
+            projected = projection.project_source_prior(active.key, current, catalog)
+            plan = plan_source_changes(current, projected)
+            outcome: object = [
+                (item.stable_id, item.action.value, item.planned_revision)
+                for item in plan.items
+            ]
+        except SourceIdentityProjectionError as exc:
+            outcome = ("error", exc.reason.value)
+        expected: dict[str, object] = {
+            "false-void": [],
+            "revision-reset": [(uid(1), "unchanged", None)],
+            "foreign-owner": ("error", "transaction_source_conflict"),
+        }
+>       assert outcome == expected[case]
+E       AssertionError: assert [(UUID('00000... 'insert', 1)] == [(UUID('00000...anged', None)]
+E
+E         At index 0 diff: (UUID('00000000-0000-7000-8000-000000000001'), 'insert', 1) != (UUID('00000000-0000-7000-8000-000000000001'), 'unchanged', None)
+E         Use -v to get more diff
+
+tests\test_source_identity_projection.py:545: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[revision-reset]
+1 failed in 0.26s
+
+CHECK: mutation foreign owner
+COMMAND: python ../mutation_probe.py foreign-owner
+EXIT CODE: 1 (EXPECTED semantic assertion failure)
+ORIGINAL LOG SHA256: 5726d3f2bfad99e21e4301d2217d15f53b905247cdffdda2e1d079a602a2f97b
+CAPTURED OUTPUT:
+IN_MEMORY_MUTATION: foreign-owner
+REPLACEMENT: if False:  # injected ownership bypass
+F                                                                        [100%]
+================================== FAILURES ===================================
+_____________ test_ip13_semantic_mutation_oracles[foreign-owner] ______________
+
+case = 'foreign-owner'
+
+    @pytest.mark.parametrize("case", ["false-void", "revision-reset", "foreign-owner"])
+    def test_ip13_semantic_mutation_oracles(case: str) -> None:
+        current = snapshot([(3 if case != "foreign-owner" else 0, 1, "base")])
+        archive = record(1404, prior=prior_from_snapshot(current, 7))
+        active = record(1405, active=True)
+        catalog = SourceIdentityCatalog(SourceBindingRegistry([archive, active]))
+        if case == "false-void":
+            current = snapshot()
+        try:
+            projected = projection.project_source_prior(active.key, current, catalog)
+            plan = plan_source_changes(current, projected)
+            outcome: object = [
+                (item.stable_id, item.action.value, item.planned_revision)
+                for item in plan.items
+            ]
+        except SourceIdentityProjectionError as exc:
+            outcome = ("error", exc.reason.value)
+        expected: dict[str, object] = {
+            "false-void": [],
+            "revision-reset": [(uid(1), "unchanged", None)],
+            "foreign-owner": ("error", "transaction_source_conflict"),
+        }
+>       assert outcome == expected[case]
+E       AssertionError: assert [(UUID('00000... 'insert', 1)] == ('error', 'tr...rce_conflict')
+E
+E         At index 0 diff: (UUID('00000000-0000-7000-8000-000000000001'), 'insert', 1) != 'error'
+E         Right contains one more item: 'transaction_source_conflict'
+E         Use -v to get more diff
+
+tests\test_source_identity_projection.py:545: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[foreign-owner]
+1 failed in 0.25s
+
+CHECK: mutation verification
+COMMAND: python ../mutation_probe.py
+EXIT CODE: 0
+ORIGINAL LOG SHA256: f77f5079430f61213467a067b1304f242e7013680a61643761b7cbe7a9a6a6e0
+CAPTURED OUTPUT:
+{
+  "mode": "in-memory function replacement in isolated processes",
+  "product_bytes_unchanged": true,
+  "product_sha256": "8aefbfc91c8a3d718b77eb3ac419ca773dcb1f65a946961bf5bd91ceab2a6355",
+  "cases": [
+    {
+      "case": "false-void",
+      "exit_code": 1,
+      "log": "mutation-false-void.log",
+      "expected_semantic_assertion_failed": true
+    },
+    {
+      "case": "revision-reset",
+      "exit_code": 1,
+      "log": "mutation-revision-reset.log",
+      "expected_semantic_assertion_failed": true
+    },
+    {
+      "case": "foreign-owner",
+      "exit_code": 1,
+      "log": "mutation-foreign-owner.log",
+      "expected_semantic_assertion_failed": true
+    }
+  ],
+  "result": "PASS"
+}
+
+CHECK: rollback
+COMMAND: python ../verify_rollback.py
+EXIT CODE: 0 (individual Git statuses follow)
+ORIGINAL LOG SHA256: 3741370b048901af2cac69267d4e4d350d030e4a066da91e27a29451b2a80938
+CAPTURED OUTPUT:
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+COMMAND: git rev-parse HEAD
+EXIT CODE: 0
+3ef927dd5016e463b4eed910933f29052c8c7967
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+COMMAND: git status --porcelain
+EXIT CODE: 0
+?? handoffs/phase-01/wp-13-source-identity-projection/
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+COMMAND: git diff HEAD
+EXIT CODE: 0
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903
+COMMAND: git clone --no-hardlinks --branch codex/phase-01-source-identity-projection C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+EXIT CODE: 0
+Cloning into 'C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout'...
+done.
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+COMMAND: git switch -c codex/wp13-rollback-verification
+EXIT CODE: 0
+Switched to a new branch 'codex/wp13-rollback-verification'
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+COMMAND: git rev-parse HEAD
+EXIT CODE: 0
+3ef927dd5016e463b4eed910933f29052c8c7967
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+COMMAND: git -c user.name=mohsen barari -c user.email=mohsenbarari.v2@gmail.com revert --no-edit 3ef927dd5016e463b4eed910933f29052c8c7967 9b1278c208a1c4df724645d5514ae6bdd3fce801
+EXIT CODE: 0
+[codex/wp13-rollback-verification a14ccd0] Revert "fix(contracts): compare projection state fields semantically"
+ Date: Thu Sep 3 16:30:42 2026 +0330
+ 2 files changed, 3 insertions(+), 51 deletions(-)
+[codex/wp13-rollback-verification b925e56] Revert "feat(contracts): implement source identity projection under WP-13"
+ Date: Thu Sep 3 16:30:42 2026 +0330
+ 8 files changed, 1526 deletions(-)
+ delete mode 100644 packages/contracts/src/accounting_contracts/source_identity_projection.py
+ delete mode 100644 tests/source_identity_projection_benchmark.py
+ delete mode 100644 tests/source_identity_projection_import_probe.py
+ delete mode 100644 tests/source_identity_projection_support.py
+ delete mode 100644 tests/test_source_identity_projection.py
+ delete mode 100644 tests/test_source_identity_projection_composition.py
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+COMMAND: git diff --quiet dd4b183a5ede1eb75e73c4268789ac7eb759fe1b
+EXIT CODE: 0
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+COMMAND: git diff --cached --quiet dd4b183a5ede1eb75e73c4268789ac7eb759fe1b
+EXIT CODE: 0
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+COMMAND: git status --porcelain
+EXIT CODE: 0
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+COMMAND: git rev-parse HEAD^{tree}
+EXIT CODE: 0
+18cd022e124a382716354a7b159d19bdf0a17530
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\rollback-r1-checkout
+COMMAND: git rev-parse dd4b183a5ede1eb75e73c4268789ac7eb759fe1b^{tree}
+EXIT CODE: 0
+18cd022e124a382716354a7b159d19bdf0a17530
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+COMMAND: git rev-parse HEAD
+EXIT CODE: 0
+3ef927dd5016e463b4eed910933f29052c8c7967
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+COMMAND: git status --porcelain
+EXIT CODE: 0
+?? handoffs/phase-01/wp-13-source-identity-projection/
+
+CHECK: code scan
+COMMAND: python ../scan_implementation.py
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 80c570a415fd8cc6f8cd4cff04e1ed7cc79610ce6f6a6bd158e7b80f9e2d32ab
+CAPTURED OUTPUT:
+{"branch_blobs_scanned": 10, "candidate_files": 3, "files_scanned": 159, "finding_count": 0, "findings": [], "head": "3ef927dd5016e463b4eed910933f29052c8c7967", "tracked_files": 156}
+
+CHECK: scope/evidence
+COMMAND: python ../verify_code.py
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 81d8cd54a033f045e61ef08753395cfe5b3bd011ddfc9c856e42e43d7fd672df
+CAPTURED OUTPUT:
+{
+  "baseline": "dd4b183a5ede1eb75e73c4268789ac7eb759fe1b",
+  "head": "3ef927dd5016e463b4eed910933f29052c8c7967",
+  "code_files": [
+    "packages/contracts/README.md",
+    "packages/contracts/src/accounting_contracts/__init__.py",
+    "packages/contracts/src/accounting_contracts/source_identity_projection.py",
+    "tests/source_identity_projection_benchmark.py",
+    "tests/source_identity_projection_import_probe.py",
+    "tests/source_identity_projection_support.py",
+    "tests/test_source_identity_projection.py",
+    "tests/test_source_identity_projection_composition.py"
+  ],
+  "baseline_nodes_retained": 678,
+  "new_nodes": 105,
+  "collected": 783,
+  "existing_test_files_unchanged": 24,
+  "new_exports": 5,
+  "required_checks_passed": [
+    "benchmark-ip14",
+    "benchmark-sa14",
+    "benchmark-xi14",
+    "benchmark-xr12",
+    "collect",
+    "dedicated",
+    "format",
+    "full",
+    "lint",
+    "lock",
+    "mypy",
+    "mypy-win32",
+    "nodes",
+    "sync"
+  ],
+  "mutation_semantic_failures_verified": 3,
+  "product_sha256": "8aefbfc91c8a3d718b77eb3ac419ca773dcb1f65a946961bf5bd91ceab2a6355",
+  "gate_g1": "OPEN / IN PROGRESS",
+  "result": "PASS"
+}
+
+CHECK: independent R1 review
+COMMAND: python ../independent_review_r1_run.py
+EXIT CODE: 0 (individual commands follow)
+ORIGINAL LOG SHA256: 51795666addd5e4830c89a3bb0547b1e58cbe80d534c443372b50004129682dd
+CAPTURED OUTPUT:
+[git-head-parent]
+ARGV: ["git", "log", "-1", "--format=%H %P"]
+CWD: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+3ef927dd5016e463b4eed910933f29052c8c7967 9b1278c208a1c4df724645d5514ae6bdd3fce801
+
+EXIT_CODE: 0
+
+[git-status-before]
+ARGV: ["git", "status", "--porcelain=v1"]
+CWD: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+warning: unable to access 'C:\Users\mmcha/.config/git/ignore': Permission denied
+warning: unable to access 'C:\Users\mmcha/.config/git/ignore': Permission denied
+?? handoffs/phase-01/wp-13-source-identity-projection/
+
+EXIT_CODE: 0
+
+[git-r1-scope]
+ARGV: ["git", "diff", "--name-status", "9b1278c208a1c4df724645d5514ae6bdd3fce801..3ef927dd5016e463b4eed910933f29052c8c7967"]
+CWD: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+M	packages/contracts/src/accounting_contracts/source_identity_projection.py
+M	tests/test_source_identity_projection.py
+
+EXIT_CODE: 0
+
+[git-r1-whitespace]
+ARGV: ["git", "diff", "--check", "9b1278c208a1c4df724645d5514ae6bdd3fce801..3ef927dd5016e463b4eed910933f29052c8c7967"]
+CWD: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+
+EXIT_CODE: 0
+
+[original-semantic-state-probe]
+ARGV: ["C:\\Users\\mmcha\\OneDrive\\Documents\\ChatGPT\\accounting_bot\\work\\reviews\\wp13-implementation-20260903\\checkout\\.venv\\Scripts\\python.exe", "C:\\Users\\mmcha\\OneDrive\\Documents\\ChatGPT\\accounting_bot\\work\\reviews\\wp13-implementation-20260903\\independent_state_probe.py"]
+CWD: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+{"actual": "accepted", "all_state_fields_equal": true, "base_equality": false, "identity_count": 1, "valid_nested_registry": true}
+
+EXIT_CODE: 0
+
+[dedicated-pytest]
+ARGV: ["C:\\Users\\mmcha\\OneDrive\\Documents\\ChatGPT\\accounting_bot\\work\\reviews\\wp13-implementation-20260903\\checkout\\.venv\\Scripts\\python.exe", "-m", "pytest", "tests/test_source_identity_projection.py", "tests/test_source_identity_projection_composition.py", "-v", "-s", "-o", "addopts=", "-o", "cache_dir=C:\\Users\\mmcha\\OneDrive\\Documents\\ChatGPT\\accounting_bot\\work\\reviews\\wp13-implementation-20260903\\tmp-review\\independent-r1-xwzk9gu9\\pytest-cache"]
+CWD: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout\.venv\Scripts\python.exe
+cachedir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\tmp-review\independent-r1-xwzk9gu9\pytest-cache
+hypothesis profile 'default'
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 105 items
+
+tests/test_source_identity_projection.py::test_ip01_exports_constructors_and_immutability PASSED
+tests/test_source_identity_projection.py::test_ip01_guarded_fresh_import[normal-0] PASSED
+tests/test_source_identity_projection.py::test_ip01_guarded_fresh_import[inject_write-73] PASSED
+tests/test_source_identity_projection.py::test_ip02_catalog_global_heads_ignore_year_and_preserve_equal_objects PASSED
+tests/test_source_identity_projection.py::test_ip02_empty_and_archive_only_catalog[False] PASSED
+tests/test_source_identity_projection.py::test_ip02_empty_and_archive_only_catalog[True] PASSED
+tests/test_source_identity_projection.py::test_ip02_semantically_equal_state_subclasses_preserve_objects[False-False] PASSED
+tests/test_source_identity_projection.py::test_ip02_semantically_equal_state_subclasses_preserve_objects[False-True] PASSED
+tests/test_source_identity_projection.py::test_ip02_semantically_equal_state_subclasses_preserve_objects[True-False] PASSED
+tests/test_source_identity_projection.py::test_ip02_semantically_equal_state_subclasses_preserve_objects[True-True] PASSED
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[home] PASSED
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[owner-active] PASSED
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[owner-voided] PASSED
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[hash-tie] PASSED
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[life-tie] PASSED
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[older-tie] PASSED
+tests/test_source_identity_projection.py::test_ip03_inconsistent_catalogs[stale-active] PASSED
+tests/test_source_identity_projection.py::test_ip04_exact_key_routes_and_cause[archive] PASSED
+tests/test_source_identity_projection.py::test_ip04_exact_key_routes_and_cause[unknown] PASSED
+tests/test_source_identity_projection.py::test_ip04_exact_key_routes_and_cause[unknown-same-year] PASSED
+tests/test_source_identity_projection.py::test_ip04_exact_key_routes_and_cause[wrong-year] PASSED
+tests/test_source_identity_projection.py::test_ip05_exact_projection_scope_and_no_archive_void PASSED
+tests/test_source_identity_projection.py::test_ip06_new_source_party_borrows_existing_revision[same-unchanged-None] PASSED
+tests/test_source_identity_projection.py::test_ip06_new_source_party_borrows_existing_revision[edit-edit-8] PASSED
+tests/test_source_identity_projection.py::test_ip06_new_source_party_borrows_existing_revision[voided-edit-9] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[insert-0] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[insert-1] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[insert-2] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[insert-3] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[unchanged-0] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[unchanged-1] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[unchanged-2] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[unchanged-3] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[edit-0] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[edit-1] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[edit-2] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[edit-3] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[void-0] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[void-1] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[void-2] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[void-3] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[settled-0] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[settled-1] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[settled-2] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[settled-3] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[reactivate-0] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[reactivate-1] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[reactivate-2] PASSED
+tests/test_source_identity_projection.py::test_ip07_existing_member_transition_table[reactivate-3] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-0-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-0-2] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-0-3] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-1-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-1-2] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-1-3] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-2-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-2-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-2-3] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-3-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-3-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[False-3-2] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-0-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-0-2] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-0-3] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-1-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-1-2] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-1-3] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-2-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-2-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-2-3] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-3-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-3-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_relocation_precedes_owner_check[True-3-2] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[same-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[same-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[same-2] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[edit-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[edit-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[edit-2] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[voided-0] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[voided-1] PASSED
+tests/test_source_identity_projection.py::test_ip08_foreign_transaction_is_never_reused[voided-2] PASSED
+tests/test_source_identity_projection.py::test_ip09_independent_multiyear_membership_evolution PASSED
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[None] PASSED
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[True] PASSED
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[1] PASSED
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[SYNTHETIC-SECRET] PASSED
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[invalid4] PASSED
+tests/test_source_identity_projection.py::test_ip10_invalid_roots_are_safe[invalid5] PASSED
+tests/test_source_identity_projection.py::test_ip10_reason_strictness_and_representations PASSED
+tests/test_source_identity_projection.py::test_ip10_cancellation_identity[exception0] PASSED
+tests/test_source_identity_projection.py::test_ip10_cancellation_identity[exception1] PASSED
+tests/test_source_identity_projection.py::test_ip10_resolver_preserves_existing_cause PASSED
+tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[false-void] PASSED
+tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[revision-reset] PASSED
+tests/test_source_identity_projection.py::test_ip13_semantic_mutation_oracles[foreign-owner] PASSED
+tests/test_source_identity_projection.py::test_ip10_catalog_cancellation_is_not_wrapped[error0] PASSED
+tests/test_source_identity_projection.py::test_ip10_catalog_cancellation_is_not_wrapped[error1] PASSED
+tests/test_source_identity_projection.py::test_ip15_purity_and_injected_write_control PASSED
+tests/test_source_identity_projection_composition.py::test_ip11_identified_xlsx_multiyear_composition PASSED
+tests/test_source_identity_projection_composition.py::test_ip12_generated_history_matches_independent_model PASSED
+tests/test_source_identity_projection_composition.py::test_ip12_generated_conflict_below_head_is_rejected PASSED
+tests/test_source_identity_projection_composition.py::test_ip14_projection_never_revisits_archive[1] PASSED
+tests/test_source_identity_projection_composition.py::test_ip14_projection_never_revisits_archive[1000] PASSED
+tests/test_source_identity_projection_composition.py::test_ip14_15000_identity_projection_benchmark {"archive_memberships": 11250, "catalog_seconds": 0.02363910002168268, "fixture_seconds": 1.5651371999410912, "global_identities": 15000, "peak_rss_mib": 88.578125, "planner_items_checked": 11250, "planner_seconds": 0.0513245000038296, "projected_identities": 11250, "projection_seconds": 0.01237610005773604}
+PASSED
+
+============================= 105 passed in 3.46s =============================
+
+EXIT_CODE: 0
+
+[git-status-after]
+ARGV: ["git", "status", "--porcelain=v1"]
+CWD: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp13-implementation-20260903\checkout
+warning: unable to access 'C:\Users\mmcha/.config/git/ignore': Permission denied
+warning: unable to access 'C:\Users\mmcha/.config/git/ignore': Permission denied
+?? handoffs/phase-01/wp-13-source-identity-projection/
+
+EXIT_CODE: 0
+
+CHECK: R1 red/green evidence (derived; original logs retained)
+Original four subclass regressions before correction: 4 failed, 95 deselected; exit 1 EXPECTED.
+COMMAND: python -m pytest tests/test_source_identity_projection.py -k semantically_equal_state_subclasses -v
+ORIGINAL BEFORE LOG SHA256: a7074f29ce1b92e94a1624f3a54b924a6febcbe60b21c41fba49a3ed9341edc5
+After correction: all four pass in the captured 105-case dedicated run.
+Initial code/review evidence remains unchanged in initial-code-evidence and independent-review.*.
+
+CHECK: whitespace
+COMMAND: git diff --check dd4b183a5ede1eb75e73c4268789ac7eb759fe1b...HEAD
+EXIT CODE: 0
+CAPTURED OUTPUT: empty
+
+FINAL SUMMARY
+105 dedicated tests passed in 3.48s. All 678 baseline nodes retained; 783 collected.
+Full local Windows: 778 passed, 5 skipped in 68.48s (four missing symlink-privilege
+cases and one POSIX-only case). No background-thread warning was emitted.
+Ruff format/lint and both full mypy commands passed; no dependency/CI change.
+IP-14: 15000 global identities, 11250 projected states and full Planner items;
+fixture 1.533233s, catalog 0.023534s, projection 0.013218s, Planner 0.051547s;
+call-window peak RSS 86.910156 MiB. No new benchmark threshold imposed.
+Original WP-05: 2.7735s / 60.95 MiB; WP-06: 2.9163s / 60.59 MiB;
+WP-12: 2.634347s / 84.011719 MiB, fixture 2.297831s separately. Prior limits intact.
+Three in-memory mutations failed at the expected semantic assertion, not setup;
+product bytes unchanged. Fixed-code scratch rollback equals baseline index/tree.
+Local Linux NOT RUN; native Windows/Linux PR CI PENDING, including all four
+mandatory Windows symlink cases. Final non-author delivery review PENDING.
+Non-author code review R1 CLOSED at 3ef927d: independent 105 passed in 3.46s,
+unchanged original semantic probe accepted; no remaining code findings.
+No protected source, roadmap/gate, baseline test, existing contract or runtime changed.
+No publication, merge, deployment or next package performed by this implementation.
+G1 remains OPEN / IN PROGRESS.
