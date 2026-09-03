@@ -24,6 +24,7 @@ from accounting_contracts import (
     SourceBindingKey,
     SourceSheetInput,
     build_source_workbook_snapshot,
+    evaluate_source_fiscal_evidence,
 )
 from accounting_local_agent import (
     IdentifiedXlsxSource,
@@ -220,16 +221,22 @@ def test_xi02_literal_valid_marker_and_raw(
 
 
 @pytest.mark.parametrize(
-    "case", ["no-relation", "orphan", "no-property", "empty", "undated"]
+    "case", ["no-relation", "orphan", "no-property", "empty", "undated", "mixed"]
 )
 def test_xi03_missing_marker_never_guesses(tmp_path: Path, case: str) -> None:
     parts = (
         raw_parts(rows_per_sheet=0)
         if case == "empty"
-        else raw_parts(undated=case == "undated")
+        else raw_parts(undated=case == "undated", mixed=case == "mixed")
     )
     raw_path = tmp_path / "markerless.xlsx"
     raw_path.write_bytes(zipped(parts))
+    if case == "mixed":
+        standalone = read_xlsx_source_snapshot(raw_path)
+        assert evaluate_source_fiscal_evidence(standalone.snapshot).observed_years == (
+            1403,
+            1404,
+        )
     assert read_xlsx_source_snapshot(raw_path).snapshot.total_row_count == (
         0 if case == "empty" else 5
     )

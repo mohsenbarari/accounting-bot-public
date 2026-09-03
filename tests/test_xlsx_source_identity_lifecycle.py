@@ -9,6 +9,7 @@ import struct
 import threading
 import uuid
 import zipfile
+import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from hashlib import sha256
@@ -459,6 +460,48 @@ def test_xi09_member_read_and_close_preserve_both_errors() -> None:
     )
     assert leaves[0].__cause__ is read_error and leaves[1].__cause__ is close_error
     assert stream.closed
+
+
+@pytest.mark.parametrize(
+    "member", ["_rels/.rels", "[Content_Types].xml", "docProps/custom.xml"]
+)
+@pytest.mark.parametrize("close_failure", [False, True])
+def test_xi09_corrupt_deflate_metadata_is_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, member: str, close_failure: bool
+) -> None:
+    source, leases, before = paths(tmp_path)
+    with zipfile.ZipFile(io.BytesIO(before)) as archive:
+        info = archive.getinfo(member)
+        assert info.compress_type == zipfile.ZIP_DEFLATED and info.compress_size > 0
+        local = info.header_offset
+    data = bytearray(before)
+    name_len, extra_len = struct.unpack_from("<HH", data, local + 26)
+    data[local + 30 + name_len + extra_len] = 0x07  # Invalid DEFLATE BTYPE=3.
+    source.write_bytes(data)
+    close_error = OSError("SYNTHETIC concurrent ZIP close failure")
+
+    class FailedClose(zipfile.ZipFile):
+        def close(self) -> None:
+            active = self.fp is not None
+            super().close()
+            if active:
+                raise close_error
+
+    if close_failure:
+        replace_zip(monkeypatch, FailedClose)
+    with pytest.raises(ExceptionGroup if close_failure else XlsxPackageError) as caught:
+        read_identified_xlsx_source(
+            source, snapshot_root=leases, observation_interval_seconds=0.001
+        )
+    leaves = flatten(caught.value)
+    assert len(leaves) == (2 if close_failure else 1)
+    assert isinstance(leaves[0], XlsxPackageError)
+    assert leaves[0].reason == "XLSX_PACKAGE_CORRUPT_ZIP"
+    assert isinstance(leaves[0].__cause__, zlib.error)
+    if close_failure:
+        assert isinstance(leaves[1], XlsxSnapshotStorageError)
+        assert leaves[1].__cause__ is close_error
+    assert source.read_bytes() == data and list(leases.iterdir()) == []
 
 
 def test_xi09_cleanup_failure_alone_prevents_success(

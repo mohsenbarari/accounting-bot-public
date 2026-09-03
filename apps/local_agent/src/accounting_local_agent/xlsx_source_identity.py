@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 import zipfile
+import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -113,7 +114,7 @@ class _Closable(Protocol):
 
 def _zip_error(error: BaseException) -> BaseException:
     converted: BaseException
-    if isinstance(error, zipfile.BadZipFile):
+    if isinstance(error, (zipfile.BadZipFile, zlib.error)):
         converted = XlsxPackageError(reader.REASON_PACKAGE_CORRUPT_ZIP)
     elif isinstance(error, OSError):
         converted = XlsxSnapshotStorageError()
@@ -126,7 +127,7 @@ def _zip_error(error: BaseException) -> BaseException:
 def _zip_call[T](operation: Callable[[], T]) -> T:
     try:
         return operation()
-    except (zipfile.BadZipFile, OSError) as error:
+    except (zipfile.BadZipFile, zlib.error, OSError) as error:
         raise _zip_error(error) from error
 
 
@@ -315,7 +316,7 @@ def read_identified_xlsx_source(
             key = _read_key(zf)
             try:
                 raw_result = reader._read_xlsx_from_zip(zf)
-            except zipfile.BadZipFile as error:
+            except (zipfile.BadZipFile, zlib.error) as error:
                 # Match the standalone Reader's corruption boundary even though
                 # this adapter deliberately reuses its open-package helper.
                 raise _zip_error(error) from error
