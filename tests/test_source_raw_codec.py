@@ -321,6 +321,38 @@ def test_rc05_invalid_encoder_root(value: Any) -> None:
     assert caught.value.reason is SourceRawCodecReason.INVALID_INPUT
 
 
+@pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -> None:
+    touches: list[str] = []
+    with localcontext(Context(prec=13)) as context:
+        before = context_view(context)
+
+        class WrongRoot:
+            @property  # type: ignore[misc]
+            def __class__(self) -> type[object]:  # type: ignore[override]
+                touches.append(mode)
+                if mode == "error":
+                    raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                if mode == "cancel":
+                    raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                if mode == "context":
+                    context.prec = 2
+                    context.flags[Inexact] = True
+                return ValidatedSourceRow
+
+        try:
+            encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+        except BaseException as error:
+            assert type(error) is SourceRawCodecError
+            assert error.reason is SourceRawCodecReason.INVALID_INPUT
+            assert error.args == ("Invalid Raw codec input.",)
+            assert error.__cause__ is None
+        else:
+            pytest.fail("Wrong root was accepted")
+        assert touches == []
+        assert context_view(context) == before
+
+
 @pytest.mark.parametrize(
     "value",
     [None, True, 1, "bytes", bytearray(b"[]"), memoryview(b"[]"), BytesSubclass(b"[]")],

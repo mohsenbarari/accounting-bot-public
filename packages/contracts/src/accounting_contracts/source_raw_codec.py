@@ -168,7 +168,8 @@ def _decode_row(tree: object) -> ValidatedSourceRow:
 
 def encode_source_raw_row(row: ValidatedSourceRow) -> bytes:
     """Encode a validated row, preserving exact supported scalar representations."""
-    if not isinstance(row, ValidatedSourceRow):
+    # Inspect the real type without invoking a caller's __class__ descriptor.
+    if not issubclass(type(row), ValidatedSourceRow):
         raise SourceRawCodecError(SourceRawCodecReason.INVALID_INPUT)
     try:
         with localcontext():
