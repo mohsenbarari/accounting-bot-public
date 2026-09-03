@@ -8,6 +8,8 @@
 - Prior completed delivery: `fd857e9ddaf352f7c7acf81848022052069e1861`.
 - Incoming Antigravity partial completion: `d1dacdf0aa0ce3747e2db610c664167a198ad333`.
 - Tested code commit: `0fc4c6ae85edbc69de0893e154c64630dc9a21fc`.
+- Earlier local handoff: `1de1a7823e35c0d3934dfaee981f0c2d99403e09`; the current
+  delivery refreshes that documentation with the authorized Linux evidence.
 - Product code remains identical to `f142de97aec65242be8994a6b8fd73537c1f0c12`; R1 stays closed.
 - Implementers: Antigravity through d1dacdf; Codex for the bounded continuation.
 - Independent review of the Codex-authored test correction: PENDING.
@@ -21,6 +23,9 @@ the work after the implementation service became unavailable. Existing O-46 and
 the implementer skill name Antigravity as implementer and forbid self-approval.
 This handoff records the bounded Owner-requested continuation, preserves separate
 acceptance, and does not claim a general governance change or amend ROADMAP.
+The Owner subsequently explicitly authorized transfer of the test corrections
+and evidence runner to the existing development server, native Linux validation,
+and recording this continuation in `/srv/accounting-bot/workspace`.
 
 The Round 3 prompt allowed only WP-09 tests, a focused helper and these three
 handoff files. Antigravity committed real row/key permutations and subprocess
@@ -77,12 +82,14 @@ workbook has been accessed or changed for this continuation.
 
 Exact commands and captured output are in test-results.txt. Paths naming the local
 review checkout or uv executable are normalized there; original logs remain with
-the review artifacts. No pass/failure, test node, metric or exit code is normalized.
+the review artifacts. XML in parameter IDs is entity-escaped and trailing whitespace
+is trimmed as disclosed there. Results, metrics and exit codes remain unchanged.
 
 - Frozen offline sync and lock check: 0.
 - Ruff format and lint: 0 (82 formatted files).
 - Full mypy and win32 mypy: 0 (31 source files each).
 - Dedicated WP-09, full suite and each unchanged 15,000-row benchmark: Windows exit 0.
+- Linux command results are recorded separately below and in test-results.txt.
 - Baseline whitespace, product equality and upstream-test equality: 0.
 - Both in-memory omission probes: expected pytest exit 1; each mutant causes two failures.
 - Fixed-code rollback: 0; exact baseline tree equality after eight reverts.
@@ -94,7 +101,7 @@ the review artifacts. No pass/failure, test node, metric or exit code is normali
 | Platform | WP-09 | Full suite |
 |---|---|---|
 | Windows local | 53 passed in 2.83s | 398 passed, 5 skipped in 55.25s |
-| Linux local, tested code | NOT RUN | PENDING destination authorization |
+| Linux local | 53 passed in 5.78s | 401 passed, 2 skipped in 71.95s (0:01:11) |
 
 Windows skips are the four existing symlink scenarios lacking local privilege and
 one existing POSIX-only permission scenario. No skips or CI policy were changed.
@@ -104,6 +111,15 @@ Windows Reader: 2.7084 seconds / 61.58 MiB peak RSS.
 Windows acquisition plus Reader: 2.8835 seconds / 60.09 MiB peak RSS.
 The approved 15-second / 128-MiB limits are unchanged.
 
+Linux benchmark evidence:
+
+`[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.5979s | baseline_current_rss_mib: 30.16 MiB | call_peak_rss_mib: 61.96 MiB | rows: 15000 | platform: linux`
+
+`[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.0432s | baseline_current_rss_mib: 29.95 MiB | call_peak_rss_mib: 61.68 MiB | rows: 15000 | file_bytes: 549787 | file_sha: fa34b81daef9da28afa6a9202a87dab257a1bbf272d3c37be896bbfda6bcce29 | platform: linux`
+
+`[SR-13 SCALE BENCHMARK] 15,000 rows -> eval_seconds: 0.0365s | fixture_build_seconds: 2.8191s | checked_rows: 15000 | failed_rows: 3000 | issues: 3000`
+
+
 The 16-field None and nine-field text matrices remain independent of product
 tables. Required-field omission yields two failures / 16 passes; blank-field
 omission yields two failures / eight passes. Mutations exist only in the probe
@@ -112,7 +128,7 @@ row, mapping and hash identities; timings are separate from fixture generation.
 
 ## Assumptions and open items
 
-- Linux: NOT RUN on the tested code. Automatic approval review rejected uploading the two-file test commit and validation runner to the development host; explicit destination authorization is pending. The earlier 47-test Linux run was on incoming d1dacdf and is not evidence for this commit.
+- Linux: PASS on the exact tested code; see recorded Linux output.
 - Native Windows/Linux CI: PENDING; Windows CI must run all four symlink scenarios.
 - Independent review: PENDING for the Codex-authored test/helper changes.
 - Guard scope is target module execution. Accepted package dependencies and the
