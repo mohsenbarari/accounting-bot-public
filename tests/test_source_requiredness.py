@@ -19,12 +19,18 @@ Covers acceptance criteria SR-01 through SR-14 under ADR-0012:
 
 from __future__ import annotations
 
+import builtins
+import importlib
 import inspect
+import socket
+import sys
+import threading
 import time
 import uuid
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -99,6 +105,19 @@ ALL_16_REQUIRED_SHEET_FIELDS: list[tuple[str, str]] = [
     (sheet, field)
     for sheet, fields in INDEPENDENT_APPROVED_REQUIRED_FIELDS.items()
     for field in fields
+]
+
+# The nine required raw-text entries across the 4 sheets
+INDEPENDENT_REQUIRED_TEXT_FIELDS: list[tuple[str, str]] = [
+    ("خرید-فروش", "party_name_raw"),
+    ("خرید-فروش", "transaction_type_raw"),
+    ("خرید-فروش", "item_name_raw"),
+    ("دریافت-پرداخت", "party_name_raw"),
+    ("دریافت-پرداخت", "entry_type_raw"),
+    ("ورود-خروج", "party_name_raw"),
+    ("ورود-خروج", "movement_type_raw"),
+    ("ورود-خروج", "item_name_raw"),
+    ("لیست کسبه", "party_name_raw"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -204,7 +223,7 @@ def test_sr01_version_exports_and_inert_pure_library() -> None:
     assert "self" in params
     assert "snapshot" in params
 
-    # Pure library check: importing does not open files or start threads
+    # Pure library check: importing does not modify version constants
     from accounting_contracts import (
         RAW_SOURCE_CONTRACT_VERSION,
         SHEET_SNAPSHOT_HASH_VERSION,
@@ -216,6 +235,55 @@ def test_sr01_version_exports_and_inert_pure_library() -> None:
     assert SOURCE_HASH_VERSION == "source-hash.v1"
     assert SHEET_SNAPSHOT_HASH_VERSION == "sheet-snapshot-hash.v1"
     assert SOURCE_CHANGE_PLAN_VERSION == "source-change-plan.v1"
+
+
+def test_sr01_fresh_import_under_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SR-01: Fresh module import executes inertly under a side-effect guard."""
+    target_mod_name = "accounting_contracts.source_requiredness"
+
+    # Ensure module is evicted from sys.modules so import is guaranteed fresh
+    sys.modules.pop(target_mod_name, None)
+
+    def _forbidden_call(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Forbidden side-effect invoked during pure module import!")
+
+    monkeypatch.setattr(socket, "socket", _forbidden_call)
+    monkeypatch.setattr(time, "time", _forbidden_call)
+    monkeypatch.setattr(time, "monotonic", _forbidden_call)
+    monkeypatch.setattr(time, "monotonic_ns", _forbidden_call)
+    monkeypatch.setattr(uuid, "uuid4", _forbidden_call)
+    if hasattr(uuid, "uuid7"):
+        monkeypatch.setattr(uuid, "uuid7", _forbidden_call)
+    monkeypatch.setattr(threading.Thread, "start", _forbidden_call)
+    monkeypatch.setattr(Path, "write_bytes", _forbidden_call)
+    monkeypatch.setattr(Path, "write_text", _forbidden_call)
+
+    # Permit Python module-loader reads while rejecting writes or data reads
+    orig_open = builtins.open
+
+    def guarded_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if any(m in mode for m in ("w", "a", "+", "x")):
+            raise AssertionError(f"File write forbidden during module import: {file}")
+        f_str = str(file)
+        if not (
+            f_str.endswith(".py")
+            or f_str.endswith(".pyc")
+            or f_str.endswith(".so")
+            or "/lib/" in f_str
+            or "/site-packages/" in f_str
+            or "/packages/" in f_str
+        ):
+            raise AssertionError(
+                f"Application data read forbidden during module import: {file}"
+            )
+        return orig_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+
+    # Import module afresh under guard
+    mod = importlib.import_module(target_mod_name)
+    assert mod is sys.modules[target_mod_name]
+    assert mod.SOURCE_REQUIREDNESS_VERSION == "source-requiredness.v1"
 
 
 # ---------------------------------------------------------------------------
@@ -302,61 +370,108 @@ def test_sr02_omission_of_transaction_type_raw_is_detected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# SR-03: Required Text Presence: Null vs Blank vs Whitespace Preservation
+# SR-03: Required Text Presence: Matrix of All 9 Text Fields
 # ---------------------------------------------------------------------------
 
 
-def test_sr03_required_text_presence_null_blank_whitespace_and_unicode() -> None:
-    """SR-03: None -> MISSING_VALUE, empty/whitespace -> BLANK_TEXT, valid preserved."""
-    u1 = _make_uuid7(b"sr03_u1_none")
-    u2 = _make_uuid7(b"sr03_u2_empty")
-    u3 = _make_uuid7(b"sr03_u3_ascii_spaces")
-    u4 = _make_uuid7(b"sr03_u4_unicode_spaces")
-    u5 = _make_uuid7(b"sr03_u5_valid_surrounding")
+@pytest.mark.parametrize("sheet_name,text_field", INDEPENDENT_REQUIRED_TEXT_FIELDS)
+def test_sr03_required_text_presence_matrix_across_all_nine_text_fields(
+    sheet_name: str, text_field: str
+) -> None:
+    """SR-03: Cover present/whitespace/None/empty/blank across 9 text fields."""
+    sheet_defaults = {
+        "خرید-فروش": _valid_buy_sell_row,
+        "دریافت-پرداخت": _valid_receipts_payments_row,
+        "ورود-خروج": _valid_inventory_movements_row,
+        "لیست کسبه": _valid_business_parties_row,
+    }
 
-    r1 = _valid_buy_sell_row()
-    r1["party_name_raw"] = None
+    def _make_snap_with_value(
+        u_val: uuid.UUID, val: Any
+    ) -> ValidatedSourceWorkbookSnapshot:
+        row = dict(sheet_defaults[sheet_name]())
+        row[text_field] = val
+        kwargs: dict[str, Any] = {}
+        if sheet_name == "خرید-فروش":
+            kwargs["buy_sell_rows"] = [(u_val, row)]
+        elif sheet_name == "دریافت-پرداخت":
+            kwargs["receipts_payments_rows"] = [(u_val, row)]
+        elif sheet_name == "ورود-خروج":
+            kwargs["inventory_movements_rows"] = [(u_val, row)]
+        elif sheet_name == "لیست کسبه":
+            kwargs["business_parties_rows"] = [(u_val, row)]
+        return _build_snapshot_with_rows(**kwargs)
 
-    r2 = _valid_buy_sell_row()
-    r2["party_name_raw"] = ""
+    # 1. Valid present text -> 0 issues, passes
+    u_valid = _make_uuid7(f"sr03_{sheet_name}_{text_field}_v".encode())
+    snap_valid = _make_snap_with_value(u_valid, "مقدار_معتبر_آزمون")
+    rep_valid = evaluate_source_requiredness(snap_valid)
+    assert rep_valid.passes_requiredness is True
+    assert rep_valid.issue_count == 0
 
-    r3 = _valid_buy_sell_row()
-    r3["party_name_raw"] = "   \t  \n  "
+    # 2. Valid text with surrounding whitespace -> preserved verbatim, passes
+    u_ws = _make_uuid7(f"sr03_{sheet_name}_{text_field}_ws".encode())
+    ws_val = "  شرکت معتبر با فاصله  "
+    snap_ws = _make_snap_with_value(u_ws, ws_val)
+    rep_ws = evaluate_source_requiredness(snap_ws)
+    assert rep_ws.passes_requiredness is True
+    assert rep_ws.issue_count == 0
+    assert rep_ws.snapshot.all_rows_by_id[u_ws].raw_values[text_field] == ws_val
 
-    r4 = _valid_buy_sell_row()
-    r4["party_name_raw"] = "\u2003\u00a0\u3000"
+    # 3. None -> MISSING_VALUE
+    u_none = _make_uuid7(f"sr03_{sheet_name}_{text_field}_n".encode())
+    snap_none = _make_snap_with_value(u_none, None)
+    rep_none = evaluate_source_requiredness(snap_none)
+    assert rep_none.passes_requiredness is False
+    assert rep_none.issue_count == 1
+    assert rep_none.issues[0].field_name == text_field
+    assert rep_none.issues[0].reason is SourceRequirednessIssueReason.MISSING_VALUE
 
-    r5 = _valid_buy_sell_row()
-    r5["party_name_raw"] = "  شرکت نمونه معتبر  "
+    # 4. Empty string -> BLANK_TEXT
+    u_empty = _make_uuid7(f"sr03_{sheet_name}_{text_field}_e".encode())
+    snap_empty = _make_snap_with_value(u_empty, "")
+    rep_empty = evaluate_source_requiredness(snap_empty)
+    assert rep_empty.passes_requiredness is False
+    assert rep_empty.issue_count == 1
+    assert rep_empty.issues[0].field_name == text_field
+    assert rep_empty.issues[0].reason is SourceRequirednessIssueReason.BLANK_TEXT
 
-    snap = _build_snapshot_with_rows(
-        buy_sell_rows=[
-            (u1, r1),
-            (u2, r2),
-            (u3, r3),
-            (u4, r4),
-            (u5, r5),
-        ]
-    )
+    # 5. ASCII whitespace -> BLANK_TEXT
+    u_ascii = _make_uuid7(f"sr03_{sheet_name}_{text_field}_a".encode())
+    snap_ascii = _make_snap_with_value(u_ascii, "   \t  \n  ")
+    rep_ascii = evaluate_source_requiredness(snap_ascii)
+    assert rep_ascii.passes_requiredness is False
+    assert rep_ascii.issue_count == 1
+    assert rep_ascii.issues[0].field_name == text_field
+    assert rep_ascii.issues[0].reason is SourceRequirednessIssueReason.BLANK_TEXT
+
+    # 6. Unicode whitespace -> BLANK_TEXT
+    u_uni = _make_uuid7(f"sr03_{sheet_name}_{text_field}_u".encode())
+    snap_uni = _make_snap_with_value(u_uni, "\u2003\u00a0\u3000")
+    rep_uni = evaluate_source_requiredness(snap_uni)
+    assert rep_uni.passes_requiredness is False
+    assert rep_uni.issue_count == 1
+    assert rep_uni.issues[0].field_name == text_field
+    assert rep_uni.issues[0].reason is SourceRequirednessIssueReason.BLANK_TEXT
+
+
+def test_sr03_omission_of_receipts_payments_blank_entry_type_is_detected() -> None:
+    """SR-03: Prove omission of entry_type_raw blank checking causes failure."""
+    u = _make_uuid7(b"sr03_blank_entry")
+    row_data = _valid_receipts_payments_row()
+    row_data["entry_type_raw"] = "   "  # Blank text in receipts_payments entry_type_raw
+    snap = _build_snapshot_with_rows(receipts_payments_rows=[(u, row_data)])
+
     report = evaluate_source_requiredness(snap)
-
-    assert report.checked_row_count == 5
-    assert report.failed_row_count == 4
-    assert report.issue_count == 4
     assert report.passes_requiredness is False
+    assert report.issue_count == 1
+    assert report.issues[0].sheet_name == "دریافت-پرداخت"
+    assert report.issues[0].field_name == "entry_type_raw"
+    assert report.issues[0].reason is SourceRequirednessIssueReason.BLANK_TEXT
 
-    issues_by_id = {iss.stable_id: iss for iss in report.issues}
 
-    assert issues_by_id[u1].reason is SourceRequirednessIssueReason.MISSING_VALUE
-    assert issues_by_id[u2].reason is SourceRequirednessIssueReason.BLANK_TEXT
-    assert issues_by_id[u3].reason is SourceRequirednessIssueReason.BLANK_TEXT
-    assert issues_by_id[u4].reason is SourceRequirednessIssueReason.BLANK_TEXT
-    assert u5 not in issues_by_id
-
-    # Verify exact raw value and whitespace preservation in retained snapshot
-    row5_snap = report.snapshot.all_rows_by_id[u5]
-    assert row5_snap.raw_values["party_name_raw"] == "  شرکت نمونه معتبر  "
-
+def test_sr03_date_presence_and_upstream_rejection() -> None:
+    """SR-03: Null date yields MISSING_VALUE; non-null invalid date fails upstream."""
     # Null date is missing
     u_date_none = _make_uuid7(b"sr03_date_none")
     r_date_none = _valid_receipts_payments_row()
@@ -952,10 +1067,6 @@ def test_sr10_purity_repeatability_and_raw_preservation(
             "Forbidden side-effect invoked during pure requiredness evaluation!"
         )
 
-    import builtins
-    import socket
-    from pathlib import Path
-
     monkeypatch.setattr(time, "time", _forbidden_call)
     monkeypatch.setattr(time, "monotonic", _forbidden_call)
     monkeypatch.setattr(time, "monotonic_ns", _forbidden_call)
@@ -1003,8 +1114,6 @@ def test_sr11_xlsx_reader_integration_synthetic_workbooks(
     - tests/test_xlsx_source_reader.py::test_r6_all_or_nothing_fourth_sheet_late_failure
     - tests/test_xlsx_source_reader.py::test_r6_read_only_integrity_and_clean_cleanup
     """
-    from pathlib import Path
-
     p_dir = Path(tmp_path)
     builder = SyntheticXlsxBuilder()
 
@@ -1150,16 +1259,25 @@ def _independent_oracle(
     )
 
 
-def test_sr12_property_permutations_and_independent_oracle() -> None:
-    """SR-12: Sheet, row, and mapping-key permutations with inverted UUID order."""
-    # Create UUIDs whose input order is reverse of their byte order
-    u_low_byte = uuid.UUID("01955f00-0000-7000-8000-000000000001")
-    u_high_byte = uuid.UUID("01955f00-0000-7000-8000-000000000009")
+def test_sr12_property_all_four_sheets_permutations_and_independent_oracle() -> None:
+    """SR-12: Four-sheet inputs, inverted UUID byte order, and bounded permutations."""
+    # 1. Generate 4-sheet rows with input order inverted from UUID byte order
+    u_bs_high = uuid.UUID("01955f00-0000-7000-8000-000000000009")
+    u_bs_low = uuid.UUID("01955f00-0000-7000-8000-000000000001")
 
-    # Scramble mapping key order deliberately
-    r_low: dict[str, Any] = {
-        "notes_raw": "یادداشت ۱",
-        "unit_price_toman_raw": None,  # Issue!
+    r_bs_high: dict[str, Any] = {
+        "notes_raw": "یادداشت فاکتور",
+        "unit_price_toman_raw": "2000000",
+        "discount_toman_raw": "0",
+        "date_raw": "1403/01/02",
+        "party_name_raw": "   ",  # Blank text issue
+        "transaction_type_raw": "فروش",
+        "item_name_raw": "سکه",
+        "quantity_raw": "5",
+    }
+    r_bs_low: dict[str, Any] = {
+        "notes_raw": "توضیحات",
+        "unit_price_toman_raw": None,  # Missing value issue
         "quantity_raw": "10",
         "item_name_raw": "طلا",
         "transaction_type_raw": "خرید",
@@ -1167,72 +1285,109 @@ def test_sr12_property_permutations_and_independent_oracle() -> None:
         "discount_toman_raw": "0",
         "date_raw": "1403/01/01",
     }
-    r_high: dict[str, Any] = {
-        "unit_price_toman_raw": "2000",
-        "discount_toman_raw": "0",
-        "date_raw": "1403/01/02",
-        "party_name_raw": "   ",  # Issue!
-        "transaction_type_raw": "فروش",
-        "item_name_raw": "سکه",
-        "quantity_raw": "5",
-        "notes_raw": "یادداشت ۲",
-    }
-
-    # Input rows supplied in high-byte first order
-    bs_input_rows: list[tuple[uuid.UUID, dict[str, Any]]] = [
-        (u_high_byte, r_high),
-        (u_low_byte, r_low),
+    bs_rows: list[tuple[uuid.UUID, dict[str, Any]]] = [
+        (u_bs_high, r_bs_high),
+        (u_bs_low, r_bs_low),
     ]
 
-    u_rp = _make_uuid7(b"sr12_rp_u")
-    r_rp: dict[str, Any] = {
+    u_rp_high = uuid.UUID("01955f00-0000-7000-8000-000000000008")
+    u_rp_low = uuid.UUID("01955f00-0000-7000-8000-000000000002")
+    r_rp_high: dict[str, Any] = {
         "customer_flag_raw": None,
         "account_code_raw": "10",
         "notes_raw": None,
         "amount_toman_raw": "5000",
-        "entry_type_raw": "C",
+        "entry_type_raw": "   ",  # Blank entry_type issue
         "party_name_raw": "رضا",
         "date_raw": "1403/01/03",
     }
-
-    u_im = _make_uuid7(b"sr12_im_u")
-    r_im = _valid_inventory_movements_row()
-
-    u_bp = _make_uuid7(b"sr12_bp_u")
-    r_bp = _valid_business_parties_row()
-
-    sheet_specs: dict[str, list[tuple[uuid.UUID, dict[str, Any]]]] = {
-        "خرید-فروش": bs_input_rows,
-        "دریافت-پرداخت": [(u_rp, r_rp)],
-        "ورود-خروج": [(u_im, r_im)],
-        "لیست کسبه": [(u_bp, r_bp)],
-    }
-
-    # Permute sheet input order: provide sheets in reverse approved order
-    permuted_sheet_inputs = [
-        SourceSheetInput(sheet_name="لیست کسبه", rows=[(u_bp, r_bp)]),
-        SourceSheetInput(sheet_name="ورود-خروج", rows=[(u_im, r_im)]),
-        SourceSheetInput(sheet_name="دریافت-پرداخت", rows=[(u_rp, r_rp)]),
-        SourceSheetInput(sheet_name="خرید-فروش", rows=bs_input_rows),
+    r_rp_low: dict[str, Any] = _valid_receipts_payments_row()
+    rp_rows: list[tuple[uuid.UUID, dict[str, Any]]] = [
+        (u_rp_high, r_rp_high),
+        (u_rp_low, r_rp_low),
     ]
 
-    snap = build_source_workbook_snapshot(permuted_sheet_inputs)
-    report = evaluate_source_requiredness(snap)
+    u_im_high = uuid.UUID("01955f00-0000-7000-8000-000000000007")
+    u_im_low = uuid.UUID("01955f00-0000-7000-8000-000000000003")
+    r_im_high: dict[str, Any] = _valid_inventory_movements_row()
+    r_im_low: dict[str, Any] = {
+        "purity_raw": "750",
+        "notes_raw": None,
+        "customer_flag_raw": "1",
+        "quantity_raw": "50",
+        "item_name_raw": "   ",  # Blank item_name issue
+        "movement_type_raw": "ورود",
+        "party_name_raw": "زرگری",
+        "date_raw": "1403/01/04",
+    }
+    im_rows: list[tuple[uuid.UUID, dict[str, Any]]] = [
+        (u_im_high, r_im_high),
+        (u_im_low, r_im_low),
+    ]
 
+    u_bp_high = uuid.UUID("01955f00-0000-7000-8000-000000000006")
+    u_bp_low = uuid.UUID("01955f00-0000-7000-8000-000000000004")
+    r_bp_high: dict[str, Any] = {
+        "phone_number_raw": None,
+        "party_name_raw": None,  # Missing party_name issue
+    }
+    r_bp_low: dict[str, Any] = _valid_business_parties_row()
+    bp_rows: list[tuple[uuid.UUID, dict[str, Any]]] = [
+        (u_bp_high, r_bp_high),
+        (u_bp_low, r_bp_low),
+    ]
+
+    sheet_specs: dict[str, list[tuple[uuid.UUID, dict[str, Any]]]] = {
+        "خرید-فروش": bs_rows,
+        "دریافت-پرداخت": rp_rows,
+        "ورود-خروج": im_rows,
+        "لیست کسبه": bp_rows,
+    }
+
+    # Oracle expectation derived directly from input specs
     oracle_issues, oracle_checked, oracle_failed, oracle_count, oracle_passes = (
         _independent_oracle(sheet_specs)
     )
 
-    assert report.checked_row_count == oracle_checked == 5
-    assert report.failed_row_count == oracle_failed == 2
-    assert report.issue_count == oracle_count == 2
-    assert report.passes_requiredness == oracle_passes is False
+    # 2. Test multiple actual permutations of sheet order
+    permutations = [
+        # Reversed order
+        [
+            SourceSheetInput(sheet_name="لیست کسبه", rows=bp_rows),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=im_rows),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rp_rows),
+            SourceSheetInput(sheet_name="خرید-فروش", rows=bs_rows),
+        ],
+        # Rotated order
+        [
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rp_rows),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=bp_rows),
+            SourceSheetInput(sheet_name="خرید-فروش", rows=bs_rows),
+            SourceSheetInput(sheet_name="ورود-خروج", rows=im_rows),
+        ],
+        # Another permutation
+        [
+            SourceSheetInput(sheet_name="ورود-خروج", rows=im_rows),
+            SourceSheetInput(sheet_name="خرید-فروش", rows=bs_rows),
+            SourceSheetInput(sheet_name="لیست کسبه", rows=bp_rows),
+            SourceSheetInput(sheet_name="دریافت-پرداخت", rows=rp_rows),
+        ],
+    ]
 
-    prod_issue_tuples = tuple(
-        (iss.sheet_name, iss.stable_id, iss.field_name, iss.reason.value)
-        for iss in report.issues
-    )
-    assert prod_issue_tuples == oracle_issues
+    for p_inputs in permutations:
+        snap = build_source_workbook_snapshot(p_inputs)
+        report = evaluate_source_requiredness(snap)
+
+        assert report.checked_row_count == oracle_checked == 8
+        assert report.failed_row_count == oracle_failed == 5
+        assert report.issue_count == oracle_count == 5
+        assert report.passes_requiredness == oracle_passes is False
+
+        prod_issue_tuples = tuple(
+            (iss.sheet_name, iss.stable_id, iss.field_name, iss.reason.value)
+            for iss in report.issues
+        )
+        assert prod_issue_tuples == oracle_issues
 
 
 def test_sr12_property_single_value_mutation_transitions() -> None:
@@ -1301,42 +1456,111 @@ def test_sr12_property_exact_snapshot_raw_and_hash_retention() -> None:
 
 
 @given(
-    st.lists(
-        st.tuples(
-            st.sampled_from(["present", "none", "blank"]),
-            st.sampled_from(["present", "none"]),
+    st.tuples(
+        st.lists(
+            st.tuples(
+                st.sampled_from(["present", "none", "blank"]),
+                st.sampled_from(["present", "none"]),
+            ),
+            min_size=1,
+            max_size=3,
         ),
-        min_size=1,
-        max_size=5,
+        st.lists(
+            st.tuples(
+                st.sampled_from(["present", "none", "blank"]),
+                st.sampled_from(["present", "none"]),
+            ),
+            min_size=1,
+            max_size=3,
+        ),
+        st.lists(
+            st.tuples(
+                st.sampled_from(["present", "none", "blank"]),
+                st.sampled_from(["present", "none"]),
+            ),
+            min_size=1,
+            max_size=3,
+        ),
+        st.lists(
+            st.sampled_from(["present", "none", "blank"]),
+            min_size=1,
+            max_size=3,
+        ),
     )
 )
 @settings(max_examples=15, deadline=None)
 def test_sr12_hypothesis_randomized_presence_combinations(
-    row_specs: list[tuple[str, str]],
+    specs_tuple: tuple[
+        list[tuple[str, str]],
+        list[tuple[str, str]],
+        list[tuple[str, str]],
+        list[str],
+    ],
 ) -> None:
-    """SR-12: Hypothesis property test verifying independent oracle on mixtures."""
+    """SR-12: Hypothesis property test verifying oracle across all four sheets."""
+    bs_specs, rp_specs, im_specs, bp_specs = specs_tuple
+
     bs_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
-    for idx, (party_mode, price_mode) in enumerate(row_specs):
-        u = _make_uuid7(f"sr12_hypo_{idx}".encode())
+    for idx, (party_mode, price_mode) in enumerate(bs_specs):
+        u = _make_uuid7(f"hypo_bs_{idx}".encode())
         data = _valid_buy_sell_row()
         if party_mode == "none":
             data["party_name_raw"] = None
         elif party_mode == "blank":
             data["party_name_raw"] = "   "
-
         if price_mode == "none":
             data["unit_price_toman_raw"] = None
-
         bs_rows.append((u, data))
+
+    rp_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for idx, (party_mode, entry_mode) in enumerate(rp_specs):
+        u = _make_uuid7(f"hypo_rp_{idx}".encode())
+        data = _valid_receipts_payments_row()
+        if party_mode == "none":
+            data["party_name_raw"] = None
+        elif party_mode == "blank":
+            data["party_name_raw"] = "   "
+        if entry_mode == "none":
+            data["entry_type_raw"] = None
+        elif entry_mode == "blank":
+            data["entry_type_raw"] = "   "
+        rp_rows.append((u, data))
+
+    im_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for idx, (item_mode, qty_mode) in enumerate(im_specs):
+        u = _make_uuid7(f"hypo_im_{idx}".encode())
+        data = _valid_inventory_movements_row()
+        if item_mode == "none":
+            data["item_name_raw"] = None
+        elif item_mode == "blank":
+            data["item_name_raw"] = "   "
+        if qty_mode == "none":
+            data["quantity_raw"] = None
+        im_rows.append((u, data))
+
+    bp_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for idx, party_mode in enumerate(bp_specs):
+        u = _make_uuid7(f"hypo_bp_{idx}".encode())
+        data = _valid_business_parties_row()
+        if party_mode == "none":
+            data["party_name_raw"] = None
+        elif party_mode == "blank":
+            data["party_name_raw"] = "   "
+        bp_rows.append((u, data))
 
     sheet_specs = {
         "خرید-فروش": bs_rows,
-        "دریافت-پرداخت": [],
-        "ورود-خروج": [],
-        "لیست کسبه": [],
+        "دریافت-پرداخت": rp_rows,
+        "ورود-خروج": im_rows,
+        "لیست کسبه": bp_rows,
     }
 
-    snap = _build_snapshot_with_rows(buy_sell_rows=bs_rows)
+    snap = _build_snapshot_with_rows(
+        buy_sell_rows=bs_rows,
+        receipts_payments_rows=rp_rows,
+        inventory_movements_rows=im_rows,
+        business_parties_rows=bp_rows,
+    )
     report = evaluate_source_requiredness(snap)
 
     oracle_issues, oracle_checked, oracle_failed, oracle_count, oracle_passes = (
@@ -1365,35 +1589,81 @@ def test_sr13_scale_15000_row_synthetic_benchmark() -> None:
     total_rows = 15000
     rows_per_sheet = total_rows // 4  # 3,750 per sheet
 
-    def make_sheet_rows(
-        sheet_idx: int,
-        default_fn: Any,
-        corrupt_field: str | None = None,
-        is_text_field: bool = False,
-    ) -> list[tuple[uuid.UUID, dict[str, Any]]]:
-        res = []
-        for i in range(rows_per_sheet):
-            u = _make_uuid7(f"sr13_s{sheet_idx}_r{i:05d}".encode())
-            data = default_fn()
-            if corrupt_field and i < 1000:
-                if is_text_field:
-                    data[corrupt_field] = None if i % 2 == 0 else "   "
-                else:
-                    data[corrupt_field] = None
-            res.append((u, data))
-        return res
-
     t_fixture_start = time.perf_counter()
-    bs_rows = make_sheet_rows(
-        1, _valid_buy_sell_row, "unit_price_toman_raw", is_text_field=False
-    )
-    rp_rows = make_sheet_rows(
-        2, _valid_receipts_payments_row, "party_name_raw", is_text_field=True
-    )
-    im_rows = make_sheet_rows(
-        3, _valid_inventory_movements_row, "item_name_raw", is_text_field=True
-    )
-    bp_rows = make_sheet_rows(4, _valid_business_parties_row, None)
+
+    # Sheet 1: خرید-فروش (1,000 missing unit_price, 2,750 valid)
+    bs_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for i in range(rows_per_sheet):
+        u = _make_uuid7(f"sr13_s1_r{i:05d}".encode())
+        data = _valid_buy_sell_row()
+        if i < 1000:
+            data["unit_price_toman_raw"] = None
+        bs_rows.append((u, data))
+
+    # Sheet 2: دریافت-پرداخت (500 missing party_name, 500 blank party_name, 2,750 valid)
+    rp_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for i in range(rows_per_sheet):
+        u = _make_uuid7(f"sr13_s2_r{i:05d}".encode())
+        data = _valid_receipts_payments_row()
+        if i < 500:
+            data["party_name_raw"] = None
+        elif i < 1000:
+            data["party_name_raw"] = "   "
+        rp_rows.append((u, data))
+
+    # Sheet 3: ورود-خروج (500 missing item_name, 500 blank item_name, 2,750 valid)
+    im_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for i in range(rows_per_sheet):
+        u = _make_uuid7(f"sr13_s3_r{i:05d}".encode())
+        data = _valid_inventory_movements_row()
+        if i < 500:
+            data["item_name_raw"] = None
+        elif i < 1000:
+            data["item_name_raw"] = "   "
+        im_rows.append((u, data))
+
+    # Sheet 4: لیست کسبه (3,750 valid)
+    bp_rows: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for i in range(rows_per_sheet):
+        u = _make_uuid7(f"sr13_s4_r{i:05d}".encode())
+        data = _valid_business_parties_row()
+        bp_rows.append((u, data))
+
+    # Derive full independently expected ordered tuple directly from input specs
+    expected_issues_list: list[tuple[str, uuid.UUID, str, str]] = []
+
+    # Sheet 1 expected issues in sorted UUID byte order
+    bs_sorted = sorted(bs_rows, key=lambda pair: pair[0].bytes)
+    for u, row in bs_sorted:
+        if row["unit_price_toman_raw"] is None:
+            expected_issues_list.append(
+                ("خرید-فروش", u, "unit_price_toman_raw", "missing_value")
+            )
+
+    # Sheet 2 expected issues in sorted UUID byte order
+    rp_sorted = sorted(rp_rows, key=lambda pair: pair[0].bytes)
+    for u, row in rp_sorted:
+        if row["party_name_raw"] is None:
+            expected_issues_list.append(
+                ("دریافت-پرداخت", u, "party_name_raw", "missing_value")
+            )
+        elif row["party_name_raw"] == "   ":
+            expected_issues_list.append(
+                ("دریافت-پرداخت", u, "party_name_raw", "blank_text")
+            )
+
+    # Sheet 3 expected issues in sorted UUID byte order
+    im_sorted = sorted(im_rows, key=lambda pair: pair[0].bytes)
+    for u, row in im_sorted:
+        if row["item_name_raw"] is None:
+            expected_issues_list.append(
+                ("ورود-خروج", u, "item_name_raw", "missing_value")
+            )
+        elif row["item_name_raw"] == "   ":
+            expected_issues_list.append(("ورود-خروج", u, "item_name_raw", "blank_text"))
+
+    expected_issues = tuple(expected_issues_list)
+    assert len(expected_issues) == 3000
 
     snap = _build_snapshot_with_rows(
         buy_sell_rows=bs_rows,
@@ -1403,6 +1673,13 @@ def test_sr13_scale_15000_row_synthetic_benchmark() -> None:
     )
     t_fixture_duration = time.perf_counter() - t_fixture_start
     assert snap.total_row_count == 15000
+
+    # Pre-capture row references, raw mappings, and source hashes BEFORE evaluation
+    pre_captured_rows = {
+        u: (row, row.raw_values, row.source_hash)
+        for u, row in snap.all_rows_by_id.items()
+    }
+    assert len(pre_captured_rows) == 15000
 
     # Measure pure requiredness evaluation time separately from fixture generation
     t_eval_start = time.perf_counter()
@@ -1418,43 +1695,26 @@ def test_sr13_scale_15000_row_synthetic_benchmark() -> None:
         f"issues: {report.issue_count}"
     )
 
+    # Compare every emitted issue against independently expected ordered tuple
+    actual_issues = tuple(
+        (iss.sheet_name, iss.stable_id, iss.field_name, iss.reason.value)
+        for iss in report.issues
+    )
+    assert actual_issues == expected_issues
+
     assert report.checked_row_count == 15000
     assert report.failed_row_count == 3000
     assert report.issue_count == 3000
     assert report.passes_requiredness is False
     assert report.snapshot is snap
 
-    # Verify independently expected issue order and retained IDs/raw mappings/hashes
-    # Sheet 1: first 1,000 issues are unit_price_toman_raw in BS
-    for iss in report.issues[:1000]:
-        assert iss.sheet_name == "خرید-فروش"
-        assert iss.field_name == "unit_price_toman_raw"
-        assert iss.reason is SourceRequirednessIssueReason.MISSING_VALUE
-
-    # Sheet 2: next 1,000 issues are party_name_raw in RP
-    for iss in report.issues[1000:2000]:
-        assert iss.sheet_name == "دریافت-پرداخت"
-        assert iss.field_name == "party_name_raw"
-        assert iss.reason in (
-            SourceRequirednessIssueReason.MISSING_VALUE,
-            SourceRequirednessIssueReason.BLANK_TEXT,
-        )
-
-    # Sheet 3: next 1,000 issues are item_name_raw in IM
-    for iss in report.issues[2000:3000]:
-        assert iss.sheet_name == "ورود-خروج"
-        assert iss.field_name == "item_name_raw"
-        assert iss.reason in (
-            SourceRequirednessIssueReason.MISSING_VALUE,
-            SourceRequirednessIssueReason.BLANK_TEXT,
-        )
-
-    # Spot-check identity and hash retention for sample rows
-    for row_tuple in bs_rows[:5] + bp_rows[:5]:
-        u_check = row_tuple[0]
-        snap_row = report.snapshot.all_rows_by_id[u_check]
-        assert snap_row.stable_id == u_check
-        assert snap_row.source_hash == snap.all_rows_by_id[u_check].source_hash
+    # Verify exact row object, raw mapping, and hash retention across 15k rows
+    assert len(report.snapshot.all_rows_by_id) == 15000
+    for u, (orig_row, orig_raw, orig_hash) in pre_captured_rows.items():
+        after_row = report.snapshot.all_rows_by_id[u]
+        assert after_row is orig_row
+        assert after_row.raw_values is orig_raw
+        assert after_row.source_hash == orig_hash
 
 
 # ---------------------------------------------------------------------------
