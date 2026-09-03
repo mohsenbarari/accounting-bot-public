@@ -127,3 +127,50 @@ enrollment, global identity/revision projection and durable rollover remain
 separate prerequisites. Shared permanent party UUIDs in historical views are
 retained without merging or resetting revisions. The resolver performs no I/O,
 calls no Planner or financial checks, and ACTIVE does not authorize a commit.
+
+## Source Identity Projection (`source_identity_projection`)
+
+`source-identity-projection.v1` implements ADR-0016 for comparison across annual
+memberships while preserving permanent UUID/home-sheet/revision history:
+
+```python
+from accounting_contracts import (
+    SourceIdentityCatalog,
+    plan_source_changes,
+    project_source_prior,
+)
+
+# registry, key and snapshot here are synthetic, already validated inputs.
+catalog = SourceIdentityCatalog(registry)
+prior = project_source_prior(key, snapshot, catalog)
+proposal = plan_source_changes(snapshot, prior)
+```
+
+The immutable catalog retains the source registry and derives global heads and
+transaction owners. The same UUID/revision must have consistent state across
+memberships; the active source cannot have a stale prior. A transaction UUID
+belongs permanently to one source. Parties may share their permanent UUID across
+annual views, which retain their original revisions and archive hashes.
+
+Projection uses the exact WP-11 active-source resolver. It keeps every committed
+member/tombstone of that source and borrows a global prior only for a known party
+present now but not yet a member. Absent archive-only UUIDs cannot become false
+VOID; an unchanged known party cannot become a new revision-1 INSERT. Archive or
+unknown keys, moved home sheets, foreign transactions and inconsistent input
+fail with `SourceIdentityProjectionError` and a `SourceIdentityProjectionReason`.
+Public messages are fixed; diagnostic causes can preserve underlying failures.
+
+Catalog creation visits supplied membership once plus an active-prior check,
+with O(S + M + U log U) time, O(S + M) peak validation metadata and O(S + U)
+retained indexes. Projection uses the indexes and current/active rows, at most
+O(A + N log N + K log K) time and O(A + N) additional metadata, without rescanning
+archive priors. No row/financial-volume threshold is added.
+
+These are pure metadata operations. Successful construction cannot prove that
+the caller supplied every committed source or associated each prior truthfully.
+No file read, enrollment, automatic Planner call, mutation or commit occurs.
+Future durable import must validate one committed generation and atomically
+record Raw/revision/membership/outbox changes, including **new party membership
+after UNCHANGED**. Otherwise its later deletion could be missed. Archive views
+remain fixed; crash recovery, real-source enrollment and rollover require their
+own contracts and evidence. WP-04, WP-11 and runtime behavior remain unchanged.

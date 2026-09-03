@@ -90,6 +90,13 @@ from accounting_contracts.source_fiscal_evidence import (
     SourceFiscalYearCount,
     evaluate_source_fiscal_evidence,
 )
+from accounting_contracts.source_identity_projection import (
+    SOURCE_IDENTITY_PROJECTION_VERSION,
+    SourceIdentityCatalog,
+    SourceIdentityProjectionError,
+    SourceIdentityProjectionReason,
+    project_source_prior,
+)
 from accounting_contracts.source_requiredness import (
     SOURCE_REQUIREDNESS_VERSION,
     SourceRequirednessInputError,
@@ -144,6 +151,7 @@ __all__ = [
     "SOURCE_BINDING_VERSION",
     "SOURCE_FISCAL_EVIDENCE_VERSION",
     "SOURCE_HASH_VERSION",
+    "SOURCE_IDENTITY_PROJECTION_VERSION",
     "SOURCE_REQUIREDNESS_VERSION",
     "SheetSnapshotHashResult",
     "SourceChangePlanError",
@@ -159,6 +167,9 @@ __all__ = [
     "SourceFiscalRowEvidence",
     "SourceFiscalYearCount",
     "SourceHashResult",
+    "SourceIdentityCatalog",
+    "SourceIdentityProjectionError",
+    "SourceIdentityProjectionReason",
     "SourceRequirednessInputError",
     "SourceRequirednessIssue",
     "SourceRequirednessIssueReason",
@@ -185,6 +196,7 @@ __all__ = [
     "normalize_digits",
     "parse_canonical_jalali_date",
     "plan_source_changes",
+    "project_source_prior",
     "resolve_source_binding",
     "to_iran_time",
 ]
