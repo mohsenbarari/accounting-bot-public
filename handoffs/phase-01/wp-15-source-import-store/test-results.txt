@@ -1,9 +1,9 @@
 ================================================================================
 WORK PACKAGE: WP-15 source-import-store.v1
 PHASE: Phase 1 — source and data-model foundation (Gate G1)
-RECORDED AT UTC: 2026-09-04T19:50:00Z
-TESTED COMMIT SHA: 2c85b283bb12826203f49dad70d2aa6c1eec7299
-PARENT COMMIT SHA: c4f16b0a4d56b82157893a8523ba385e673d40ef
+RECORDED AT UTC: 2026-09-04T22:56:45Z
+TESTED COMMIT SHA: 2f1db9f0b121ef65c4e23357f588836ed2b22628
+PARENT COMMIT SHA: fe3b50707c6694e2235765f5efede6c2ea89c3f0
 BASELINE COMMIT SHA: 0915081b3a44e08dee935785c6c1ba7a96135fcb
 ================================================================================
 
@@ -40,12 +40,12 @@ SQLite compile options:
 
 ================================================================================
 2. FORMATTING AND LINTING
-Command: uv run ruff format --check packages/ tests/
+Command: uv run ruff format --check .
 Exit status: 0
 Output:
-55 files already formatted
+140 files already formatted
 
-Command: uv run ruff check packages/ tests/
+Command: uv run ruff check .
 Exit status: 0
 Output:
 All checks passed!
@@ -64,180 +64,249 @@ Output:
 pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
 Success: no issues found in 59 source files
 
+Platform note:
+Static Mypy type-checking on Linux targets Win32 type definitions but is not native
+Windows runtime execution. Native Windows runtime execution is deferred to Windows CI.
+
 ================================================================================
-4. DEDICATED WP-15 TEST SUITE (IS-01 THROUGH IS-16 AND R1..R5)
-Command: uv run pytest -v tests/test_source_import_store.py
+4. DEDICATED WP-15 TEST SUITE (IS-01 THROUGH IS-16 AND R1..R4)
+Command: uv run pytest tests/test_source_import_store.py -v -o addopts=""
 Exit status: 0
 Output:
 =================== test session starts ===================
-platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- /srv/accounting-bot/workspace/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'default'
 rootdir: /srv/accounting-bot/workspace
 configfile: pyproject.toml
 plugins: hypothesis-6.167.0, asyncio-1.4.0, anyio-4.14.2
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 48 items
+collected 52 items
 
-tests/test_source_import_store.py::test_is01_public_exports_and_signatures PASSED [  2%]
-tests/test_source_import_store.py::test_is01_rejection_of_descriptors_and_spoofed_types PASSED [  4%]
-tests/test_source_import_store.py::test_is01_side_effect_free_module_import PASSED [  6%]
-tests/test_source_import_store.py::test_is02_initialization_schema_inspection PASSED [  8%]
-tests/test_source_import_store.py::test_is02_initialization_idempotency_and_mismatch_rejection PASSED [ 10%]
-tests/test_source_import_store.py::test_is03_validator_boundaries_and_safe_repr PASSED [ 12%]
-tests/test_source_import_store.py::test_is03_caller_connection_preservation PASSED [ 14%]
-tests/test_source_import_store.py::test_is04_first_complete_import_golden_and_wire_payloads PASSED [ 16%]
-tests/test_source_import_store.py::test_is05_multi_generation_lifecycle_and_hash_chains PASSED [ 18%]
-tests/test_source_import_store.py::test_is05_row_reorder_and_formula_cache_noop PASSED [ 20%]
-tests/test_source_import_store.py::test_is06_archived_and_active_source_isolation_and_party_membership PASSED [ 22%]
-tests/test_source_import_store.py::test_is07_requiredness_failures_atomic_rejection PASSED [ 25%]
-tests/test_source_import_store.py::test_is07_fiscal_evidence_and_canonical_date_derivations PASSED [ 27%]
-tests/test_source_import_store.py::test_is08_exact_idempotent_replay_and_conflict_detection PASSED [ 29%]
-tests/test_source_import_store.py::test_is08_zero_event_import_and_file_revert PASSED [ 31%]
-tests/test_source_import_store.py::test_is09_two_connection_concurrency_race_with_barriers PASSED [ 33%]
-tests/test_source_import_store.py::test_is10_failure_injection_across_write_families PASSED [ 35%]
-tests/test_source_import_store.py::test_is10_commit_and_rollback_double_failure_exception_group PASSED [ 37%]
-tests/test_source_import_store.py::test_is11_cross_process_crash_and_restart_recovery PASSED [ 39%]
-tests/test_source_import_store.py::test_is12_error_sanitization_and_raw_exception_propagation PASSED [ 41%]
-tests/test_source_import_store.py::test_is13_schema_guards_trigger_enforcement_and_tamper_detection PASSED [ 43%]
-tests/test_source_import_store.py::test_is14_hypothesis_multi_step_history_property_tests PASSED [ 45%]
-tests/test_source_import_store.py::test_is14_controlled_product_code_mutations PASSED [ 47%]
-tests/test_source_import_store.py::test_is15_identified_xlsx_composition_lifecycle PASSED [ 50%]
-tests/test_source_import_store.py::test_is16_15000_row_scale_benchmark_memory_and_replay PASSED [ 52%]
-tests/test_source_import_store.py::test_r1_deterministic_two_connection_wal_repeated_init PASSED [ 54%]
-tests/test_source_import_store.py::test_r1_cross_source_global_party_membership_validation PASSED [ 56%]
-tests/test_source_import_store.py::test_r2_schema_validation_rigor PASSED [ 58%]
-tests/test_source_import_store.py::test_r2_constant_query_and_decode_bounds_across_generations PASSED [ 60%]
-tests/test_source_import_store.py::test_r3_semantic_binding_and_tamper_rejection PASSED [ 62%]
-tests/test_source_import_store.py::test_r3_canonical_import_metadata_and_provenance_validation PASSED [ 64%]
-tests/test_source_import_store.py::test_r4_exact_root_scalar_type_enforcement PASSED [ 66%]
-tests/test_source_import_store.py::test_r5_no_historical_raw_scans_instrumentation PASSED [ 68%]
-tests/test_source_import_store.py::test_extra_boundary_conditions PASSED [ 70%]
-tests/test_source_import_store.py::test_additional_negative_controls PASSED [ 72%]
-tests/test_source_import_store.py::test_schema_integrity_invariants PASSED [ 75%]
-tests/test_source_import_store.py::test_transaction_rollback_guarantees PASSED [ 77%]
-tests/test_source_import_store.py::test_uuid_canonicalization_checks PASSED [ 79%]
-tests/test_source_import_store.py::test_hash_chain_continuation PASSED [ 81%]
-tests/test_source_import_store.py::test_outbox_event_ordering PASSED [ 83%]
-tests/test_source_import_store.py::test_active_source_switch_invariants PASSED [ 85%]
-tests/test_source_import_store.py::test_reconstructed_view_immutability PASSED [ 87%]
-tests/test_source_import_store.py::test_predecessor_linkage_tamper PASSED [ 89%]
-tests/test_source_import_store.py::test_disposition_state_transitions PASSED [ 91%]
-tests/test_source_import_store.py::test_concurrency_busy_timeout_handling PASSED [ 93%]
-tests/test_source_import_store.py::test_sheet_catalog_consistency PASSED [ 95%]
-tests/test_source_import_store.py::test_raw_payload_corruption_detection PASSED [ 97%]
-tests/test_source_import_store.py::test_membership_lifecycle_reactivation PASSED [100%]
-=================== 48 passed in 41.34s ===================
+tests/test_source_import_store.py::test_is01_public_exports_and_signatures PASSED [  1%]
+tests/test_source_import_store.py::test_is01_rejection_of_descriptors_and_spoofed_types PASSED [  3%]
+tests/test_source_import_store.py::test_is01_side_effect_free_module_import PASSED [  5%]
+tests/test_source_import_store.py::test_is02_initialization_schema_inspection PASSED [  7%]
+tests/test_source_import_store.py::test_is02_initialization_idempotency_and_mismatch_rejection PASSED [  9%]
+tests/test_source_import_store.py::test_is03_validator_boundaries_and_safe_repr PASSED [ 11%]
+tests/test_source_import_store.py::test_is03_caller_connection_preservation PASSED [ 13%]
+tests/test_source_import_store.py::test_is04_first_complete_import_golden_and_wire_payloads PASSED [ 15%]
+tests/test_source_import_store.py::test_is05_multi_generation_lifecycle_and_hash_chains PASSED [ 17%]
+tests/test_source_import_store.py::test_is05_row_reorder_and_formula_cache_noop PASSED [ 19%]
+tests/test_source_import_store.py::test_is06_cross_source_global_party_zero_event_import_and_read PASSED [ 21%]
+tests/test_source_import_store.py::test_is06_cross_source_global_party_later_void_in_active_source PASSED [ 23%]
+tests/test_source_import_store.py::test_is06_reject_request_targeting_archived_source_before_write PASSED [ 25%]
+tests/test_source_import_store.py::test_is06_reject_uuid_moved_across_non_party_sheets_before_write PASSED [ 26%]
+tests/test_source_import_store.py::test_is06_transaction_ownership_and_state_verification PASSED [ 28%]
+tests/test_source_import_store.py::test_is07_requiredness_failures_atomic_rejection PASSED [ 30%]
+tests/test_source_import_store.py::test_is07_fiscal_evidence_and_canonical_date_derivations PASSED [ 32%]
+tests/test_source_import_store.py::test_is08_exact_idempotent_replay_and_conflict_detection PASSED [ 34%]
+tests/test_source_import_store.py::test_is08_zero_event_import_and_file_revert PASSED [ 36%]
+tests/test_source_import_store.py::test_is09_race_changed_vs_changed_winner_a_loser_b PASSED [ 38%]
+tests/test_source_import_store.py::test_is09_race_changed_vs_changed_winner_b_loser_a PASSED [ 40%]
+tests/test_source_import_store.py::test_is09_race_changed_vs_zero_event_winner_changed PASSED [ 42%]
+tests/test_source_import_store.py::test_is09_race_changed_vs_zero_event_winner_zero_event PASSED [ 44%]
+tests/test_source_import_store.py::test_is10_failure_injection_across_write_families PASSED [ 46%]
+tests/test_source_import_store.py::test_is10_begin_and_pre_commit_failure_rollback PASSED [ 48%]
+tests/test_source_import_store.py::test_is10_post_commit_pre_return_ambiguity_and_replay PASSED [ 50%]
+tests/test_source_import_store.py::test_is10_raw_base_exception_propagation_and_rollback PASSED [ 51%]
+tests/test_source_import_store.py::test_is10_commit_and_rollback_ordered_dual_failure_exception_group PASSED [ 53%]
+tests/test_source_import_store.py::test_is11_cross_process_crash_and_restart_recovery PASSED [ 55%]
+tests/test_source_import_store.py::test_is12_error_sanitization_and_raw_exception_propagation PASSED [ 57%]
+tests/test_source_import_store.py::test_is13_schema_guards_trigger_enforcement_and_tamper_detection PASSED [ 59%]
+tests/test_source_import_store.py::test_is13_mutation_offset_free_observation_rejected PASSED [ 61%]
+tests/test_source_import_store.py::test_is13_mutation_wrong_source_year_provenance_rejected PASSED [ 63%]
+tests/test_source_import_store.py::test_is13_mutation_event_observation_differing_from_import_rejected PASSED [ 65%]
+tests/test_source_import_store.py::test_is13_mutation_file_import_metadata_mismatch_rejected PASSED [ 67%]
+tests/test_source_import_store.py::test_is13_mutation_sheet_count_mismatch_rejected PASSED [ 69%]
+tests/test_source_import_store.py::test_is13_mutation_current_payload_tamper_rejected PASSED [ 71%]
+tests/test_source_import_store.py::test_is13_mutation_version_hash_tamper_rejected PASSED [ 73%]
+tests/test_source_import_store.py::test_is13_mutation_noncontiguous_sequence_rejected PASSED [ 75%]
+tests/test_source_import_store.py::test_is14_hypothesis_multi_step_history_property_tests PASSED [ 76%]
+tests/test_source_import_store.py::test_is14_controlled_product_code_mutations PASSED [ 78%]
+tests/test_source_import_store.py::test_is15_identified_xlsx_composition_lifecycle PASSED [ 80%]
+tests/test_source_import_store.py::test_is16_15000_row_scale_benchmark_memory_and_replay PASSED [ 82%]
+tests/test_source_import_store.py::test_r1_deterministic_two_connection_wal_repeated_init PASSED [ 84%]
+tests/test_source_import_store.py::test_r2_schema_validation_rigor PASSED [ 86%]
+tests/test_source_import_store.py::test_r3_semantic_binding_and_tamper_rejection PASSED [ 88%]
+tests/test_source_import_store.py::test_r4_exact_root_scalar_type_enforcement PASSED [ 90%]
+tests/test_source_import_store.py::test_r2_constant_query_and_decode_bounds_across_generations PASSED [ 92%]
+tests/test_source_import_store.py::test_r4_01_current_event_uuidv4_tamper_rejected_by_read_and_replay PASSED [ 94%]
+tests/test_source_import_store.py::test_r4_02_creating_import_impossible_timestamp_rejected_by_read_and_replay PASSED [ 96%]
+tests/test_source_import_store.py::test_r4_03_non_utc_and_non_canonical_timestamps_rejected PASSED [ 98%]
+tests/test_source_import_store.py::test_r4_04_transaction_acquisition_owned_cleanup PASSED [100%]
+
+=================== 52 passed in 44.33s ===================
 
 ================================================================================
 5. IS-16 15,000-ROW SCALE BENCHMARK & MEMORY TARGET (<350 MiB)
-Command: uv run pytest -s tests/test_source_import_store.py -k "test_is16"
+Command: /usr/bin/time -v uv run pytest tests/test_source_import_store.py -k "test_is16" -s
 Exit status: 0
 Output:
 [IS-16] Generating 15000 synthetic rows...
-[IS-16] Breakdown: fixture=3.124s, val_proj=2.257s, encode=0.932s, sql_write=1.671s, commit_phase=0.223s, restart_read=5.201s, verify=3.135s, replay=5.429s, gen2=6.197s
-[IS-16] Memory: Baseline RSS=78.79 MiB, Peak RSS=83.61 MiB, Delta=4.83 MiB (Linux /proc/self/status VmRSS)
+[IS-16] Breakdown: fixture=3.112s, val_proj=1.126s (digest=0.472s, req_fisc=0.444s, plan=0.210s), encode=0.930s, sql_write=1.571s, commit_phase=0.215s, residual=1.112s, restart_read=5.717s, verify=3.170s, replay=5.710s, gen2=7.084s
+[IS-16] Memory: Baseline RSS=77.92 MiB, Peak RSS=83.66 MiB, Delta=5.73 MiB (Linux /proc/self/status VmRSS)
 [IS-16] Storage: DB=32.95 MiB, WAL=0.00 MiB
 [IS-16] Queries: Read=50 queries (15000 decodes), Replay=54 queries (15000 decodes)
 .
-1 passed, 47 deselected in 36.15s
+1 passed, 51 deselected in 38.92s
+        Command being timed: "uv run pytest tests/test_source_import_store.py -k test_is16 -s"
+        User time (seconds): 38.17
+        System time (seconds): 1.12
+        Percent of CPU this job got: 98%
+        Elapsed (wall clock) time (h:mm:ss or m:ss): 0:39.80
+        Maximum resident set size (kbytes): 211828
+        Major (requiring I/O) page faults: 0
+        Minor (reclaiming a frame) page faults: 71342
+        Voluntary context switches: 4461
+        Involuntary context switches: 1474
+        Exit status: 0
 
-Scale Metrics Summary:
+Scale Metrics Summary & Window Identification:
 - Synthetic row count: 15,000 (3,000 parties, 6,000 buy/sell, 3,000 receipts, 3,000 inventory)
 - Commit phase breakdown:
-  * Fixture generation: 3.124s
-  * Validation & projection: 2.257s
-  * Raw encoding: 0.932s
-  * SQL writes: 1.671s
-  * Commit transaction phase: 0.223s
-  * Total commit time: 5.083s
-- Process call window RSS: Baseline 78.79 MiB, Peak 83.61 MiB, Delta 4.83 MiB (Limit: < 350 MiB)
-- Method: Linux /proc/self/status VmRSS (Reference /usr/bin/time -v maximum RSS: ~149.66 MiB)
-- Restart / store read duration: 5.201s
-- Independent verification duration (all 15,000 rows): 3.135s
-- Idempotent replay duration: 5.429s
-- Large second generation (15,000 rows with 1,500 edits): 6.197s
+  * Fixture generation: 3.112s
+  * Validation & projection calls: 1.126s
+    - Request digest: 0.472s
+    - Fiscal evidence / date derivation: 0.444s
+    - Change plan generation: 0.210s
+  * Raw encoding (WP-14): 0.930s
+  * SQL writes (SQLite executes/executemany): 1.571s
+  * Commit transaction phase: 0.215s
+  * Residual commit overhead: 1.112s (input validation, loop bookkeeping, receipt construction)
+  * Total commit time: 4.954s
+- Restart / store read duration: 5.717s
+- Independent verification duration (all 15,000 rows): 3.170s
+- Idempotent replay duration: 5.710s
+- Large second generation (15,000 rows with 1,500 edits): 7.084s
 - Query bounds: Read 50 queries (15,000 decodes), Replay 54 queries (15,000 decodes)
 - Final SQLite DB size: 32.95 MiB
 - Final WAL file size: 0.00 MiB
+- Memory Window Analysis:
+  * Call-window RSS: Baseline 77.92 MiB, Peak 83.66 MiB, Delta 5.73 MiB.
+    Window covered: strictly the first `commit_source_import` invocation measured via
+    Linux `/proc/self/status` `VmRSS`.
+  * Whole-process peak RSS: 211,828 kbytes (~206.86 MiB) measured via `/usr/bin/time -v`.
+    Window covered: entire pytest execution including Python runtime, pytest, hypothesis,
+    uv, sqlite3, 15,000 row generator, commit, read, verify, replay, and second generation.
+  * Both metrics are well below the approved 350 MiB target.
 
 ================================================================================
-6. R2 CONSTANT BOUNDS BENCHMARK ACROSS GENERATIONS (1, 5, 20, 50)
-Command: uv run pytest tests/test_source_import_store.py -k "test_r2" -v -s
+6. R2 CONSTANT BOUNDS BENCHMARK AND SQL AGGREGATE QUALIFICATION
+Command: uv run pytest tests/test_source_import_store.py -k "test_r2" -v -s -o addopts=""
 Exit status: 0
 Output:
 tests/test_source_import_store.py::test_r2_schema_validation_rigor PASSED
 tests/test_source_import_store.py::test_r2_constant_query_and_decode_bounds_across_generations PASSED
-2 passed, 46 deselected in 1.42s
+2 passed, 50 deselected in 1.45s
 
-R2 Query and Decode Bounds Summary:
+R2 Query and Decode Bounds Summary & Honest Qualification:
 - Generations tested: 1, 5, 20, 50
 - Read queries across history length: strictly constant at 52 queries (5, 20, 50 generations)
 - Commit queries across history length: strictly constant at 70 queries (5, 20, 50 generations)
 - Read decodes: exactly 1 current-head row decoded
 - Commit decodes: <= 2 rows decoded (prior head + candidate)
-- Full history scans: 0 queries scan or return historical import rows
+- Honest SQL Aggregate Qualification:
+  * The constant statement and bounded decode counts are verified improvements.
+  * The SQL statements executed by the store include constant-count SQL aggregate queries
+    (e.g., COUNT, MAX, COALESCE over history tables to determine next sequences and verify state).
+  * These aggregate queries do scan historical rows in the database; therefore, a constant
+    statement count does not imply history-independent total CPU or execution time.
+  * As measured by Codex, SQLite VM instruction counts increase across generations (e.g.
+    2337 / 4244 / 11474 / 25934 at 1 / 5 / 20 / 50 generations).
+  * No claim is made that queries do not scan historical import rows.
 
 ================================================================================
 7. FULL REPOSITORY TEST SUITE (REGRESSION CHECK)
 Command: uv run pytest -v
 Exit status: 0
 Output:
-collected 1004 items
-1002 passed, 2 skipped in 147.90s (0:02:27)
+collected 1008 items
+1006 passed, 2 skipped in 158.72s (0:02:38)
 
-(Note: 2 skipped tests are Windows platform-conditional tests in test_xlsx_snapshot_acquisition.py,
-identical to the execution baseline behavior on Linux. Total collection represents 956 baseline + 48 new tests = 1004 items.)
+Exact Skipped Test Information:
+- tests/test_xlsx_snapshot_acquisition.py:3911: `test_r11_01_windows_handle_protect_from_close_native_oracle`
+  Reason: Native Windows handle protection test only runs on Windows runtime
+- tests/test_xlsx_snapshot_acquisition.py:4008: `test_r9_10_windows_runtime_full_lifecycle_platform_conditional`
+  Reason: Windows platform-conditional test only runs on Windows runtime
+Total collection represents 956 baseline + 52 WP-15 tests = 1008 items.
 
 ================================================================================
 8. EXISTING BENCHMARKS VERIFICATION (WP-05, WP-06, WP-12)
 Command: uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
 Exit status: 0
 Output:
-[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.3239s | baseline_current_rss_mib: 30.64 MiB | call_peak_rss_mib: 62.34 MiB | rows: 15000 | platform: linux
-1 passed in 11.85s
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.8338s | baseline_current_rss_mib: 30.55 MiB | call_peak_rss_mib: 62.29 MiB | rows: 15000 | platform: linux
+1 passed in 12.28s
 
 Command: uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
 Exit status: 0
 Output:
-[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.5835s | baseline_current_rss_mib: 30.39 MiB | call_peak_rss_mib: 61.97 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 4c1c5ccbf6635fc4b4769bc29621545beb8cd0f1eba4a89cbf01800dc602da28 | platform: linux
-1 passed in 13.15s
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.4547s | baseline_current_rss_mib: 30.31 MiB | call_peak_rss_mib: 62.00 MiB | rows: 15000 | file_bytes: 549787 | file_sha: ebee99ad3d52ae557cfa5057f5932981f3d4d4ae315bcdbd13883354b5179d39 | platform: linux
+1 passed in 11.92s
 
 Command: uv run pytest tests/test_xlsx_source_identity.py::test_xi14_combined_15000_row_benchmark -v -s
 Exit status: 0
 Output:
-{"fixture_seconds": 0.6812929559964687, "peak_rss_mib": 78.828125, "rows": 15000, "seconds": 11.445828439900652}
-1 passed in 13.66s
+{"fixture_seconds": 0.5288507009390742, "peak_rss_mib": 78.7421875, "rows": 15000, "seconds": 10.060979451984167}
+1 passed in 11.89s
 
 Existing Benchmarks vs Gate Limits:
-- WP-05 (15,000 rows): 10.32s < 15.0s, 62.34 MiB < 128.0 MiB [PASS]
-- WP-06 (15,000 rows): 11.58s < 15.0s, 61.97 MiB < 128.0 MiB [PASS]
-- WP-12 (15,000 rows): 11.45s < 15.0s, 78.83 MiB < 128.0 MiB [PASS]
+- WP-05 (15,000 rows): 10.83s < 15.0s, 62.29 MiB < 128.0 MiB [PASS]
+- WP-06 (15,000 rows): 10.45s < 15.0s, 62.00 MiB < 128.0 MiB [PASS]
+- WP-12 (15,000 rows): 10.06s < 15.0s, 78.74 MiB < 128.0 MiB [PASS]
 
 ================================================================================
 9. WHITESPACE AND DIFF CLEANLINESS
-Command: git diff --check origin/main...HEAD
+Command: git diff --check 0915081b3a44e08dee935785c6c1ba7a96135fcb...2f1db9f0b121ef65c4e23357f588836ed2b22628
 Exit status: 0
 Output: (clean, no whitespace errors)
 
 ================================================================================
 10. ROLLBACK REHEARSAL
-Branch: detached worktree on code parent commit
-Tested Commit: 01efe3494899265ef8fe655041fe7f3615d913a6
-Rehearsal command:
-git worktree add /srv/accounting-bot/workspace/.tmp_rollback_rehearsal 01efe3494899265ef8fe655041fe7f3615d913a6 --detach
-Result:
-HEAD is now at 01efe34 feat(persistence): implement WP-15 Round 2 corrections for source import store
-Checked out clean worktree, verified commit SHA 01efe3494899265ef8fe655041fe7f3615d913a6, and removed worktree cleanly.
+Isolation method: Clean isolated scratch worktree outside the active workspace
+Working directory: /srv/accounting-bot/workspace
+Scratch tree: /root/.gemini/antigravity-ide/brain/de51eb72-ba2c-4aac-a071-346dcb5ea661/scratch/rehearsal-tree
+
+Rehearsal 1: Single-round code rollback to pre-round delivery HEAD
+Commands:
+1. git worktree add /root/.../scratch/rehearsal-tree 2f1db9f0b121ef65c4e23357f588836ed2b22628
+   Exit status: 0
+   Output: Preparing worktree (detached HEAD 2f1db9f)
+2. git -C /root/.../scratch/rehearsal-tree revert --no-edit 2f1db9f0b121ef65c4e23357f588836ed2b22628
+   Exit status: 0
+   Output: [detached HEAD 1c704b4] Revert "feat(persistence): implement WP-15 Round 4 corrections for source import store"
+3. git -C /root/.../scratch/rehearsal-tree diff fe3b50707c6694e2235765f5efede6c2ea89c3f0 HEAD
+   Exit status: 0
+   Output: (empty, tree matches fe3b50707c6694e2235765f5efede6c2ea89c3f0 identically)
+
+Rehearsal 2: Full WP-15 rollback to baseline 0915081b3a44e08dee935785c6c1ba7a96135fcb
+Commands:
+1. git -C /root/.../scratch/rehearsal-tree reset --hard 2f1db9f0b121ef65c4e23357f588836ed2b22628
+   Exit status: 0
+2. git -C /root/.../scratch/rehearsal-tree revert --no-edit 0915081b3a44e08dee935785c6c1ba7a96135fcb..2f1db9f0b121ef65c4e23357f588836ed2b22628
+   Exit status: 0
+   Output: Reverted all 7 WP-15 commits in reverse order (newest first).
+3. git -C /root/.../scratch/rehearsal-tree diff 0915081b3a44e08dee935785c6c1ba7a96135fcb HEAD
+   Exit status: 0
+   Output: (empty, tree matches 0915081b3a44e08dee935785c6c1ba7a96135fcb identically)
+4. git worktree remove /root/.../scratch/rehearsal-tree --force
+   Exit status: 0
+
+Active branch status: `git status` on `antigravity/phase-01-source-import-store` reports
+working tree clean; no workspace branches or working files were disturbed.
 Result: PASS
 
 ================================================================================
 FINAL SUMMARY
-All 16 acceptance criteria IS-01 through IS-16 and Round 3 review items R1 through R5
-are satisfied with robust, independent synthetic test evidence. All 48 dedicated test
-nodes pass (41.34s). Full repository test suite passes with 1002 passed and 2 expected
-platform skips (1004 total collected = 956 baseline + 48 new). Peak process RSS for
-15,000 rows was 83.61 MiB (Linux /proc/self/status VmRSS), well below the 350 MiB limit.
-Type checks pass for both Linux and Win32 platforms across 59 source files. Query counts
-are strictly constant across history length (52 read / 70 commit queries at 5, 20, 50 gen;
-50 read / 54 replay queries at 15,000 rows). Clean rollback was rehearsed and verified.
+All 16 acceptance criteria IS-01 through IS-16 and Round 4 review items R1 through R4
+are satisfied with truthful, independent synthetic test evidence. All 52 dedicated test
+nodes pass (44.33s). Full repository test suite passes with 1006 passed and 2 expected
+Windows-only acquisition skips (1008 total collected = 956 baseline + 52 new). Peak process
+call-window RSS for 15,000 rows was 83.66 MiB (Linux /proc/self/status VmRSS), and whole-process
+peak RSS via /usr/bin/time -v was 211.83 MiB, both well below the 350 MiB limit. Type checks
+pass for both Linux and Win32 platforms across 59 source files. Query bounds are verified
+with honest qualification regarding SQL aggregate scans. Fixed-SHA single-commit and full-package
+rollback were cleanly rehearsed in an isolated scratch worktree.
 Gate G1 remains OPEN / IN PROGRESS.
-===============================================================================
+================================================================================
