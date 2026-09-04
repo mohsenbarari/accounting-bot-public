@@ -10,7 +10,7 @@ import sqlite3
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
@@ -40,6 +40,8 @@ from accounting_contracts.source_change_plan import (
 from accounting_contracts.source_fiscal_evidence import evaluate_source_fiscal_evidence
 from accounting_contracts.source_identity_projection import (
     SourceIdentityCatalog,
+    SourceIdentityProjectionError,
+    SourceIdentityProjectionReason,
     project_source_prior,
 )
 from accounting_contracts.source_raw_codec import (
@@ -1183,136 +1185,295 @@ def _read_source_import_store_internal(
     if device_id.version != 7 or device_id.variant != uuid.RFC_4122:
         raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-    # 3. Validate imports and sheet reports: contiguous generations 1..generation
-    imp_rows = cur.execute(
-        """
-        SELECT import_id, request_digest, source_id, fiscal_year,
-               base_generation, committed_generation, observed_at_utc,
-               file_sha256, total_row_count, insert_count, edit_count,
-               void_count, unchanged_count, event_count, first_sequence, last_sequence
-        FROM source_imports ORDER BY committed_generation ASC;
-        """
-    ).fetchall()
-
-    if len(imp_rows) != generation:
-        raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-    expected_next_event_seq = 1
-    import_generations_by_id: dict[bytes, int] = {}
-
-    for g, imp in enumerate(imp_rows, start=1):
-        (
-            i_id,
-            _r_dig,
-            _s_id,
-            _f_yr,
-            b_gen,
-            c_gen,
-            _obs,
-            _f_sha,
-            t_rows,
-            i_cnt,
-            e_cnt,
-            v_cnt,
-            u_cnt,
-            ev_cnt,
-            f_seq,
-            l_seq,
-        ) = imp
-
-        if b_gen != g - 1 or c_gen != g:
+    # 3. Validate imports, sheets, events and bindings via constant-bounded
+    # aggregate invariants
+    if generation == 0:
+        if next_sequence != 1:
             raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-        if len(i_id) != 16:
+        for tbl in (
+            "source_imports",
+            "source_import_sheets",
+            "change_events",
+            "source_memberships",
+            "source_revisions",
+        ):
+            if cur.execute(f"SELECT COUNT(*) FROM {tbl};").fetchone()[0] != 0:
+                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+    else:
+        # (a) Exact generation count matches committed imports
+        if (
+            cur.execute("SELECT COUNT(*) FROM source_imports;").fetchone()[0]
+            != generation
+        ):
             raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (b) Contiguous generations 1..generation and base generations 0..generation-1
+        gen_stats = cur.execute(
+            """
+            SELECT MIN(committed_generation), MAX(committed_generation),
+                   MIN(base_generation), MAX(base_generation),
+                   COUNT(DISTINCT committed_generation)
+            FROM source_imports;
+            """
+        ).fetchone()
+        min_c, max_c, min_b, max_b, count_c = gen_stats
+        if (
+            min_c != 1
+            or max_c != generation
+            or min_b != 0
+            or max_b != generation - 1
+            or count_c != generation
+        ):
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (c) Each committed_generation == base_generation + 1
+        if (
+            cur.execute(
+                "SELECT COUNT(*) FROM source_imports "
+                "WHERE committed_generation != base_generation + 1;"
+            ).fetchone()[0]
+            != 0
+        ):
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (d) Canonical IDs, hashes, lowercases and UUIDv7 version/variant
+        bad_format_count = cur.execute(
+            """
+            SELECT COUNT(*) FROM source_imports
+            WHERE length(import_id) != 16
+               OR length(source_id) != 16
+               OR length(request_digest) != 64
+               OR length(file_sha256) != 64
+               OR request_digest != lower(request_digest)
+               OR file_sha256 != lower(file_sha256)
+               OR substr(hex(substr(import_id, 7, 1)), 1, 1) != '7'
+               OR substr(hex(substr(import_id, 9, 1)), 1, 1) NOT IN ('8', '9', 'A', 'B')
+               OR substr(hex(substr(source_id, 7, 1)), 1, 1) != '7'
+               OR substr(hex(substr(source_id, 9, 1)), 1, 1)
+                  NOT IN ('8', '9', 'A', 'B');
+            """
+        ).fetchone()[0]
+        if bad_format_count != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (e) Canonical UTC observation: length >= 20, ending with Z or +00:00
+        bad_obs_count = cur.execute(
+            """
+            SELECT COUNT(*) FROM source_imports
+            WHERE length(observed_at_utc) < 20
+               OR (
+                   observed_at_utc NOT LIKE '%Z'
+                   AND observed_at_utc NOT LIKE '%+00:00'
+               );
+            """
+        ).fetchone()[0]
+        if bad_obs_count != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (f) Provenance: source_id and fiscal_year must match an existing
+        # source_binding
+        bad_prov_count = cur.execute(
+            """
+            SELECT COUNT(*) FROM source_imports i
+            WHERE NOT EXISTS (
+                SELECT 1 FROM source_bindings b
+                WHERE b.source_id = i.source_id AND b.fiscal_year = i.fiscal_year
+            );
+            """
+        ).fetchone()[0]
+        if bad_prov_count != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (g) Count relationships within each import
+        bad_counts = cur.execute(
+            """
+            SELECT COUNT(*) FROM source_imports
+            WHERE event_count != (insert_count + edit_count + void_count)
+               OR total_row_count != (insert_count + edit_count + unchanged_count);
+            """
+        ).fetchone()[0]
+        if bad_counts != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (h) Sheet reports across all imports in single aggregate checks
+        if (
+            cur.execute("SELECT COUNT(*) FROM source_import_sheets;").fetchone()[0]
+            != 4 * generation
+        ):
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        bad_sheet_import_counts = cur.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT import_id FROM source_import_sheets
+                GROUP BY import_id HAVING COUNT(*) != 4
+            );
+            """
+        ).fetchone()[0]
+        if bad_sheet_import_counts != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        bad_sheet_meta = cur.execute(
+            """
+            SELECT COUNT(*) FROM source_import_sheets
+            WHERE sheet_order NOT IN (0, 1, 2, 3)
+               OR (sheet_order = 0 AND sheet_name != ?)
+               OR (sheet_order = 1 AND sheet_name != ?)
+               OR (sheet_order = 2 AND sheet_name != ?)
+               OR (sheet_order = 3 AND sheet_name != ?);
+            """,
+            RAW_SHEET_NAMES,
+        ).fetchone()[0]
+        if bad_sheet_meta != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        bad_sheet_sums = cur.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT s.import_id
+                FROM source_import_sheets s
+                JOIN source_imports i ON s.import_id = i.import_id
+                GROUP BY s.import_id
+                HAVING SUM(s.row_count) != i.total_row_count
+                    OR SUM(s.insert_count) != i.insert_count
+                    OR SUM(s.edit_count) != i.edit_count
+                    OR SUM(s.void_count) != i.void_count
+                    OR SUM(s.unchanged_count) != i.unchanged_count
+            );
+            """
+        ).fetchone()[0]
+        if bad_sheet_sums != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (i) Event count & sequence ranges on source_imports
+        bad_seq_ranges = cur.execute(
+            """
+            SELECT COUNT(*) FROM source_imports
+            WHERE (event_count = 0 AND (first_sequence IS NOT NULL
+                   OR last_sequence IS NOT NULL))
+               OR (event_count > 0 AND (first_sequence IS NULL
+                   OR last_sequence IS NULL
+                   OR last_sequence != first_sequence + event_count - 1));
+            """
+        ).fetchone()[0]
+        if bad_seq_ranges != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (j) change_events aggregate alignment with source_imports
+        bad_event_align = cur.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT e.import_id
+                FROM change_events e
+                JOIN source_imports i ON e.import_id = i.import_id
+                GROUP BY e.import_id
+                HAVING COUNT(*) != i.event_count
+                    OR MIN(e.sequence) != i.first_sequence
+                    OR MAX(e.sequence) != i.last_sequence
+            );
+            """
+        ).fetchone()[0]
+        if bad_event_align != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (k) change_events provenance & observation matching creating import
+        bad_ev_prov = cur.execute(
+            """
+            SELECT COUNT(*) FROM change_events e
+            JOIN source_imports i ON e.import_id = i.import_id
+            WHERE e.observed_at_utc != i.observed_at_utc
+               OR e.source_id != i.source_id
+               OR e.fiscal_year != i.fiscal_year;
+            """
+        ).fetchone()[0]
+        if bad_ev_prov != 0:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (l) Global event sequence continuity and next_sequence check
+        ev_stats = cur.execute(
+            """
+            SELECT COUNT(*), MIN(sequence), MAX(sequence),
+                   COUNT(DISTINCT event_id), SUM(sequence)
+            FROM change_events;
+            """
+        ).fetchone()
+        ev_count, min_seq, max_seq, distinct_ev_ids, sum_seq = ev_stats
+        if next_sequence == 1:
+            if ev_count != 0:
+                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+        else:
+            expected_count = next_sequence - 1
+            expected_sum = expected_count * (expected_count + 1) // 2
+            if (
+                ev_count != expected_count
+                or min_seq != 1
+                or max_seq != expected_count
+                or distinct_ev_ids != expected_count
+                or sum_seq != expected_sum
+            ):
+                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+        # (m) Latest import record check
+        latest_imp_row = cur.execute(
+            """
+            SELECT import_id, source_id, fiscal_year, observed_at_utc,
+                   file_sha256, request_digest
+            FROM source_imports
+            WHERE committed_generation = ?;
+            """,
+            (generation,),
+        ).fetchone()
+        if latest_imp_row is None:
+            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+        lat_iid, lat_sid, lat_fyr, lat_obs, lat_sha, lat_dig = latest_imp_row
         try:
-            imp_uuid = uuid.UUID(bytes=i_id)
-        except ValueError:
+            parsed_obs = datetime.fromisoformat(lat_obs)
+            if parsed_obs.tzinfo is None or parsed_obs.utcoffset() != timedelta(0):
+                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+        except Exception:
             raise SourceImportStoreError(
                 SourceImportStoreReason.INCONSISTENT_STATE
             ) from None
-        if imp_uuid.version != 7 or imp_uuid.variant != uuid.RFC_4122:
-            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-        import_generations_by_id[i_id] = c_gen
 
-        if ev_cnt != i_cnt + e_cnt + v_cnt:
-            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-        if t_rows != i_cnt + e_cnt + u_cnt:
-            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-        s_rows = cur.execute(
+        # (n) source_bindings last_import_id alignment
+        bad_binding_last = cur.execute(
             """
-            SELECT sheet_order, sheet_name, snapshot_hash, row_count,
-                   insert_count, edit_count, void_count, unchanged_count
-            FROM source_import_sheets
-            WHERE import_id = ? ORDER BY sheet_order ASC;
-            """,
-            (i_id,),
-        ).fetchall()
-
-        if len(s_rows) != 4:
+            SELECT COUNT(*) FROM source_bindings b
+            WHERE b.last_import_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM source_imports i
+                  WHERE i.import_id = b.last_import_id
+                    AND i.source_id = b.source_id
+                    AND i.fiscal_year = b.fiscal_year
+              );
+            """
+        ).fetchone()[0]
+        if bad_binding_last != 0:
             raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-        expected_names = RAW_SHEET_NAMES
-        sheet_sum_rc = sum(r[3] for r in s_rows)
-        sheet_sum_ins = sum(r[4] for r in s_rows)
-        sheet_sum_edt = sum(r[5] for r in s_rows)
-        sheet_sum_voi = sum(r[6] for r in s_rows)
-        sheet_sum_unc = sum(r[7] for r in s_rows)
-
-        for expected_order, s_entry in enumerate(s_rows):
-            sh_ord, sh_nm = s_entry[0], s_entry[1]
-            if sh_ord != expected_order or sh_nm != expected_names[expected_order]:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-        if (
-            sheet_sum_rc != t_rows
-            or sheet_sum_ins != i_cnt
-            or sheet_sum_edt != e_cnt
-            or sheet_sum_voi != v_cnt
-            or sheet_sum_unc != u_cnt
-        ):
+        bad_binding_meta = cur.execute(
+            """
+            SELECT COUNT(*) FROM source_bindings b
+            JOIN source_imports i ON b.last_import_id = i.import_id
+            WHERE b.last_file_sha256 != i.file_sha256
+               OR b.last_observed_at_utc != i.observed_at_utc;
+            """
+        ).fetchone()[0]
+        if bad_binding_meta != 0:
             raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-        if ev_cnt == 0:
-            if f_seq is not None or l_seq is not None:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-        else:
-            if f_seq is None or l_seq is None or l_seq != f_seq + ev_cnt - 1:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-            if f_seq != expected_next_event_seq:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-            expected_next_event_seq = l_seq + 1
-
-            ev_check = cur.execute(
-                "SELECT COUNT(*), MIN(sequence), MAX(sequence) "
-                "FROM change_events WHERE import_id = ?;",
-                (i_id,),
-            ).fetchone()
-            if ev_check[0] != ev_cnt or ev_check[1] != f_seq or ev_check[2] != l_seq:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-    if expected_next_event_seq != next_sequence:
-        raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-    # 4. Validate change_events bounded aggregates
-    ev_stats = cur.execute(
-        "SELECT COUNT(*), MIN(sequence), MAX(sequence), COUNT(DISTINCT event_id) "
-        "FROM change_events;"
-    ).fetchone()
-    ev_count, min_seq, max_seq, distinct_ev_ids = ev_stats
-    if next_sequence == 1:
-        if ev_count != 0:
-            raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-    else:
-        if (
-            ev_count != next_sequence - 1
-            or min_seq != 1
-            or max_seq != next_sequence - 1
-            or distinct_ev_ids != ev_count
-        ):
+        bad_archived_final = cur.execute(
+            """
+            SELECT COUNT(*) FROM source_bindings
+            WHERE state = 'archived'
+              AND (final_file_sha256 IS NULL
+                   OR final_file_sha256 != last_file_sha256);
+            """
+        ).fetchone()[0]
+        if bad_archived_final != 0:
             raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-    # 5. Validate source bindings and CURRENT HEADS from source_memberships
+    # 4. Validate source bindings and CURRENT HEADS from source_memberships
     binding_rows = cur.execute(
         "SELECT source_id, fiscal_year, state, final_file_sha256, "
         "last_import_id, last_file_sha256, last_observed_at_utc "
@@ -1321,6 +1482,7 @@ def _read_source_import_store_internal(
 
     records: list[SourceBindingRecord] = []
     active_source_metadata: tuple[Any, Any, Any] | None = None
+    validated_revisions: set[tuple[bytes, int]] = set()
 
     for b_row in binding_rows:
         b_src_bytes, b_year, b_state, b_final_hash, b_l_imp, b_l_file, b_l_obs = b_row
@@ -1346,16 +1508,34 @@ def _read_source_import_store_internal(
             if b_final_hash is None or len(b_final_hash) != 64:
                 raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-        # Query CURRENT HEADS for this source from
-        # source_memberships JOIN source_revisions
+        # Query CURRENT HEADS for this source from source_memberships joined
+        # with revisions, imports, and events
         mem_rows = cur.execute(
             """
             SELECT m.stable_id, m.revision, m.first_import_id, m.last_import_id,
                    r.home_sheet, r.lifecycle, r.source_hash, r.raw_payload,
-                   r.version_hash, r.previous_version_hash, r.created_by_import_id
+                   r.version_hash, r.previous_version_hash, r.created_by_import_id,
+                   i_first.committed_generation, i_last.committed_generation,
+                   i_created.committed_generation, i_created.source_id,
+                   i_created.fiscal_year, i_created.observed_at_utc,
+                   prev_r.version_hash,
+                   e.sequence, e.event_id, e.device_id, e.import_id, e.source_id,
+                   e.stable_id, e.revision, e.operation, e.fiscal_year, e.sheet_name,
+                   e.financial_date, e.observed_at_utc, e.canonical_payload,
+                   e.payload_hash, e.previous_version_hash
             FROM source_memberships m
-            JOIN source_revisions r
+            LEFT JOIN source_revisions r
               ON m.stable_id = r.stable_id AND m.revision = r.revision
+            LEFT JOIN source_imports i_first
+              ON m.first_import_id = i_first.import_id
+            LEFT JOIN source_imports i_last
+              ON m.last_import_id = i_last.import_id
+            LEFT JOIN source_imports i_created
+              ON r.created_by_import_id = i_created.import_id
+            LEFT JOIN source_revisions prev_r
+              ON m.stable_id = prev_r.stable_id AND prev_r.revision = m.revision - 1
+            LEFT JOIN change_events e
+              ON m.stable_id = e.stable_id AND m.revision = e.revision
             WHERE m.source_id = ?
             ORDER BY m.stable_id ASC;
             """,
@@ -1383,85 +1563,13 @@ def _read_source_import_store_internal(
                 v_hash,
                 p_v_hash,
                 c_imp_id,
-            ) = m_row
-            try:
-                s_uuid = uuid.UUID(bytes=s_id_bytes)
-            except ValueError:
-                raise SourceImportStoreError(
-                    SourceImportStoreReason.INCONSISTENT_STATE
-                ) from None
-            if s_uuid.version != 7 or s_uuid.variant != uuid.RFC_4122:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-            # Check revision validity and predecessor link
-            if rev < 1:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-            if rev == 1:
-                if p_v_hash is not None:
-                    raise SourceImportStoreError(
-                        SourceImportStoreReason.INCONSISTENT_STATE
-                    )
-            else:
-                if p_v_hash is None:
-                    raise SourceImportStoreError(
-                        SourceImportStoreReason.INCONSISTENT_STATE
-                    )
-                prev_rev_row = cur.execute(
-                    "SELECT version_hash FROM source_revisions "
-                    "WHERE stable_id = ? AND revision = ?;",
-                    (s_id_bytes, rev - 1),
-                ).fetchone()
-                if prev_rev_row is None or prev_rev_row[0] != p_v_hash:
-                    raise SourceImportStoreError(
-                        SourceImportStoreReason.INCONSISTENT_STATE
-                    )
-
-            # Check membership import observations
-            if (
-                first_imp_id not in import_generations_by_id
-                or last_imp_id not in import_generations_by_id
-            ):
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-            first_gen = import_generations_by_id[first_imp_id]
-            last_gen = import_generations_by_id[last_imp_id]
-            if last_gen < first_gen:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-            if c_imp_id not in import_generations_by_id:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-            created_gen = import_generations_by_id[c_imp_id]
-            if last_gen < created_gen:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-            if b_l_imp is not None:
-                if l_cycle == "active":
-                    if last_imp_id != b_l_imp:
-                        raise SourceImportStoreError(
-                            SourceImportStoreReason.INCONSISTENT_STATE
-                        )
-                else:
-                    if last_imp_id != c_imp_id:
-                        raise SourceImportStoreError(
-                            SourceImportStoreReason.INCONSISTENT_STATE
-                        )
-
-            # Query and validate corresponding change event for this current head
-            ev_row = cur.execute(
-                """
-                SELECT sequence, event_id, device_id, import_id, source_id,
-                       stable_id, revision, operation, fiscal_year, sheet_name,
-                       financial_date, observed_at_utc, canonical_payload,
-                       payload_hash, previous_version_hash
-                FROM change_events
-                WHERE stable_id = ? AND revision = ?;
-                """,
-                (s_id_bytes, rev),
-            ).fetchone()
-
-            if ev_row is None:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-
-            (
+                first_gen,
+                last_gen,
+                created_gen,
+                c_imp_source_id,
+                c_imp_fiscal_year,
+                c_imp_observed_at_utc,
+                prev_r_v_hash,
                 ev_seq,
                 ev_eid,
                 ev_did,
@@ -1477,124 +1585,216 @@ def _read_source_import_store_internal(
                 ev_cpayload,
                 ev_phash,
                 ev_pvhash,
-            ) = ev_row
+            ) = m_row
 
-            if ev_did != device_id_bytes or ev_sid != b_src_bytes or ev_fy != b_year:
+            # Check foreign key joins succeeded
+            if (
+                h_sheet is None
+                or l_cycle is None
+                or first_gen is None
+                or last_gen is None
+                or created_gen is None
+                or c_imp_source_id is None
+                or c_imp_fiscal_year is None
+                or c_imp_observed_at_utc is None
+            ):
                 raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-            if ev_sh != h_sheet or ev_phash != v_hash or ev_pvhash != p_v_hash:
+
+            try:
+                s_uuid = uuid.UUID(bytes=s_id_bytes)
+            except ValueError:
+                raise SourceImportStoreError(
+                    SourceImportStoreReason.INCONSISTENT_STATE
+                ) from None
+            if s_uuid.version != 7 or s_uuid.variant != uuid.RFC_4122:
                 raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-            # Hash check
-            if hashlib.sha256(ev_cpayload).hexdigest() != ev_phash:
+            if len(first_imp_id) != 16 or len(last_imp_id) != 16 or len(c_imp_id) != 16:
                 raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-            # Decode active Raw payload and derive financial date
-            # (R3 & R5: current heads only)
-            if l_cycle == "active":
-                if ev_op != "upsert" or s_hash is None or r_payload is None:
-                    raise SourceImportStoreError(
-                        SourceImportStoreReason.INCONSISTENT_STATE
-                    )
-                try:
-                    dec = decode_source_raw_row(r_payload)
-                except Exception as exc:
-                    raise SourceImportStoreError(
-                        SourceImportStoreReason.INCONSISTENT_STATE
-                    ) from exc
+            if not (1 <= first_gen <= last_gen <= generation):
+                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+            if not (1 <= created_gen <= last_gen <= generation):
+                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-                if (
-                    dec.source_hash != s_hash
-                    or dec.stable_id.bytes != s_id_bytes
-                    or dec.sheet_name != h_sheet
-                ):
-                    raise SourceImportStoreError(
-                        SourceImportStoreReason.INCONSISTENT_STATE
-                    )
-
-                if h_sheet == BUSINESS_PARTIES_CONTRACT.sheet_name:
-                    derived_fdate = None
-                else:
-                    raw_date_val = dec.raw_values["date_raw"]
-                    parsed_j_date = parse_canonical_jalali_date(raw_date_val)
-                    derived_fdate = (
-                        parsed_j_date.canonical_date
-                        if parsed_j_date is not None
-                        else None
-                    )
-
-                if ev_fdate != derived_fdate:
-                    raise SourceImportStoreError(
-                        SourceImportStoreReason.INCONSISTENT_STATE
-                    )
-
-                raw_b64 = base64.b64encode(r_payload).decode("ascii")
-            else:
-                # voided
-                if ev_op != "void" or s_hash is not None or r_payload is not None:
-                    raise SourceImportStoreError(
-                        SourceImportStoreReason.INCONSISTENT_STATE
-                    )
-
-                if h_sheet == BUSINESS_PARTIES_CONTRACT.sheet_name:
-                    derived_fdate = None
-                else:
-                    act_rev = cur.execute(
-                        """
-                        SELECT raw_payload FROM source_revisions
-                        WHERE stable_id = ? AND lifecycle = 'active'
-                        ORDER BY revision DESC LIMIT 1;
-                        """,
-                        (s_id_bytes,),
-                    ).fetchone()
-                    if act_rev is None or act_rev[0] is None:
+            if b_l_imp is not None:
+                if l_cycle == "active":
+                    if last_imp_id != b_l_imp:
                         raise SourceImportStoreError(
                             SourceImportStoreReason.INCONSISTENT_STATE
                         )
-                    prior_act = decode_source_raw_row(act_rev[0])
-                    parsed_j_date = parse_canonical_jalali_date(
-                        prior_act.raw_values["date_raw"]
-                    )
-                    derived_fdate = (
-                        parsed_j_date.canonical_date
-                        if parsed_j_date is not None
-                        else None
-                    )
+                else:
+                    if last_imp_id != c_imp_id:
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        )
 
-                if ev_fdate != derived_fdate:
+            rev_key = (s_id_bytes, rev)
+            if rev_key not in validated_revisions:
+                # Check revision validity and predecessor link
+                if rev < 1:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
+                if rev == 1:
+                    if p_v_hash is not None:
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        )
+                else:
+                    if (
+                        p_v_hash is None
+                        or prev_r_v_hash is None
+                        or prev_r_v_hash != p_v_hash
+                    ):
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        )
+
+                # Validate corresponding change event for this current head
+                if ev_seq is None:
                     raise SourceImportStoreError(
                         SourceImportStoreReason.INCONSISTENT_STATE
                     )
 
-                raw_b64 = None
+                # Provenance checked against creating import (R1 fix)
+                if ev_did != device_id_bytes or ev_iid != c_imp_id:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
+                if ev_sid != c_imp_source_id or ev_fy != c_imp_fiscal_year:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
+                if ev_obs != c_imp_observed_at_utc:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
+                if ev_stid != s_id_bytes or ev_rev != rev:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
+                if ev_sh != h_sheet or ev_phash != v_hash or ev_pvhash != p_v_hash:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
 
-            # Reconstruct exact canonical wire payload and compare byte-for-byte
-            ev_wire_array = [
-                SOURCE_CHANGE_EVENT_VERSION,
-                str(uuid.UUID(bytes=ev_did)).lower(),
-                str(uuid.UUID(bytes=ev_eid)).lower(),
-                str(uuid.UUID(bytes=ev_iid)).lower(),
-                str(ev_seq),
-                str(uuid.UUID(bytes=ev_sid)).lower(),
-                str(ev_fy),
-                ev_sh,
-                str(uuid.UUID(bytes=ev_stid)).lower(),
-                str(ev_rev),
-                ev_op,
-                ev_fdate,
-                s_hash,
-                raw_b64,
-                p_v_hash,
-                ev_obs,
-            ]
-            reconstructed_bytes = json.dumps(
-                ev_wire_array,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
+                # Hash check
+                if hashlib.sha256(ev_cpayload).hexdigest() != ev_phash:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
 
-            if reconstructed_bytes != ev_cpayload:
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+                # Decode active Raw payload and derive financial date (current heads)
+                if l_cycle == "active":
+                    if ev_op != "upsert" or s_hash is None or r_payload is None:
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        )
+                    try:
+                        dec = decode_source_raw_row(r_payload)
+                    except Exception as exc:
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        ) from exc
+
+                    if (
+                        dec.source_hash != s_hash
+                        or dec.stable_id.bytes != s_id_bytes
+                        or dec.sheet_name != h_sheet
+                    ):
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        )
+
+                    if h_sheet == BUSINESS_PARTIES_CONTRACT.sheet_name:
+                        derived_fdate = None
+                    else:
+                        raw_date_val = dec.raw_values["date_raw"]
+                        parsed_j_date = parse_canonical_jalali_date(raw_date_val)
+                        derived_fdate = (
+                            parsed_j_date.canonical_date
+                            if parsed_j_date is not None
+                            else None
+                        )
+
+                    if ev_fdate != derived_fdate:
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        )
+
+                    raw_b64 = base64.b64encode(r_payload).decode("ascii")
+                else:
+                    # voided
+                    if ev_op != "void" or s_hash is not None or r_payload is not None:
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        )
+
+                    if h_sheet == BUSINESS_PARTIES_CONTRACT.sheet_name:
+                        derived_fdate = None
+                    else:
+                        cur.execute(
+                            """
+                            SELECT raw_payload FROM source_revisions
+                            WHERE stable_id = ? AND lifecycle = 'active'
+                            ORDER BY revision DESC LIMIT 1;
+                            """,
+                            (s_id_bytes,),
+                        )
+                        act_row = cur.fetchone()
+                        if act_row is None or act_row[0] is None:
+                            raise SourceImportStoreError(
+                                SourceImportStoreReason.INCONSISTENT_STATE
+                            )
+                        prior_act_row = decode_source_raw_row(act_row[0])
+                        raw_date_val = prior_act_row.raw_values["date_raw"]
+                        parsed_j_date = parse_canonical_jalali_date(raw_date_val)
+                        derived_fdate = (
+                            parsed_j_date.canonical_date
+                            if parsed_j_date is not None
+                            else None
+                        )
+
+                    if ev_fdate != derived_fdate:
+                        raise SourceImportStoreError(
+                            SourceImportStoreReason.INCONSISTENT_STATE
+                        )
+
+                    raw_b64 = None
+
+                # Reconstruct exact canonical wire payload and compare byte-for-byte
+                ev_wire_array = [
+                    SOURCE_CHANGE_EVENT_VERSION,
+                    str(uuid.UUID(bytes=ev_did)).lower(),
+                    str(uuid.UUID(bytes=ev_eid)).lower(),
+                    str(uuid.UUID(bytes=ev_iid)).lower(),
+                    str(ev_seq),
+                    str(uuid.UUID(bytes=ev_sid)).lower(),
+                    str(ev_fy),
+                    ev_sh,
+                    str(uuid.UUID(bytes=ev_stid)).lower(),
+                    str(ev_rev),
+                    ev_op,
+                    ev_fdate,
+                    s_hash,
+                    raw_b64,
+                    p_v_hash,
+                    ev_obs,
+                ]
+                reconstructed_bytes = json.dumps(
+                    ev_wire_array,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+
+                if reconstructed_bytes != ev_cpayload:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
+
+                validated_revisions.add(rev_key)
 
             lifecycle = IdentityLifecycle(l_cycle)
             p_state = PriorIdentityState(
@@ -1967,12 +2167,20 @@ def commit_source_import(
             raise SourceImportStoreError(SourceImportStoreReason.SOURCE_NOT_ACTIVE)
 
         catalog = SourceIdentityCatalog(source_registry=store_view.source_registry)
-        prior_registry = project_source_prior(
-            request.source_key, request.snapshot, catalog
-        )
-
-        # Rerun Planner
-        plan = plan_source_changes(request.snapshot, prior_registry)
+        try:
+            prior_registry = project_source_prior(
+                request.source_key, request.snapshot, catalog
+            )
+            # Rerun Planner
+            plan = plan_source_changes(request.snapshot, prior_registry)
+        except SourceIdentityProjectionError as exc:
+            if exc.reason == SourceIdentityProjectionReason.SOURCE_NOT_ACTIVE:
+                raise SourceImportStoreError(
+                    SourceImportStoreReason.SOURCE_NOT_ACTIVE
+                ) from exc
+            raise SourceImportStoreError(SourceImportStoreReason.INVALID_INPUT) from exc
+        except ValueError as exc:
+            raise SourceImportStoreError(SourceImportStoreReason.INVALID_INPUT) from exc
 
         # 5. Validate event_ids against all and only changed plan items
         changed_items = [

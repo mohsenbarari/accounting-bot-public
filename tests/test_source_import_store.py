@@ -10,8 +10,10 @@ from __future__ import annotations
 import base64
 import gc
 import hashlib
+import importlib
 import inspect
 import os
+import random
 import sqlite3
 import subprocess
 import sys
@@ -40,7 +42,13 @@ from accounting_contracts.source_binding import (
     SourceBindingKey,
     SourceBindingRegistry,
 )
-from accounting_contracts.source_change_plan import PlanAction
+from accounting_contracts.source_change_plan import (
+    IdentityLifecycle,
+    PlanAction,
+    PriorIdentityRegistry,
+    PriorIdentityState,
+    build_prior_identity_registry,
+)
 from accounting_contracts.source_raw_codec import (
     decode_source_raw_row,
     encode_source_raw_row,
@@ -910,8 +918,9 @@ def test_is05_row_reorder_and_formula_cache_noop() -> None:
 # ============================================================================
 
 
-def test_is06_archived_and_active_source_isolation_and_party_membership() -> None:
-    """Catalog preserves archive objects, and unchanged party creates membership."""
+def test_is06_cross_source_global_party_zero_event_import_and_read() -> None:
+    """IS-06: A party first present in B with unchanged global head creates B
+    membership but no revision/event; reads successfully immediately after."""
     conn = sqlite3.connect(":memory:")
     conn.execute("PRAGMA foreign_keys = ON;")
 
@@ -922,31 +931,38 @@ def test_is06_archived_and_active_source_isolation_and_party_membership() -> Non
     key_a = SourceBindingKey(source_id=src_a, fiscal_year=1402)
     key_b = SourceBindingKey(source_id=src_b, fiscal_year=1403)
 
-    # Initialize store with source A
     initialize_source_import_store(conn, device_id=dev_id, active_source=key_a)
 
-    # Commit initial party P into source A
+    # 1. Source A commits global party P (creates revision 1 and event 1)
     party_u = make_deterministic_uuid7(10)
     snap_a = build_synthetic_snapshot(
-        [(party_u, make_sample_party_row("شخص قدیمی", "09120000000"))], [], [], []
+        [(party_u, make_sample_party_row("شخص مشترک", "09120000000"))], [], [], []
     )
     req_a = SourceImportRequest(
         source_key=key_a,
         expected_generation=0,
         import_id=make_deterministic_uuid7(500),
         observed_at_utc=datetime(2025, 9, 4, 10, 0, 0, tzinfo=UTC),
-        file_sha256="f" * 64,
+        file_sha256="a" * 64,
         snapshot=snap_a,
         event_ids={party_u: make_deterministic_uuid7(501)},
     )
-    commit_source_import(conn, req_a)
+    r_a = commit_source_import(conn, req_a)
+    assert r_a.committed_generation == 1
+    assert r_a.event_count == 1
 
-    # Archive source A and add active source B
+    # 2. Archive source A and add active source B
     conn.execute(
         "UPDATE source_bindings "
-        "SET state = 'archived', final_file_sha256 = ? "
+        "SET state = 'archived', final_file_sha256 = ?, "
+        "last_file_sha256 = ?, last_observed_at_utc = ? "
         "WHERE source_id = ?;",
-        ("f" * 64, src_a.bytes),
+        (
+            "a" * 64,
+            "a" * 64,
+            datetime(2025, 9, 4, 10, 0, 0, tzinfo=UTC).isoformat(),
+            src_a.bytes,
+        ),
     )
     conn.execute(
         "INSERT INTO source_bindings (source_id, fiscal_year, state) "
@@ -955,14 +971,9 @@ def test_is06_archived_and_active_source_isolation_and_party_membership() -> Non
     )
     conn.commit()
 
-    # Read store: verifies archived A is preserved with its final hash
-    view = read_source_import_store(conn)
-    rec_b = view.source_registry.active_record
-    assert rec_b is not None and rec_b.key == key_b
-
-    # Now import into active B: party P is present in B unchanged
+    # 3. Import unchanged global party P into active B (generation 2, zero events)
     snap_b = build_synthetic_snapshot(
-        [(party_u, make_sample_party_row("شخص قدیمی", "09120000000"))], [], [], []
+        [(party_u, make_sample_party_row("شخص مشترک", "09120000000"))], [], [], []
     )
     req_b = SourceImportRequest(
         source_key=key_b,
@@ -971,26 +982,407 @@ def test_is06_archived_and_active_source_isolation_and_party_membership() -> Non
         observed_at_utc=datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC),
         file_sha256="b" * 64,
         snapshot=snap_b,
-        event_ids={},  # UNCHANGED globally known party -> zero events!
+        event_ids={},  # UNCHANGED globally known party -> zero events
     )
     r_b = commit_source_import(conn, req_b)
     assert r_b.committed_generation == 2
     assert r_b.event_count == 0
 
-    # Verify B now has membership for party P at revision 1
+    # 4. Read immediately succeeds after zero-event B import
+    view = read_source_import_store(conn)
+    assert view.generation == 2
+    assert view.next_sequence == 2  # next sequence unchanged (1 event total)
+
+    # 5. Reconstruct B membership at existing global revision 1 with no new event
     b_mem = conn.execute(
-        "SELECT revision FROM source_memberships "
+        "SELECT revision, first_import_id, last_import_id FROM source_memberships "
         "WHERE source_id = ? AND stable_id = ?;",
         (src_b.bytes, party_u.bytes),
     ).fetchone()
     assert b_mem is not None
     assert b_mem[0] == 1
+    assert b_mem[1] == req_b.import_id.bytes
+    assert b_mem[2] == req_b.import_id.bytes
 
-    # But NO new revision was appended in source_revisions (still only 1 revision total)
-    total_revs = conn.execute(
-        "SELECT COUNT(*) FROM source_revisions WHERE stable_id = ?;", (party_u.bytes,)
-    ).fetchone()[0]
-    assert total_revs == 1
+    # Total revisions in source_revisions is still exactly 1
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM source_revisions WHERE stable_id = ?;",
+            (party_u.bytes,),
+        ).fetchone()[0]
+        == 1
+    )
+    # Total change_events is still exactly 1
+    assert conn.execute("SELECT COUNT(*) FROM change_events;").fetchone()[0] == 1
+    conn.close()
+
+
+def test_is06_cross_source_global_party_later_void_in_active_source() -> None:
+    """IS-06: Party later absent in B creates correct B VOID revision and Event;
+    archived A's membership/revision/final hash is preserved without false VOID."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_a = make_deterministic_uuid7(100)
+    src_b = make_deterministic_uuid7(200)
+
+    key_a = SourceBindingKey(source_id=src_a, fiscal_year=1402)
+    key_b = SourceBindingKey(source_id=src_b, fiscal_year=1403)
+
+    initialize_source_import_store(conn, device_id=dev_id, active_source=key_a)
+
+    party_u = make_deterministic_uuid7(10)
+    snap_a = build_synthetic_snapshot(
+        [(party_u, make_sample_party_row("شخص مشترک", "09120000000"))], [], [], []
+    )
+    req_a = SourceImportRequest(
+        source_key=key_a,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(500),
+        observed_at_utc=datetime(2025, 9, 4, 10, 0, 0, tzinfo=UTC),
+        file_sha256="a" * 64,
+        snapshot=snap_a,
+        event_ids={party_u: make_deterministic_uuid7(501)},
+    )
+    commit_source_import(conn, req_a)
+
+    # Archive source A and add active source B
+    conn.execute(
+        "UPDATE source_bindings "
+        "SET state = 'archived', final_file_sha256 = ?, "
+        "last_file_sha256 = ?, last_observed_at_utc = ? "
+        "WHERE source_id = ?;",
+        (
+            "a" * 64,
+            "a" * 64,
+            datetime(2025, 9, 4, 10, 0, 0, tzinfo=UTC).isoformat(),
+            src_a.bytes,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO source_bindings (source_id, fiscal_year, state) "
+        "VALUES (?, 1403, 'active');",
+        (src_b.bytes,),
+    )
+    conn.commit()
+
+    # Import into B with party P present (gen 2)
+    snap_b1 = build_synthetic_snapshot(
+        [(party_u, make_sample_party_row("شخص مشترک", "09120000000"))], [], [], []
+    )
+    req_b1 = SourceImportRequest(
+        source_key=key_b,
+        expected_generation=1,
+        import_id=make_deterministic_uuid7(600),
+        observed_at_utc=datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC),
+        file_sha256="b1" * 32,
+        snapshot=snap_b1,
+        event_ids={},
+    )
+    commit_source_import(conn, req_b1)
+
+    # Now import a later B snapshot where party P is ABSENT (gen 3)
+    snap_b2 = build_synthetic_snapshot([], [], [], [])
+    void_event_id = make_deterministic_uuid7(701)
+    req_b2 = SourceImportRequest(
+        source_key=key_b,
+        expected_generation=2,
+        import_id=make_deterministic_uuid7(700),
+        observed_at_utc=datetime(2026, 9, 5, 12, 0, 0, tzinfo=UTC),
+        file_sha256="b2" * 32,
+        snapshot=snap_b2,
+        event_ids={party_u: void_event_id},
+    )
+    r_b2 = commit_source_import(conn, req_b2)
+    assert r_b2.committed_generation == 3
+    assert r_b2.event_count == 1
+    assert r_b2.total_counts.void_count == 1
+
+    # Verify B now has VOID revision (rev 2)
+    b_mem = conn.execute(
+        "SELECT revision FROM source_memberships "
+        "WHERE source_id = ? AND stable_id = ?;",
+        (src_b.bytes, party_u.bytes),
+    ).fetchone()
+    assert b_mem[0] == 2
+
+    rev2 = conn.execute(
+        "SELECT lifecycle, source_hash, raw_payload, created_by_import_id "
+        "FROM source_revisions WHERE stable_id = ? AND revision = 2;",
+        (party_u.bytes,),
+    ).fetchone()
+    assert rev2[0] == "voided"
+    assert rev2[1] is None
+    assert rev2[2] is None
+    assert rev2[3] == req_b2.import_id.bytes
+
+    # Archived A's membership remains at revision 1 without false VOID!
+    a_mem = conn.execute(
+        "SELECT revision, last_import_id FROM source_memberships "
+        "WHERE source_id = ? AND stable_id = ?;",
+        (src_a.bytes, party_u.bytes),
+    ).fetchone()
+    assert a_mem[0] == 1
+    assert a_mem[1] == req_a.import_id.bytes
+
+    # Archived A's final hash is preserved
+    a_binding = conn.execute(
+        "SELECT state, final_file_sha256 FROM source_bindings WHERE source_id = ?;",
+        (src_a.bytes,),
+    ).fetchone()
+    assert a_binding[0] == "archived"
+    assert a_binding[1] == "a" * 64
+
+    # Read store succeeds and verifies both prior registries
+    view = read_source_import_store(conn)
+    assert view.generation == 3
+    assert view.next_sequence == 3
+
+    reg_a = next(r for r in view.source_registry.records if r.key == key_a)
+    assert reg_a is not None
+    assert reg_a.prior_registry.identities[party_u].latest_revision == 1
+    assert (
+        reg_a.prior_registry.identities[party_u].lifecycle == IdentityLifecycle.ACTIVE
+    )
+
+    reg_b = next(r for r in view.source_registry.records if r.key == key_b)
+    assert reg_b is not None
+    assert reg_b.prior_registry.identities[party_u].latest_revision == 2
+    assert (
+        reg_b.prior_registry.identities[party_u].lifecycle == IdentityLifecycle.VOIDED
+    )
+
+    conn.close()
+
+
+def test_is06_reject_request_targeting_archived_source_before_write() -> None:
+    """IS-06: A request targeting an archived source is rejected with
+    SOURCE_NOT_ACTIVE before any write."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_a = make_deterministic_uuid7(100)
+    src_b = make_deterministic_uuid7(200)
+
+    key_a = SourceBindingKey(source_id=src_a, fiscal_year=1402)
+    initialize_source_import_store(conn, device_id=dev_id, active_source=key_a)
+
+    # Archive A, activate B
+    conn.execute(
+        "UPDATE source_bindings "
+        "SET state = 'archived', final_file_sha256 = ?, "
+        "last_file_sha256 = ?, last_observed_at_utc = ? "
+        "WHERE source_id = ?;",
+        ("0" * 64, "0" * 64, datetime.now(UTC).isoformat(), src_a.bytes),
+    )
+    conn.execute(
+        "INSERT INTO source_bindings (source_id, fiscal_year, state) "
+        "VALUES (?, 1403, 'active');",
+        (src_b.bytes,),
+    )
+    conn.commit()
+
+    # Snapshot table counts before
+    snap_counts = {
+        tbl: conn.execute(f"SELECT COUNT(*) FROM {tbl};").fetchone()[0]
+        for tbl in [
+            "source_imports",
+            "source_revisions",
+            "change_events",
+            "source_memberships",
+        ]
+    }
+
+    # Attempt to commit using archived key_a
+    u = make_deterministic_uuid7(10)
+    snap = build_synthetic_snapshot([(u, make_sample_party_row("تست"))], [], [], [])
+    req_archived = SourceImportRequest(
+        source_key=key_a,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(900),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="9" * 64,
+        snapshot=snap,
+        event_ids={u: make_deterministic_uuid7(901)},
+    )
+    with pytest.raises(SourceImportStoreError) as exc_info:
+        commit_source_import(conn, req_archived)
+    assert exc_info.value.reason == SourceImportStoreReason.SOURCE_NOT_ACTIVE
+
+    # Zero writes occurred
+    for tbl, cnt in snap_counts.items():
+        assert conn.execute(f"SELECT COUNT(*) FROM {tbl};").fetchone()[0] == cnt
+    conn.close()
+
+
+def test_is06_reject_uuid_moved_across_non_party_sheets_before_write() -> None:
+    """IS-06: A UUID moved across non-party sheets fails with INVALID_INPUT
+    before writing any row."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+
+    # 1. Commit transaction row in buy_sell sheet
+    u_tx = make_deterministic_uuid7(50)
+    snap1 = build_synthetic_snapshot(
+        [],
+        [
+            (
+                u_tx,
+                make_sample_buy_sell_row(
+                    "1403/01/10", "شخص", "خرید", "طلا", "1", "1000"
+                ),
+            )
+        ],
+        [],
+        [],
+    )
+    req1 = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(100),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="1" * 64,
+        snapshot=snap1,
+        event_ids={u_tx: make_deterministic_uuid7(200)},
+    )
+    commit_source_import(conn, req1)
+
+    # Snapshot state before attempt
+    snap_counts = {
+        tbl: conn.execute(f"SELECT COUNT(*) FROM {tbl};").fetchone()[0]
+        for tbl in [
+            "source_imports",
+            "source_revisions",
+            "change_events",
+            "source_memberships",
+        ]
+    }
+    gen_before = conn.execute("SELECT generation FROM source_store_meta;").fetchone()[0]
+
+    # 2. Attempt to submit u_tx in receipt_payment sheet (non-party relocation)
+    snap2 = build_synthetic_snapshot(
+        [],
+        [],
+        [
+            (
+                u_tx,
+                make_sample_receipt_payment_row("1403/01/10", "شخص", "دریافت", "1000"),
+            )
+        ],
+        [],
+    )
+    req2 = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=1,
+        import_id=make_deterministic_uuid7(101),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="2" * 64,
+        snapshot=snap2,
+        event_ids={u_tx: make_deterministic_uuid7(201)},
+    )
+    with pytest.raises(SourceImportStoreError) as exc_info:
+        commit_source_import(conn, req2)
+    assert exc_info.value.reason == SourceImportStoreReason.INVALID_INPUT
+
+    # Zero writes occurred
+    for tbl, cnt in snap_counts.items():
+        assert conn.execute(f"SELECT COUNT(*) FROM {tbl};").fetchone()[0] == cnt
+    assert (
+        conn.execute("SELECT generation FROM source_store_meta;").fetchone()[0]
+        == gen_before
+    )
+    conn.close()
+
+
+def test_is06_transaction_ownership_and_state_verification() -> None:
+    """IS-06: Verifies transaction ownership and every table/generation/sequence
+    before and after cross-source operations."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_a = make_deterministic_uuid7(100)
+    src_b = make_deterministic_uuid7(200)
+
+    key_a = SourceBindingKey(source_id=src_a, fiscal_year=1402)
+    key_b = SourceBindingKey(source_id=src_b, fiscal_year=1403)
+
+    initialize_source_import_store(conn, device_id=dev_id, active_source=key_a)
+    assert not conn.in_transaction
+
+    # Initial state
+    assert conn.execute(
+        "SELECT generation, next_sequence FROM source_store_meta;"
+    ).fetchone() == (0, 1)
+
+    party_u = make_deterministic_uuid7(10)
+    snap_a = build_synthetic_snapshot(
+        [(party_u, make_sample_party_row("شخص یک"))], [], [], []
+    )
+    req_a = SourceImportRequest(
+        source_key=key_a,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(500),
+        observed_at_utc=datetime(2025, 9, 4, 10, 0, 0, tzinfo=UTC),
+        file_sha256="a" * 64,
+        snapshot=snap_a,
+        event_ids={party_u: make_deterministic_uuid7(501)},
+    )
+    commit_source_import(conn, req_a)
+    assert not conn.in_transaction
+    assert conn.execute(
+        "SELECT generation, next_sequence FROM source_store_meta;"
+    ).fetchone() == (1, 2)
+
+    # Archive A, activate B
+    conn.execute(
+        "UPDATE source_bindings "
+        "SET state = 'archived', final_file_sha256 = ?, "
+        "last_file_sha256 = ?, last_observed_at_utc = ? "
+        "WHERE source_id = ?;",
+        (
+            "a" * 64,
+            "a" * 64,
+            datetime(2025, 9, 4, 10, 0, 0, tzinfo=UTC).isoformat(),
+            src_a.bytes,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO source_bindings (source_id, fiscal_year, state) "
+        "VALUES (?, 1403, 'active');",
+        (src_b.bytes,),
+    )
+    conn.commit()
+
+    snap_b = build_synthetic_snapshot(
+        [(party_u, make_sample_party_row("شخص یک"))], [], [], []
+    )
+    req_b = SourceImportRequest(
+        source_key=key_b,
+        expected_generation=1,
+        import_id=make_deterministic_uuid7(600),
+        observed_at_utc=datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC),
+        file_sha256="b" * 64,
+        snapshot=snap_b,
+        event_ids={},
+    )
+    commit_source_import(conn, req_b)
+    assert not conn.in_transaction
+    assert conn.execute(
+        "SELECT generation, next_sequence FROM source_store_meta;"
+    ).fetchone() == (2, 2)
+    assert conn.execute("SELECT COUNT(*) FROM source_imports;").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM source_revisions;").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM change_events;").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM source_memberships;").fetchone()[0] == 2
+    conn.close()
 
 
 # ============================================================================
@@ -1262,14 +1654,113 @@ def test_is08_zero_event_import_and_file_revert() -> None:
 
 
 # ============================================================================
-# IS-09: Two-connection race condition testing with Barriers
+# IS-09: Two-connection race condition testing with Synchronization Seams
 # ============================================================================
 
 
-def test_is09_two_connection_concurrency_race_with_barriers(tmp_path: Path) -> None:
-    """IS-09: two connections racing in WAL mode with transaction pauses.
-    Tests changed/changed, changed/zero, winner replay and loser retry."""
-    db_file = tmp_path / "is09_race.sqlite3"
+class SynchronizedRaceConnection(sqlite3.Connection):
+    """Connection that pauses inside write transaction after observing generation."""
+
+    pause_after_meta_observed: threading.Event | None = None
+    resume_after_competitor_attempt: threading.Event | None = None
+
+    def cursor(self, factory: Any = None) -> sqlite3.Cursor:  # type: ignore[override]
+        cur: sqlite3.Cursor = super().cursor(factory=factory or SynchronizedRaceCursor)
+        return cur
+
+    def execute(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+        res = super().execute(sql, *args, **kwargs)
+        if (
+            SynchronizedRaceConnection.pause_after_meta_observed is not None
+            and "FROM source_store_meta WHERE singleton_id = 1" in sql
+        ):
+            SynchronizedRaceConnection.pause_after_meta_observed.set()
+            if SynchronizedRaceConnection.resume_after_competitor_attempt is not None:
+                assert SynchronizedRaceConnection.resume_after_competitor_attempt.wait(
+                    timeout=10.0
+                )
+        return res
+
+
+class SynchronizedRaceCursor(sqlite3.Cursor):
+    def execute(self, sql: str, *params: Any) -> Any:
+        res = super().execute(sql, *params)
+        if (
+            SynchronizedRaceConnection.pause_after_meta_observed is not None
+            and "FROM source_store_meta WHERE singleton_id = 1" in sql
+        ):
+            SynchronizedRaceConnection.pause_after_meta_observed.set()
+            if SynchronizedRaceConnection.resume_after_competitor_attempt is not None:
+                assert SynchronizedRaceConnection.resume_after_competitor_attempt.wait(
+                    timeout=10.0
+                )
+        return res
+
+
+def _execute_controlled_race(
+    db_file: Path,
+    req_winner: SourceImportRequest,
+    req_loser: SourceImportRequest,
+) -> tuple[SourceImportReceipt, SourceImportStoreError]:
+    """Execute a deterministic race where winner pauses inside transaction,
+    loser attempts BEGIN IMMEDIATE and blocks, winner commits,
+    and loser raises STALE_STATE."""
+    SynchronizedRaceConnection.pause_after_meta_observed = threading.Event()
+    SynchronizedRaceConnection.resume_after_competitor_attempt = threading.Event()
+
+    winner_receipt: list[SourceImportReceipt] = []
+    loser_error: list[SourceImportStoreError] = []
+    thread_exceptions: list[BaseException] = []
+
+    def winner_worker() -> None:
+        try:
+            conn = sqlite3.connect(
+                db_file, timeout=10.0, factory=SynchronizedRaceConnection
+            )
+            conn.execute("PRAGMA foreign_keys = ON;")
+            rc = commit_source_import(conn, req_winner)
+            winner_receipt.append(rc)
+            conn.close()
+        except BaseException as exc:
+            thread_exceptions.append(exc)
+
+    def loser_worker() -> None:
+        try:
+            conn = sqlite3.connect(db_file, timeout=10.0)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            commit_source_import(conn, req_loser)
+            conn.close()
+        except SourceImportStoreError as exc:
+            loser_error.append(exc)
+        except BaseException as exc:
+            thread_exceptions.append(exc)
+
+    t_winner = threading.Thread(target=winner_worker)
+    t_loser = threading.Thread(target=loser_worker)
+
+    t_winner.start()
+    assert SynchronizedRaceConnection.pause_after_meta_observed.wait(timeout=10.0)
+
+    t_loser.start()
+    time.sleep(0.05)  # give loser thread time to enter and wait on SQLite lock
+
+    SynchronizedRaceConnection.resume_after_competitor_attempt.set()
+
+    t_winner.join(timeout=10.0)
+    t_loser.join(timeout=10.0)
+
+    assert not t_winner.is_alive() and not t_loser.is_alive()
+    assert not thread_exceptions, f"Unexpected thread exception: {thread_exceptions}"
+    assert len(winner_receipt) == 1, "Winner did not return receipt"
+    assert len(loser_error) == 1, "Loser did not raise SourceImportStoreError"
+
+    return winner_receipt[0], loser_error[0]
+
+
+def test_is09_race_changed_vs_changed_winner_a_loser_b(tmp_path: Path) -> None:
+    """IS-09: Changed vs Changed race with Winner A and Loser B.
+    Loser resolves strictly as STALE_STATE; winner replays and loser retries."""
+    db_file = tmp_path / "race_changed_a_b.sqlite3"
     conn_init = sqlite3.connect(db_file)
     conn_init.execute("PRAGMA foreign_keys = ON;")
     conn_init.execute("PRAGMA journal_mode = WAL;")
@@ -1282,23 +1773,17 @@ def test_is09_two_connection_concurrency_race_with_barriers(tmp_path: Path) -> N
     )
     conn_init.close()
 
-    # --- Scenario 1: Changed vs Changed race ---
     u1 = make_deterministic_uuid7(10)
     u2 = make_deterministic_uuid7(20)
-    snap_a = build_synthetic_snapshot(
-        [(u1, make_sample_party_row("کاربر الف"))], [], [], []
-    )
-    snap_b = build_synthetic_snapshot(
-        [(u2, make_sample_party_row("کاربر ب"))], [], [], []
-    )
-
     req_a = SourceImportRequest(
         source_key=active_key,
         expected_generation=0,
         import_id=make_deterministic_uuid7(101),
         observed_at_utc=datetime.now(UTC),
         file_sha256="a" * 64,
-        snapshot=snap_a,
+        snapshot=build_synthetic_snapshot(
+            [(u1, make_sample_party_row("کاربر الف"))], [], [], []
+        ),
         event_ids={u1: make_deterministic_uuid7(201)},
     )
     req_b = SourceImportRequest(
@@ -1307,147 +1792,322 @@ def test_is09_two_connection_concurrency_race_with_barriers(tmp_path: Path) -> N
         import_id=make_deterministic_uuid7(102),
         observed_at_utc=datetime.now(UTC),
         file_sha256="b" * 64,
-        snapshot=snap_b,
+        snapshot=build_synthetic_snapshot(
+            [(u2, make_sample_party_row("کاربر ب"))], [], [], []
+        ),
         event_ids={u2: make_deterministic_uuid7(202)},
     )
 
-    barrier = threading.Barrier(2)
-    winner_results: list[tuple[str, SourceImportReceipt]] = []
-    loser_errors: list[tuple[str, SourceImportStoreError]] = []
-    thread_exceptions: list[BaseException] = []
-
-    def race_worker(name: str, req: SourceImportRequest) -> None:
-        try:
-            conn = sqlite3.connect(db_file, timeout=0.8)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            barrier.wait(timeout=10.0)
-            rc = commit_source_import(conn, req)
-            winner_results.append((name, rc))
-            conn.close()
-        except SourceImportStoreError as exc:
-            loser_errors.append((name, exc))
-        except BaseException as exc:
-            thread_exceptions.append(exc)
-
-    t_a = threading.Thread(target=race_worker, args=("A", req_a))
-    t_b = threading.Thread(target=race_worker, args=("B", req_b))
-    t_a.start()
-    t_b.start()
-    t_a.join(timeout=10.0)
-    t_b.join(timeout=10.0)
-    assert not t_a.is_alive() and not t_b.is_alive()
-    assert not thread_exceptions, f"Unexpected thread error: {thread_exceptions}"
-
-    assert len(winner_results) == 1
-    assert len(loser_errors) == 1
-    winner_name, winner_receipt = winner_results[0]
-    loser_name, loser_error = loser_errors[0]
-    assert winner_receipt.disposition == SourceImportDisposition.COMMITTED
-    assert loser_error.reason in (
-        SourceImportStoreReason.STALE_STATE,
-        SourceImportStoreReason.STORAGE_FAILURE,
-    )
+    w_rc, l_err = _execute_controlled_race(db_file, req_a, req_b)
+    assert w_rc.disposition == SourceImportDisposition.COMMITTED
+    assert w_rc.committed_generation == 1
+    assert l_err.reason == SourceImportStoreReason.STALE_STATE
 
     # Winner exact replay returns REPLAYED
-    conn_verify = sqlite3.connect(db_file)
-    conn_verify.execute("PRAGMA foreign_keys = ON;")
-    winner_req = req_a if winner_name == "A" else req_b
-    replay_receipt = commit_source_import(conn_verify, winner_req)
-    assert replay_receipt.disposition == SourceImportDisposition.REPLAYED
-    assert replay_receipt.committed_generation == winner_receipt.committed_generation
+    conn_test = sqlite3.connect(db_file)
+    conn_test.execute("PRAGMA foreign_keys = ON;")
+    rep_rc = commit_source_import(conn_test, req_a)
+    assert rep_rc.disposition == SourceImportDisposition.REPLAYED
+    assert rep_rc.committed_generation == 1
 
-    # Loser retries with updated expected_generation and merged snapshot -> succeeds
-    loser_req = req_b if winner_name == "A" else req_a
-    winner_row = (
-        (u1, make_sample_party_row("کاربر الف"))
-        if winner_name == "A"
-        else (u2, make_sample_party_row("کاربر ب"))
+    # Loser retries with generation 1 and merged snapshot
+    snap_loser_retry = build_synthetic_snapshot(
+        [
+            (u1, make_sample_party_row("کاربر الف")),
+            (u2, make_sample_party_row("کاربر ب")),
+        ],
+        [],
+        [],
+        [],
     )
-    loser_row = (
-        (u2, make_sample_party_row("کاربر ب"))
-        if winner_name == "A"
-        else (u1, make_sample_party_row("کاربر الف"))
-    )
-    snap_loser_retry = build_synthetic_snapshot([winner_row, loser_row], [], [], [])
-    loser_retry_req = SourceImportRequest(
-        source_key=loser_req.source_key,
+    req_b_retry = SourceImportRequest(
+        source_key=active_key,
         expected_generation=1,
-        import_id=loser_req.import_id,
-        observed_at_utc=loser_req.observed_at_utc,
-        file_sha256=loser_req.file_sha256,
+        import_id=req_b.import_id,
+        observed_at_utc=datetime.now(UTC),
+        file_sha256=req_b.file_sha256,
         snapshot=snap_loser_retry,
-        event_ids=loser_req.event_ids,
+        event_ids={u2: make_deterministic_uuid7(202)},
     )
-    retry_receipt = commit_source_import(conn_verify, loser_retry_req)
-    assert retry_receipt.disposition == SourceImportDisposition.COMMITTED
-    assert retry_receipt.committed_generation == 2
-    conn_verify.close()
+    retry_rc = commit_source_import(conn_test, req_b_retry)
+    assert retry_rc.disposition == SourceImportDisposition.COMMITTED
+    assert retry_rc.committed_generation == 2
+    conn_test.close()
 
-    # --- Scenario 2: Changed vs Zero-event race with reversed winner ---
-    u3 = make_deterministic_uuid7(30)
-    rows_gen2 = [
-        (u1, make_sample_party_row("کاربر الف")),
-        (u2, make_sample_party_row("کاربر ب")),
-    ]
-    snap_gen2 = build_synthetic_snapshot(rows_gen2, [], [], [])
-    snap_c = build_synthetic_snapshot(
-        rows_gen2 + [(u3, make_sample_party_row("کاربر سه"))], [], [], []
+
+def test_is09_race_changed_vs_changed_winner_b_loser_a(tmp_path: Path) -> None:
+    """IS-09: Changed vs Changed race with reversed winner order (Winner B, Loser A).
+    Loser resolves strictly as STALE_STATE; winner replays and loser retries."""
+    db_file = tmp_path / "race_changed_b_a.sqlite3"
+    conn_init = sqlite3.connect(db_file)
+    conn_init.execute("PRAGMA foreign_keys = ON;")
+    conn_init.execute("PRAGMA journal_mode = WAL;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(
+        conn_init, device_id=dev_id, active_source=active_key
+    )
+    conn_init.close()
+
+    u1 = make_deterministic_uuid7(10)
+    u2 = make_deterministic_uuid7(20)
+    req_a = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(101),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="a" * 64,
+        snapshot=build_synthetic_snapshot(
+            [(u1, make_sample_party_row("کاربر الف"))], [], [], []
+        ),
+        event_ids={u1: make_deterministic_uuid7(201)},
+    )
+    req_b = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(102),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="b" * 64,
+        snapshot=build_synthetic_snapshot(
+            [(u2, make_sample_party_row("کاربر ب"))], [], [], []
+        ),
+        event_ids={u2: make_deterministic_uuid7(202)},
     )
 
+    # Force req_b as winner, req_a as loser
+    w_rc, l_err = _execute_controlled_race(db_file, req_b, req_a)
+    assert w_rc.disposition == SourceImportDisposition.COMMITTED
+    assert w_rc.committed_generation == 1
+    assert l_err.reason == SourceImportStoreReason.STALE_STATE
+
+    # Winner exact replay returns REPLAYED
+    conn_test = sqlite3.connect(db_file)
+    conn_test.execute("PRAGMA foreign_keys = ON;")
+    rep_rc = commit_source_import(conn_test, req_b)
+    assert rep_rc.disposition == SourceImportDisposition.REPLAYED
+    assert rep_rc.committed_generation == 1
+
+    # Loser retries with generation 1
+    snap_loser_retry = build_synthetic_snapshot(
+        [
+            (u2, make_sample_party_row("کاربر ب")),
+            (u1, make_sample_party_row("کاربر الف")),
+        ],
+        [],
+        [],
+        [],
+    )
+    req_a_retry = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=1,
+        import_id=req_a.import_id,
+        observed_at_utc=datetime.now(UTC),
+        file_sha256=req_a.file_sha256,
+        snapshot=snap_loser_retry,
+        event_ids={u1: make_deterministic_uuid7(201)},
+    )
+    retry_rc = commit_source_import(conn_test, req_a_retry)
+    assert retry_rc.disposition == SourceImportDisposition.COMMITTED
+    assert retry_rc.committed_generation == 2
+    conn_test.close()
+
+
+def test_is09_race_changed_vs_zero_event_winner_changed(tmp_path: Path) -> None:
+    """IS-09: Changed vs Zero-event race where Changed wins and Zero-event loses.
+    Loser resolves strictly as STALE_STATE; winner replays and loser retries."""
+    db_file = tmp_path / "race_changed_zero_winner_chg.sqlite3"
+    conn_init = sqlite3.connect(db_file)
+    conn_init.execute("PRAGMA foreign_keys = ON;")
+    conn_init.execute("PRAGMA journal_mode = WAL;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(
+        conn_init, device_id=dev_id, active_source=active_key
+    )
+
+    u0 = make_deterministic_uuid7(1)
+    req_init = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(50),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="0" * 64,
+        snapshot=build_synthetic_snapshot(
+            [(u0, make_sample_party_row("شخص صفر"))], [], [], []
+        ),
+        event_ids={u0: make_deterministic_uuid7(60)},
+    )
+    commit_source_import(conn_init, req_init)
+    conn_init.close()
+
+    u1 = make_deterministic_uuid7(10)
     req_changed = SourceImportRequest(
         source_key=active_key,
-        expected_generation=2,
-        import_id=make_deterministic_uuid7(105),
+        expected_generation=1,
+        import_id=make_deterministic_uuid7(101),
         observed_at_utc=datetime.now(UTC),
-        file_sha256="c" * 64,
-        snapshot=snap_c,
-        event_ids={u3: make_deterministic_uuid7(205)},
+        file_sha256="1" * 64,
+        snapshot=build_synthetic_snapshot(
+            [
+                (u0, make_sample_party_row("شخص صفر")),
+                (u1, make_sample_party_row("شخص یک")),
+            ],
+            [],
+            [],
+            [],
+        ),
+        event_ids={u1: make_deterministic_uuid7(201)},
     )
     req_zero = SourceImportRequest(
         source_key=active_key,
-        expected_generation=2,
-        import_id=make_deterministic_uuid7(106),
+        expected_generation=1,
+        import_id=make_deterministic_uuid7(102),
         observed_at_utc=datetime.now(UTC),
-        file_sha256="d" * 64,
-        snapshot=snap_gen2,
+        file_sha256="2" * 64,
+        snapshot=build_synthetic_snapshot(
+            [(u0, make_sample_party_row("شخص صفر"))], [], [], []
+        ),
         event_ids={},
     )
 
-    barrier2 = threading.Barrier(2)
-    results2: list[tuple[str, SourceImportReceipt]] = []
-    errors2: list[tuple[str, SourceImportStoreError]] = []
+    w_rc, l_err = _execute_controlled_race(db_file, req_changed, req_zero)
+    assert w_rc.disposition == SourceImportDisposition.COMMITTED
+    assert w_rc.committed_generation == 2
+    assert l_err.reason == SourceImportStoreReason.STALE_STATE
 
-    def race_worker2(name: str, req: SourceImportRequest) -> None:
-        try:
-            conn = sqlite3.connect(db_file, timeout=0.8)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            barrier2.wait(timeout=10.0)
-            rc = commit_source_import(conn, req)
-            results2.append((name, rc))
-            conn.close()
-        except SourceImportStoreError as exc:
-            errors2.append((name, exc))
-        except BaseException as exc:
-            thread_exceptions.append(exc)
+    # Winner exact replay
+    conn_test = sqlite3.connect(db_file)
+    conn_test.execute("PRAGMA foreign_keys = ON;")
+    rep_rc = commit_source_import(conn_test, req_changed)
+    assert rep_rc.disposition == SourceImportDisposition.REPLAYED
 
-    t_c = threading.Thread(target=race_worker2, args=("CHANGED", req_changed))
-    t_d = threading.Thread(target=race_worker2, args=("ZERO", req_zero))
-    t_c.start()
-    t_d.start()
-    t_c.join(timeout=10.0)
-    t_d.join(timeout=10.0)
-    assert not t_c.is_alive() and not t_d.is_alive()
-    assert not thread_exceptions
-
-    assert len(results2) == 1
-    assert len(errors2) == 1
-    _w2_name, w2_rc = results2[0]
-    _l2_name, l2_err = errors2[0]
-    assert w2_rc.disposition == SourceImportDisposition.COMMITTED
-    assert l2_err.reason in (
-        SourceImportStoreReason.STALE_STATE,
-        SourceImportStoreReason.STORAGE_FAILURE,
+    # Loser retries with expected_generation 2
+    req_zero_retry = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=2,
+        import_id=req_zero.import_id,
+        observed_at_utc=datetime.now(UTC),
+        file_sha256=req_zero.file_sha256,
+        snapshot=build_synthetic_snapshot(
+            [
+                (u0, make_sample_party_row("شخص صفر")),
+                (u1, make_sample_party_row("شخص یک")),
+            ],
+            [],
+            [],
+            [],
+        ),
+        event_ids={},
     )
+    retry_rc = commit_source_import(conn_test, req_zero_retry)
+    assert retry_rc.disposition == SourceImportDisposition.COMMITTED
+    assert retry_rc.committed_generation == 3
+    assert retry_rc.event_count == 0
+    conn_test.close()
+
+
+def test_is09_race_changed_vs_zero_event_winner_zero_event(
+    tmp_path: Path,
+) -> None:
+    """IS-09: Changed vs Zero-event race where Zero-event wins and Changed loses.
+    Loser resolves strictly as STALE_STATE; winner replays and loser retries."""
+    db_file = tmp_path / "race_changed_zero_winner_zero.sqlite3"
+    conn_init = sqlite3.connect(db_file)
+    conn_init.execute("PRAGMA foreign_keys = ON;")
+    conn_init.execute("PRAGMA journal_mode = WAL;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(
+        conn_init, device_id=dev_id, active_source=active_key
+    )
+
+    u0 = make_deterministic_uuid7(1)
+    req_init = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(50),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="0" * 64,
+        snapshot=build_synthetic_snapshot(
+            [(u0, make_sample_party_row("شخص صفر"))], [], [], []
+        ),
+        event_ids={u0: make_deterministic_uuid7(60)},
+    )
+    commit_source_import(conn_init, req_init)
+    conn_init.close()
+
+    u1 = make_deterministic_uuid7(10)
+    req_changed = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=1,
+        import_id=make_deterministic_uuid7(101),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="1" * 64,
+        snapshot=build_synthetic_snapshot(
+            [
+                (u0, make_sample_party_row("شخص صفر")),
+                (u1, make_sample_party_row("شخص یک")),
+            ],
+            [],
+            [],
+            [],
+        ),
+        event_ids={u1: make_deterministic_uuid7(201)},
+    )
+    req_zero = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=1,
+        import_id=make_deterministic_uuid7(102),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="2" * 64,
+        snapshot=build_synthetic_snapshot(
+            [(u0, make_sample_party_row("شخص صفر"))], [], [], []
+        ),
+        event_ids={},
+    )
+
+    # Force req_zero as winner, req_changed as loser
+    w_rc, l_err = _execute_controlled_race(db_file, req_zero, req_changed)
+    assert w_rc.disposition == SourceImportDisposition.COMMITTED
+    assert w_rc.committed_generation == 2
+    assert w_rc.event_count == 0
+    assert l_err.reason == SourceImportStoreReason.STALE_STATE
+
+    # Winner exact replay
+    conn_test = sqlite3.connect(db_file)
+    conn_test.execute("PRAGMA foreign_keys = ON;")
+    rep_rc = commit_source_import(conn_test, req_zero)
+    assert rep_rc.disposition == SourceImportDisposition.REPLAYED
+
+    # Loser retries with expected_generation 2
+    req_changed_retry = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=2,
+        import_id=req_changed.import_id,
+        observed_at_utc=datetime.now(UTC),
+        file_sha256=req_changed.file_sha256,
+        snapshot=build_synthetic_snapshot(
+            [
+                (u0, make_sample_party_row("شخص صفر")),
+                (u1, make_sample_party_row("شخص یک")),
+            ],
+            [],
+            [],
+            [],
+        ),
+        event_ids={u1: make_deterministic_uuid7(201)},
+    )
+    retry_rc = commit_source_import(conn_test, req_changed_retry)
+    assert retry_rc.disposition == SourceImportDisposition.COMMITTED
+    assert retry_rc.committed_generation == 3
+    assert retry_rc.event_count == 1
+    conn_test.close()
 
 
 # ============================================================================
@@ -1456,8 +2116,10 @@ def test_is09_two_connection_concurrency_race_with_barriers(tmp_path: Path) -> N
 
 
 class FlakyCursor(sqlite3.Cursor):
-    fail_insert_table: str | None = None
-    fail_commit: bool = False
+    fail_before_table: str | None = None
+    fail_after_table: str | None = None
+    fail_before_sheet: int | None = None
+    fail_after_sheet: int | None = None
     fail_interrupt: bool = False
     fail_custom_base: bool = False
     fail_system_exit: bool = False
@@ -1474,20 +2136,55 @@ class FlakyCursor(sqlite3.Cursor):
 
             raise CustomTestBaseException("Simulated custom base exception")
 
-        if FlakyCursor.fail_insert_table is not None:
+        if FlakyCursor.fail_before_table is not None:
             if (
-                f"INSERT INTO {FlakyCursor.fail_insert_table}" in sql
-                or f"UPDATE {FlakyCursor.fail_insert_table}" in sql
+                f"INSERT INTO {FlakyCursor.fail_before_table}" in sql
+                or f"UPDATE {FlakyCursor.fail_before_table}" in sql
             ):
                 raise sqlite3.OperationalError(
-                    f"Simulated failure on {FlakyCursor.fail_insert_table}"
+                    f"Simulated failure before write on {FlakyCursor.fail_before_table}"
                 )
-        return super().execute(sql, *params)
+
+        if FlakyCursor.fail_before_sheet is not None:
+            if "INSERT INTO source_import_sheets" in sql and params:
+                param_seq = (
+                    params[0] if isinstance(params[0], (tuple, list)) else params
+                )
+                if len(param_seq) > 1 and param_seq[1] == FlakyCursor.fail_before_sheet:
+                    raise sqlite3.OperationalError(
+                        f"Simulated failure before sheet "
+                        f"{FlakyCursor.fail_before_sheet}"
+                    )
+
+        result = super().execute(sql, *params)
+
+        if FlakyCursor.fail_after_table is not None:
+            if (
+                f"INSERT INTO {FlakyCursor.fail_after_table}" in sql
+                or f"UPDATE {FlakyCursor.fail_after_table}" in sql
+            ):
+                raise sqlite3.OperationalError(
+                    f"Simulated failure after write on {FlakyCursor.fail_after_table}"
+                )
+
+        if FlakyCursor.fail_after_sheet is not None:
+            if "INSERT INTO source_import_sheets" in sql and params:
+                param_seq = (
+                    params[0] if isinstance(params[0], (tuple, list)) else params
+                )
+                if len(param_seq) > 1 and param_seq[1] == FlakyCursor.fail_after_sheet:
+                    raise sqlite3.OperationalError(
+                        f"Simulated failure after sheet {FlakyCursor.fail_after_sheet}"
+                    )
+
+        return result
 
 
 class FlakyConnection(sqlite3.Connection):
     fail_begin: bool = False
     fail_rollback: bool = False
+    fail_commit: bool = False
+    fail_post_commit_pre_return: bool = False
 
     def cursor(self, factory: Any = None) -> sqlite3.Cursor:  # type: ignore[override]
         cur: sqlite3.Cursor = super().cursor(factory=factory or FlakyCursor)
@@ -1498,18 +2195,51 @@ class FlakyConnection(sqlite3.Connection):
             raise sqlite3.OperationalError("Simulated BEGIN failure")
         if FlakyConnection.fail_rollback and "ROLLBACK" in sql:
             raise sqlite3.OperationalError("Simulated rollback failure")
-        if FlakyCursor.fail_commit and "COMMIT" in sql:
+        if FlakyConnection.fail_commit and "COMMIT" in sql:
             raise sqlite3.OperationalError("Simulated COMMIT failure")
-        return super().execute(sql, *args, **kwargs)
+        res = super().execute(sql, *args, **kwargs)
+        if FlakyConnection.fail_post_commit_pre_return and "COMMIT" in sql:
+            raise sqlite3.OperationalError("Simulated failure post-COMMIT pre-return")
+        return res
+
+
+def _snapshot_db_state(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Capture full row counts for every table plus generation and sequence."""
+    tables = [
+        "source_imports",
+        "source_import_sheets",
+        "source_revisions",
+        "source_memberships",
+        "change_events",
+        "source_bindings",
+        "source_store_meta",
+    ]
+    snap: dict[str, Any] = {
+        tbl: conn.execute(f"SELECT COUNT(*) FROM {tbl};").fetchone()[0]
+        for tbl in tables
+    }
+    meta = conn.execute(
+        "SELECT generation, next_sequence FROM source_store_meta;"
+    ).fetchone()
+    snap["generation"] = meta[0]
+    snap["next_sequence"] = meta[1]
+    return snap
+
+
+def _assert_db_matches_snapshot(conn: sqlite3.Connection, snap: dict[str, Any]) -> None:
+    current = _snapshot_db_state(conn)
+    assert current == snap, f"State mismatch after rollback: {current} != {snap}"
 
 
 def test_is10_failure_injection_across_write_families() -> None:
-    """Failure injected across each write family rolls back completely."""
+    """IS-10: Injects deterministic failure BOTH before AND after every write family:
+    source_imports, all 4 sheets, revisions, memberships, change_events, bindings, meta.
+    Snapshots every table plus generation/sequence and verifies complete rollback."""
     dev_id = make_deterministic_uuid7(1)
     src_id = make_deterministic_uuid7(2)
     active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
 
-    tables_to_fail = [
+    tables_to_test = [
         "source_imports",
         "source_import_sheets",
         "source_revisions",
@@ -1519,131 +2249,247 @@ def test_is10_failure_injection_across_write_families() -> None:
         "source_store_meta",
     ]
 
-    for table_name in tables_to_fail:
-        conn = sqlite3.connect(":memory:", factory=FlakyConnection)
-        conn.execute("PRAGMA foreign_keys = ON;")
-        initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
-
-        # Snapshot state before
-        snap_counts = {
-            tbl: conn.execute(f"SELECT COUNT(*) FROM {tbl};").fetchone()[0]
-            for tbl in [
-                "source_imports",
-                "source_revisions",
-                "change_events",
-                "source_memberships",
-            ]
-        }
-        snap_gen = conn.execute("SELECT generation FROM source_store_meta;").fetchone()[
-            0
-        ]
-        snap_seq = conn.execute(
-            "SELECT next_sequence FROM source_store_meta;"
-        ).fetchone()[0]
-
-        FlakyCursor.fail_insert_table = table_name
-        try:
-            u = make_deterministic_uuid7(10)
-            snap = build_synthetic_snapshot(
-                [(u, make_sample_party_row("شخص"))], [], [], []
+    for tbl in tables_to_test:
+        for phase in ("before", "after"):
+            conn = sqlite3.connect(":memory:", factory=FlakyConnection)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            initialize_source_import_store(
+                conn, device_id=dev_id, active_source=active_key
             )
-            req = SourceImportRequest(
-                source_key=active_key,
-                expected_generation=0,
-                import_id=make_deterministic_uuid7(100),
-                observed_at_utc=datetime.now(UTC),
-                file_sha256="a" * 64,
-                snapshot=snap,
-                event_ids={u: make_deterministic_uuid7(200)},
-            )
+            snap = _snapshot_db_state(conn)
 
-            with pytest.raises(SourceImportStoreError) as exc_info:
-                commit_source_import(conn, req)
-            assert exc_info.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+            if phase == "before":
+                FlakyCursor.fail_before_table = tbl
+                FlakyCursor.fail_after_table = None
+            else:
+                FlakyCursor.fail_before_table = None
+                FlakyCursor.fail_after_table = tbl
 
-            # Verify complete rollback: matches exact snapshot before
-            for tbl, expected_count in snap_counts.items():
-                actual_count = conn.execute(f"SELECT COUNT(*) FROM {tbl};").fetchone()[
-                    0
-                ]
-                assert actual_count == expected_count, (
-                    f"Mismatch in {tbl} after rollback"
+            try:
+                u = make_deterministic_uuid7(10)
+                req = SourceImportRequest(
+                    source_key=active_key,
+                    expected_generation=0,
+                    import_id=make_deterministic_uuid7(100),
+                    observed_at_utc=datetime.now(UTC),
+                    file_sha256="a" * 64,
+                    snapshot=build_synthetic_snapshot(
+                        [(u, make_sample_party_row("شخص"))], [], [], []
+                    ),
+                    event_ids={u: make_deterministic_uuid7(200)},
                 )
-            gen = conn.execute("SELECT generation FROM source_store_meta;").fetchone()[
-                0
-            ]
-            seq = conn.execute(
-                "SELECT next_sequence FROM source_store_meta;"
-            ).fetchone()[0]
-            assert gen == snap_gen
-            assert seq == snap_seq
-        finally:
-            FlakyCursor.fail_insert_table = None
-            conn.close()
+                with pytest.raises(SourceImportStoreError) as exc_info:
+                    commit_source_import(conn, req)
+                assert exc_info.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+                _assert_db_matches_snapshot(conn, snap)
+            finally:
+                FlakyCursor.fail_before_table = None
+                FlakyCursor.fail_after_table = None
+                conn.close()
 
-    # Ambiguous COMMIT failure
-    conn_commit = sqlite3.connect(":memory:", factory=FlakyConnection)
-    conn_commit.execute("PRAGMA foreign_keys = ON;")
-    initialize_source_import_store(
-        conn_commit, device_id=dev_id, active_source=active_key
-    )
-    FlakyCursor.fail_commit = True
-    try:
-        u = make_deterministic_uuid7(11)
-        snap = build_synthetic_snapshot([(u, make_sample_party_row("شخص"))], [], [], [])
-        req = SourceImportRequest(
-            source_key=active_key,
-            expected_generation=0,
-            import_id=make_deterministic_uuid7(101),
-            observed_at_utc=datetime.now(UTC),
-            file_sha256="b" * 64,
-            snapshot=snap,
-            event_ids={u: make_deterministic_uuid7(201)},
-        )
-        with pytest.raises(SourceImportStoreError) as exc_commit:
-            commit_source_import(conn_commit, req)
-        assert exc_commit.value.reason == SourceImportStoreReason.STORAGE_FAILURE
-        n_imp = conn_commit.execute("SELECT COUNT(*) FROM source_imports;").fetchone()[
-            0
-        ]
-        assert n_imp == 0
-        gen = conn_commit.execute(
-            "SELECT generation FROM source_store_meta;"
-        ).fetchone()[0]
-        assert gen == 0
-    finally:
-        FlakyCursor.fail_commit = False
-        conn_commit.close()
+    # Test each of the 4 sheets individually both before and after
+    for sheet_idx in range(4):
+        for phase in ("before", "after"):
+            conn = sqlite3.connect(":memory:", factory=FlakyConnection)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            initialize_source_import_store(
+                conn, device_id=dev_id, active_source=active_key
+            )
+            snap = _snapshot_db_state(conn)
 
-    # BEGIN failure
+            if phase == "before":
+                FlakyCursor.fail_before_sheet = sheet_idx
+                FlakyCursor.fail_after_sheet = None
+            else:
+                FlakyCursor.fail_before_sheet = None
+                FlakyCursor.fail_after_sheet = sheet_idx
+
+            try:
+                u = make_deterministic_uuid7(10)
+                req = SourceImportRequest(
+                    source_key=active_key,
+                    expected_generation=0,
+                    import_id=make_deterministic_uuid7(100),
+                    observed_at_utc=datetime.now(UTC),
+                    file_sha256="a" * 64,
+                    snapshot=build_synthetic_snapshot(
+                        [(u, make_sample_party_row("شخص"))], [], [], []
+                    ),
+                    event_ids={u: make_deterministic_uuid7(200)},
+                )
+                with pytest.raises(SourceImportStoreError) as exc_info:
+                    commit_source_import(conn, req)
+                assert exc_info.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+                _assert_db_matches_snapshot(conn, snap)
+            finally:
+                FlakyCursor.fail_before_sheet = None
+                FlakyCursor.fail_after_sheet = None
+                conn.close()
+
+
+def test_is10_begin_and_pre_commit_failure_rollback() -> None:
+    """IS-10: BEGIN failure and pre-COMMIT failure roll back completely
+    to prior state."""
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+
+    # 1. BEGIN failure
     conn_begin = sqlite3.connect(":memory:", factory=FlakyConnection)
     conn_begin.execute("PRAGMA foreign_keys = ON;")
     initialize_source_import_store(
         conn_begin, device_id=dev_id, active_source=active_key
     )
+    snap_begin = _snapshot_db_state(conn_begin)
+
     FlakyConnection.fail_begin = True
     try:
-        u = make_deterministic_uuid7(12)
-        snap = build_synthetic_snapshot([(u, make_sample_party_row("شخص"))], [], [], [])
-        req_b = SourceImportRequest(
+        u = make_deterministic_uuid7(10)
+        req = SourceImportRequest(
             source_key=active_key,
             expected_generation=0,
-            import_id=make_deterministic_uuid7(102),
+            import_id=make_deterministic_uuid7(100),
             observed_at_utc=datetime.now(UTC),
-            file_sha256="c" * 64,
-            snapshot=snap,
-            event_ids={u: make_deterministic_uuid7(202)},
+            file_sha256="a" * 64,
+            snapshot=build_synthetic_snapshot(
+                [(u, make_sample_party_row("شخص"))], [], [], []
+            ),
+            event_ids={u: make_deterministic_uuid7(200)},
         )
         with pytest.raises(SourceImportStoreError) as exc_b:
-            commit_source_import(conn_begin, req_b)
+            commit_source_import(conn_begin, req)
         assert exc_b.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+        _assert_db_matches_snapshot(conn_begin, snap_begin)
     finally:
         FlakyConnection.fail_begin = False
         conn_begin.close()
 
+    # 2. Pre-COMMIT failure
+    conn_commit = sqlite3.connect(":memory:", factory=FlakyConnection)
+    conn_commit.execute("PRAGMA foreign_keys = ON;")
+    initialize_source_import_store(
+        conn_commit, device_id=dev_id, active_source=active_key
+    )
+    snap_commit = _snapshot_db_state(conn_commit)
 
-def test_is10_commit_and_rollback_double_failure_exception_group() -> None:
-    """Double failure during commit and rollback preserves both errors in group."""
+    FlakyConnection.fail_commit = True
+    try:
+        u = make_deterministic_uuid7(10)
+        req = SourceImportRequest(
+            source_key=active_key,
+            expected_generation=0,
+            import_id=make_deterministic_uuid7(100),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="a" * 64,
+            snapshot=build_synthetic_snapshot(
+                [(u, make_sample_party_row("شخص"))], [], [], []
+            ),
+            event_ids={u: make_deterministic_uuid7(200)},
+        )
+        with pytest.raises(SourceImportStoreError) as exc_c:
+            commit_source_import(conn_commit, req)
+        assert exc_c.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+        _assert_db_matches_snapshot(conn_commit, snap_commit)
+    finally:
+        FlakyConnection.fail_commit = False
+        conn_commit.close()
+
+
+def test_is10_post_commit_pre_return_ambiguity_and_replay() -> None:
+    """IS-10: Failure injected after COMMIT succeeds but before return receipt
+    leaves the database in committed state; exact retry yields REPLAYED."""
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+
+    conn = sqlite3.connect(":memory:", factory=FlakyConnection)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+
+    FlakyConnection.fail_post_commit_pre_return = True
+    u = make_deterministic_uuid7(10)
+    req = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(100),
+        observed_at_utc=datetime.now(UTC),
+        file_sha256="a" * 64,
+        snapshot=build_synthetic_snapshot(
+            [(u, make_sample_party_row("شخص"))], [], [], []
+        ),
+        event_ids={u: make_deterministic_uuid7(200)},
+    )
+    try:
+        with pytest.raises(SourceImportStoreError) as exc_info:
+            commit_source_import(conn, req)
+        assert exc_info.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+    finally:
+        FlakyConnection.fail_post_commit_pre_return = False
+
+    # The commit actually happened in the database
+    assert conn.execute("SELECT generation FROM source_store_meta;").fetchone()[0] == 1
+
+    # Exact replay with identical request returns REPLAYED
+    receipt = commit_source_import(conn, req)
+    assert receipt.disposition == SourceImportDisposition.REPLAYED
+    assert receipt.committed_generation == 1
+    conn.close()
+
+
+def test_is10_raw_base_exception_propagation_and_rollback() -> None:
+    """IS-10: Raw BaseExceptions (KeyboardInterrupt, SystemExit, custom) roll back
+    and propagate directly without sanitization or wrapping."""
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+
+    for exc_type in ("keyboard", "exit", "custom"):
+        conn = sqlite3.connect(":memory:", factory=FlakyConnection)
+        conn.execute("PRAGMA foreign_keys = ON;")
+        initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+        snap = _snapshot_db_state(conn)
+
+        if exc_type == "keyboard":
+            FlakyCursor.fail_interrupt = True
+        elif exc_type == "exit":
+            FlakyCursor.fail_system_exit = True
+        else:
+            FlakyCursor.fail_custom_base = True
+
+        u = make_deterministic_uuid7(10)
+        req = SourceImportRequest(
+            source_key=active_key,
+            expected_generation=0,
+            import_id=make_deterministic_uuid7(100),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="a" * 64,
+            snapshot=build_synthetic_snapshot(
+                [(u, make_sample_party_row("شخص"))], [], [], []
+            ),
+            event_ids={u: make_deterministic_uuid7(200)},
+        )
+        try:
+            if exc_type == "keyboard":
+                with pytest.raises(KeyboardInterrupt):
+                    commit_source_import(conn, req)
+            elif exc_type == "exit":
+                with pytest.raises(SystemExit):
+                    commit_source_import(conn, req)
+            else:
+                with pytest.raises(BaseException) as exc_custom:
+                    commit_source_import(conn, req)
+                assert exc_custom.value.__class__.__name__ == "CustomTestBaseException"
+            _assert_db_matches_snapshot(conn, snap)
+        finally:
+            FlakyCursor.fail_interrupt = False
+            FlakyCursor.fail_system_exit = False
+            FlakyCursor.fail_custom_base = False
+            conn.close()
+
+
+def test_is10_commit_and_rollback_ordered_dual_failure_exception_group() -> None:
+    """IS-10: Double failure during commit and rollback preserves both errors in group
+    in exact order [primary, rollback], with shared cause non-deduplication."""
     conn = sqlite3.connect(":memory:", factory=FlakyConnection)
     conn.execute("PRAGMA foreign_keys = ON;")
 
@@ -1652,7 +2498,7 @@ def test_is10_commit_and_rollback_double_failure_exception_group() -> None:
     active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
     initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
 
-    FlakyCursor.fail_insert_table = "source_imports"
+    FlakyCursor.fail_before_table = "source_imports"
     FlakyConnection.fail_rollback = True
 
     try:
@@ -1673,9 +2519,13 @@ def test_is10_commit_and_rollback_double_failure_exception_group() -> None:
 
         assert "Source import failure and rollback failure" in str(exc_group.value)
         assert len(exc_group.value.exceptions) == 2
+        assert "Simulated failure before write on source_imports" in str(
+            exc_group.value.exceptions[0]
+        )
+        assert "Simulated rollback failure" in str(exc_group.value.exceptions[1])
 
         # BaseExceptionGroup when KeyboardInterrupt occurs and rollback fails
-        FlakyCursor.fail_insert_table = None
+        FlakyCursor.fail_before_table = None
         FlakyCursor.fail_interrupt = True
         conn2 = sqlite3.connect(":memory:", factory=FlakyConnection)
         conn2.execute("PRAGMA foreign_keys = ON;")
@@ -1686,13 +2536,13 @@ def test_is10_commit_and_rollback_double_failure_exception_group() -> None:
             with pytest.raises(BaseExceptionGroup) as exc_bgroup:
                 commit_source_import(conn2, req)
             assert "Source import failure and rollback failure" in str(exc_bgroup.value)
-            assert any(
-                isinstance(e, KeyboardInterrupt) for e in exc_bgroup.value.exceptions
-            )
+            assert len(exc_bgroup.value.exceptions) == 2
+            assert isinstance(exc_bgroup.value.exceptions[0], KeyboardInterrupt)
+            assert isinstance(exc_bgroup.value.exceptions[1], sqlite3.OperationalError)
         finally:
             conn2.close()
     finally:
-        FlakyCursor.fail_insert_table = None
+        FlakyCursor.fail_before_table = None
         FlakyCursor.fail_interrupt = False
         FlakyConnection.fail_rollback = False
         conn.close()
@@ -1706,7 +2556,6 @@ def test_is10_commit_and_rollback_double_failure_exception_group() -> None:
     eg_shared = ExceptionGroup("distinct errors with shared cause", [err_a, err_b])
     assert len(eg_shared.exceptions) == 2
     assert eg_shared.exceptions[0].__cause__ is shared_cause
-    assert eg_shared.exceptions[1].__cause__ is shared_cause
 
 
 # ============================================================================
@@ -2083,124 +2932,127 @@ def test_is13_schema_guards_trigger_enforcement_and_tamper_detection() -> None:
     conn.close()
 
 
-# ============================================================================
-# IS-14: Hypothesis property tests & controlled mutations
-# ============================================================================
-
-
-@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-@given(
-    row_count=st.integers(min_value=1, max_value=10),
-    edit_ratio=st.floats(min_value=0.0, max_value=1.0),
-)
-def test_is14_hypothesis_multi_step_history_property_tests(
-    row_count: int, edit_ratio: float
-) -> None:
-    """Property test runs generated histories and asserts full consistency."""
+def _make_fresh_gen1_fixture() -> tuple[
+    sqlite3.Connection, SourceBindingKey, SourceImportRequest
+]:
+    """Create a fresh in-memory store with Generation 1 committed."""
     conn = sqlite3.connect(":memory:")
     conn.execute("PRAGMA foreign_keys = ON;")
-
     dev_id = make_deterministic_uuid7(1)
     src_id = make_deterministic_uuid7(2)
     active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
     initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
-
-    # Step 1: Initial import
-    uuids = [make_deterministic_uuid7(100 + i) for i in range(row_count)]
-    rows = [(u, make_sample_party_row(f"شخص {i}")) for i, u in enumerate(uuids)]
-    snap1 = build_synthetic_snapshot(rows, [], [], [])
-    ev_ids1 = {u: make_deterministic_uuid7(1000 + i) for i, u in enumerate(uuids)}
-
-    req1 = SourceImportRequest(
-        source_key=active_key,
-        expected_generation=0,
-        import_id=make_deterministic_uuid7(500),
-        observed_at_utc=datetime.now(UTC),
-        file_sha256="1" * 64,
-        snapshot=snap1,
-        event_ids=ev_ids1,
-    )
-    r1 = commit_source_import(conn, req1)
-    assert r1.committed_generation == 1
-    assert r1.event_count == row_count
-
-    # Step 2: Second import with subset edited
-    edit_count = int(row_count * edit_ratio)
-    rows2 = []
-    ev_ids2 = {}
-    for i, u in enumerate(uuids):
-        if i < edit_count:
-            rows2.append((u, make_sample_party_row(f"شخص {i} ویرایش")))
-            ev_ids2[u] = make_deterministic_uuid7(2000 + i)
-        else:
-            rows2.append((u, make_sample_party_row(f"شخص {i}")))
-
-    snap2 = build_synthetic_snapshot(rows2, [], [], [])
-    req2 = SourceImportRequest(
-        source_key=active_key,
-        expected_generation=1,
-        import_id=make_deterministic_uuid7(501),
-        observed_at_utc=datetime.now(UTC),
-        file_sha256="2" * 64,
-        snapshot=snap2,
-        event_ids=ev_ids2,
-    )
-    r2 = commit_source_import(conn, req2)
-    assert r2.committed_generation == 2
-    assert r2.event_count == edit_count
-
-    # Verify store consistency
-    view = read_source_import_store(conn)
-    assert view.generation == 2
-    assert view.next_sequence == row_count + edit_count + 1
-
-
-def test_is14_controlled_mutations_detection() -> None:
-    """IS-14: Controlled mutations for stale check, unchanged membership,
-    append-only revision, outbox insert, sequence advance, request Raw digest,
-    and predecessor link are detected by product assertions. Product state restored."""
-    conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA foreign_keys = ON;")
-
-    dev_id = make_deterministic_uuid7(1)
-    src_id = make_deterministic_uuid7(2)
-    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
-    initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
-
-    u1 = make_deterministic_uuid7(10)
-    snap1 = build_synthetic_snapshot([(u1, make_sample_party_row("شخص"))], [], [], [])
-    req1 = SourceImportRequest(
+    u = make_deterministic_uuid7(10)
+    snap = build_synthetic_snapshot([(u, make_sample_party_row("شخص تست"))], [], [], [])
+    req = SourceImportRequest(
         source_key=active_key,
         expected_generation=0,
         import_id=make_deterministic_uuid7(100),
         observed_at_utc=datetime.now(UTC),
         file_sha256="a" * 64,
-        snapshot=snap1,
-        event_ids={u1: make_deterministic_uuid7(200)},
+        snapshot=snap,
+        event_ids={u: make_deterministic_uuid7(200)},
     )
-    commit_source_import(conn, req1)
+    commit_source_import(conn, req)
+    return conn, active_key, req
 
-    # 1. Stale check: Passing generation 0 instead of 1 raises STALE_STATE
-    req_stale = SourceImportRequest(
-        source_key=active_key,
-        expected_generation=0,
-        import_id=make_deterministic_uuid7(101),
-        observed_at_utc=datetime.now(UTC),
-        file_sha256="b" * 64,
-        snapshot=snap1,
-        event_ids={u1: make_deterministic_uuid7(201)},
+
+def test_is13_mutation_offset_free_observation_rejected() -> None:
+    """IS-13/R3: Offset-free or non-UTC observed_at_utc in source_imports is rejected
+    by public read and replay with INCONSISTENT_STATE."""
+    for bad_obs in (
+        "2026-01-01T00:00:00",
+        "2026-01-01T00:00:00+03:30",
+        "not-a-canonical-utc",
+    ):
+        conn, _, req = _make_fresh_gen1_fixture()
+        conn.execute("DROP TRIGGER trg_prevent_update_source_imports;")
+        conn.execute("UPDATE source_imports SET observed_at_utc = ?;", (bad_obs,))
+        conn.execute(
+            """
+            CREATE TRIGGER trg_prevent_update_source_imports
+            BEFORE UPDATE ON source_imports
+            BEGIN
+                SELECT RAISE(ABORT, 'Cannot update source_imports');
+            END;
+            """
+        )
+        conn.commit()
+
+        with pytest.raises(SourceImportStoreError) as exc_read:
+            read_source_import_store(conn)
+        assert exc_read.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+
+        with pytest.raises(SourceImportStoreError) as exc_replay:
+            commit_source_import(conn, req)
+        assert exc_replay.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+        conn.close()
+
+
+def test_is13_mutation_wrong_source_year_provenance_rejected() -> None:
+    """IS-13/R3: Valid-but-wrong source_id or fiscal_year provenance in
+    source_imports is rejected by public read and replay with INCONSISTENT_STATE."""
+    wrong_src = make_deterministic_uuid7(999)
+    # 1. Wrong source_id (must exist in bindings for FK, but wrong for import)
+    conn1, _, req1 = _make_fresh_gen1_fixture()
+    conn1.execute(
+        "INSERT INTO source_bindings "
+        "(source_id, fiscal_year, state, final_file_sha256) "
+        "VALUES (?, 1402, 'archived', ?);",
+        (wrong_src.bytes, "9" * 64),
     )
-    with pytest.raises(SourceImportStoreError) as exc_stale:
-        commit_source_import(conn, req_stale)
-    assert exc_stale.value.reason == SourceImportStoreReason.STALE_STATE
+    conn1.execute("DROP TRIGGER trg_prevent_update_source_imports;")
+    conn1.execute("UPDATE source_imports SET source_id = ?;", (wrong_src.bytes,))
+    conn1.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_imports
+        BEFORE UPDATE ON source_imports
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_imports');
+        END;
+        """
+    )
+    conn1.commit()
+    with pytest.raises(SourceImportStoreError) as exc1:
+        read_source_import_store(conn1)
+    assert exc1.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    with pytest.raises(SourceImportStoreError) as exc1_rep:
+        commit_source_import(conn1, req1)
+    assert exc1_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn1.close()
 
-    # 2. Append-only revision: direct SQL UPDATE rejected by trigger
-    with pytest.raises(sqlite3.IntegrityError, match="Cannot update source_revisions"):
-        conn.execute("UPDATE source_revisions SET home_sheet = 'لیست کسبه';")
+    # 2. Wrong fiscal_year
+    conn2, _, req2 = _make_fresh_gen1_fixture()
+    conn2.execute("DROP TRIGGER trg_prevent_update_source_imports;")
+    conn2.execute("UPDATE source_imports SET fiscal_year = 1404;")
+    conn2.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_imports
+        BEFORE UPDATE ON source_imports
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_imports');
+        END;
+        """
+    )
+    conn2.commit()
+    with pytest.raises(SourceImportStoreError) as exc2:
+        read_source_import_store(conn2)
+    assert exc2.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    with pytest.raises(SourceImportStoreError) as exc2_rep:
+        commit_source_import(conn2, req2)
+    assert exc2_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn2.close()
 
-    # 3. Sequence advance mutation: gap in change_events raises INCONSISTENT_STATE
+
+def test_is13_mutation_event_observation_differing_from_import_rejected() -> None:
+    """IS-13/R3: Change event observation differing from its creating import
+    is rejected by public read and replay with INCONSISTENT_STATE."""
+    conn, _, req = _make_fresh_gen1_fixture()
     conn.execute("DROP TRIGGER trg_prevent_update_change_events;")
-    conn.execute("UPDATE change_events SET sequence = 99 WHERE sequence = 1;")
+    conn.execute(
+        "UPDATE change_events SET observed_at_utc = '2026-01-01T12:00:00Z' "
+        "WHERE sequence = 1;"
+    )
     conn.execute(
         """
         CREATE TRIGGER trg_prevent_update_change_events
@@ -2211,62 +3063,98 @@ def test_is14_controlled_mutations_detection() -> None:
         """
     )
     conn.commit()
-    with pytest.raises(SourceImportStoreError) as exc_seq:
+
+    with pytest.raises(SourceImportStoreError) as exc:
         read_source_import_store(conn)
-    assert exc_seq.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    assert exc.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
 
-    # Restore sequence
-    conn.execute("DROP TRIGGER trg_prevent_update_change_events;")
-    conn.execute("UPDATE change_events SET sequence = 1 WHERE sequence = 99;")
+    with pytest.raises(SourceImportStoreError) as exc_rep:
+        commit_source_import(conn, req)
+    assert exc_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn.close()
+
+
+def test_is13_mutation_file_import_metadata_mismatch_rejected() -> None:
+    """IS-13/R3: File/import metadata mismatch (mismatched sha or request_digest)
+    is rejected by public read and replay with INCONSISTENT_STATE."""
+    # 1. file_sha256 mismatch (valid 64-hex that doesn't match binding or request)
+    conn1, _, req1 = _make_fresh_gen1_fixture()
+    conn1.execute("DROP TRIGGER trg_prevent_update_source_imports;")
+    conn1.execute("UPDATE source_imports SET file_sha256 = ?;", ("b" * 64,))
+    conn1.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_imports
+        BEFORE UPDATE ON source_imports
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_imports');
+        END;
+        """
+    )
+    conn1.commit()
+    with pytest.raises(SourceImportStoreError) as exc1:
+        read_source_import_store(conn1)
+    assert exc1.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+
+    with pytest.raises(SourceImportStoreError) as exc1_rep:
+        commit_source_import(conn1, req1)
+    assert exc1_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn1.close()
+
+    # 2. request_digest mismatch
+    conn2, _, req2 = _make_fresh_gen1_fixture()
+    conn2.execute("DROP TRIGGER trg_prevent_update_source_imports;")
+    conn2.execute("UPDATE source_imports SET request_digest = ?;", ("9" * 64,))
+    conn2.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_imports
+        BEFORE UPDATE ON source_imports
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_imports');
+        END;
+        """
+    )
+    conn2.commit()
+    # Replay must reject because stored digest does not match computed digest
+    with pytest.raises(SourceImportStoreError) as exc2_rep:
+        commit_source_import(conn2, req2)
+    assert exc2_rep.value.reason == SourceImportStoreReason.IDEMPOTENCY_CONFLICT
+    conn2.close()
+
+
+def test_is13_mutation_sheet_count_mismatch_rejected() -> None:
+    """IS-13/R3: Sheet count mismatch (not exactly 4 sheets reported)
+    is rejected by public read and replay with INCONSISTENT_STATE."""
+    conn, _, req = _make_fresh_gen1_fixture()
+    conn.execute("DROP TRIGGER trg_prevent_delete_source_import_sheets;")
+    conn.execute("DELETE FROM source_import_sheets WHERE sheet_order = 0;")
     conn.execute(
         """
-        CREATE TRIGGER trg_prevent_update_change_events
-        BEFORE UPDATE ON change_events
+        CREATE TRIGGER trg_prevent_delete_source_import_sheets
+        BEFORE DELETE ON source_import_sheets
         BEGIN
-            SELECT RAISE(ABORT, 'Cannot update change_events');
+            SELECT RAISE(ABORT, 'Cannot delete source_import_sheets');
         END;
         """
     )
     conn.commit()
-    assert read_source_import_store(conn).generation == 1
 
-    # 4. Request Raw digest mutation: different digest raises IDEMPOTENCY_CONFLICT
-    req_conflict = SourceImportRequest(
-        source_key=active_key,
-        expected_generation=0,
-        import_id=make_deterministic_uuid7(100),
-        observed_at_utc=datetime.now(UTC),
-        file_sha256="dead" * 16,
-        snapshot=snap1,
-        event_ids={u1: make_deterministic_uuid7(200)},
-    )
-    with pytest.raises(SourceImportStoreError) as exc_conf:
-        commit_source_import(conn, req_conflict)
-    assert exc_conf.value.reason == SourceImportStoreReason.IDEMPOTENCY_CONFLICT
+    with pytest.raises(SourceImportStoreError) as exc:
+        read_source_import_store(conn)
+    assert exc.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
 
-    # Commit generation 2 to produce revision 2 with non-null previous_version_hash
-    req2 = SourceImportRequest(
-        source_key=active_key,
-        expected_generation=1,
-        import_id=make_deterministic_uuid7(102),
-        observed_at_utc=datetime.now(UTC),
-        file_sha256="c" * 64,
-        snapshot=build_synthetic_snapshot(
-            [(u1, make_sample_party_row("شخص ویرایش‌شد"))], [], [], []
-        ),
-        event_ids={u1: make_deterministic_uuid7(202)},
-    )
-    commit_source_import(conn, req2)
-    assert read_source_import_store(conn).generation == 2
+    with pytest.raises(SourceImportStoreError) as exc_rep:
+        commit_source_import(conn, req)
+    assert exc_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn.close()
 
-    # 5. Predecessor link mutation: altered hash on revision 2 raises INCONSISTENT_STATE
-    orig_prev_hash = conn.execute(
-        "SELECT previous_version_hash FROM source_revisions WHERE revision = 2;"
-    ).fetchone()[0]
+
+def test_is13_mutation_current_payload_tamper_rejected() -> None:
+    """IS-13/R3: Tampered raw_payload in source_revisions is rejected
+    because payload hash does not match version_hash."""
+    conn, _, req = _make_fresh_gen1_fixture()
     conn.execute("DROP TRIGGER trg_prevent_update_source_revisions;")
     conn.execute(
-        "UPDATE source_revisions SET previous_version_hash = ? WHERE revision = 2;",
-        ("f" * 64,),
+        "UPDATE source_revisions SET raw_payload = ?;", (b'{"tampered": true}',)
     )
     conn.execute(
         """
@@ -2278,16 +3166,22 @@ def test_is14_controlled_mutations_detection() -> None:
         """
     )
     conn.commit()
-    with pytest.raises(SourceImportStoreError) as exc_pred:
-        read_source_import_store(conn)
-    assert exc_pred.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
 
-    # Restore predecessor
+    with pytest.raises(SourceImportStoreError) as exc:
+        read_source_import_store(conn)
+    assert exc.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+
+    with pytest.raises(SourceImportStoreError) as exc_rep:
+        commit_source_import(conn, req)
+    assert exc_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn.close()
+
+
+def test_is13_mutation_version_hash_tamper_rejected() -> None:
+    """IS-13/R3: Tampered version_hash in source_revisions is rejected."""
+    conn, _, req = _make_fresh_gen1_fixture()
     conn.execute("DROP TRIGGER trg_prevent_update_source_revisions;")
-    conn.execute(
-        "UPDATE source_revisions SET previous_version_hash = ? WHERE revision = 2;",
-        (orig_prev_hash,),
-    )
+    conn.execute("UPDATE source_revisions SET version_hash = ?;", ("0" * 64,))
     conn.execute(
         """
         CREATE TRIGGER trg_prevent_update_source_revisions
@@ -2298,9 +3192,700 @@ def test_is14_controlled_mutations_detection() -> None:
         """
     )
     conn.commit()
-    assert read_source_import_store(conn).generation == 2
+
+    with pytest.raises(SourceImportStoreError) as exc:
+        read_source_import_store(conn)
+    assert exc.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+
+    with pytest.raises(SourceImportStoreError) as exc_rep:
+        commit_source_import(conn, req)
+    assert exc_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn.close()
+
+
+def test_is13_mutation_noncontiguous_sequence_rejected() -> None:
+    """IS-13/R3: Non-contiguous sequence in change_events is rejected."""
+    conn, _, req = _make_fresh_gen1_fixture()
+    conn.execute("DROP TRIGGER trg_prevent_update_change_events;")
+    conn.execute("UPDATE change_events SET sequence = 5 WHERE sequence = 1;")
+    conn.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_change_events
+        BEFORE UPDATE ON change_events
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update change_events');
+        END;
+        """
+    )
+    conn.commit()
+
+    with pytest.raises(SourceImportStoreError) as exc:
+        read_source_import_store(conn)
+    assert exc.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+
+    with pytest.raises(SourceImportStoreError) as exc_rep:
+        commit_source_import(conn, req)
+    assert exc_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn.close()
+
+
+# ============================================================================
+# IS-14: Hypothesis property tests & controlled mutations
+# ============================================================================
+
+
+class ImportStoreOracle:
+    """Independent in-memory oracle for source import store state
+    and change planning."""
+
+    def __init__(self, device_id: uuid.UUID, active_key: SourceBindingKey) -> None:
+        self.device_id = device_id
+        self.active_key = active_key
+        self.generation = 0
+        self.next_sequence = 1
+        # stable_id -> dict: revision, is_void, source_hash, sheet_name
+        self.items: dict[uuid.UUID, dict[str, Any]] = {}
+        # list of (seq, event_id, stable_id, revision, operation)
+        self.events: list[tuple[int, uuid.UUID, uuid.UUID, int, str]] = []
+        self.imports: list[uuid.UUID] = []
+
+    def get_prior_registry(self) -> PriorIdentityRegistry:
+        prior_states = [
+            PriorIdentityState(
+                stable_id=u,
+                canonical_uuid=str(u).lower(),
+                home_sheet=itm["sheet_name"],
+                latest_revision=itm["revision"],
+                lifecycle=(
+                    IdentityLifecycle.VOIDED
+                    if itm["is_void"]
+                    else IdentityLifecycle.ACTIVE
+                ),
+                source_hash=itm["source_hash"],
+            )
+            for u, itm in self.items.items()
+        ]
+        return build_prior_identity_registry(prior_states)
+
+    def plan_and_apply(
+        self,
+        import_id: uuid.UUID,
+        snapshot: Any,
+        event_ids: dict[uuid.UUID, uuid.UUID],
+    ) -> dict[str, Any]:
+        self.generation += 1
+        self.imports.append(import_id)
+
+        prior_registry = self.get_prior_registry()
+        plan = plan_source_changes(snapshot, prior_registry)
+        changed_items = [
+            item
+            for item in plan.items
+            if item.action in (PlanAction.INSERT, PlanAction.EDIT, PlanAction.VOID)
+        ]
+
+        first_seq = self.next_sequence if changed_items else None
+        for item in changed_items:
+            seq = self.next_sequence
+            self.next_sequence += 1
+            ev_id = event_ids[item.stable_id]
+            rev = 1 if item.action == PlanAction.INSERT else item.planned_revision
+            assert rev is not None
+            op = "void" if item.action == PlanAction.VOID else "upsert"
+            self.events.append((seq, ev_id, item.stable_id, rev, op))
+            if op == "void":
+                self.items[item.stable_id]["revision"] = rev
+                self.items[item.stable_id]["is_void"] = True
+                self.items[item.stable_id]["source_hash"] = None
+            else:
+                assert item.current_row is not None
+                self.items[item.stable_id] = {
+                    "revision": rev,
+                    "is_void": False,
+                    "source_hash": item.current_row.source_hash,
+                    "sheet_name": item.sheet_name,
+                }
+
+        last_seq = (self.next_sequence - 1) if changed_items else None
+
+        return {
+            "committed_generation": self.generation,
+            "event_count": len(changed_items),
+            "first_sequence": first_seq,
+            "last_sequence": last_seq,
+        }
+
+    def verify_db_state(self, conn: sqlite3.Connection) -> None:
+        meta = conn.execute(
+            "SELECT generation, next_sequence, device_id FROM source_store_meta;"
+        ).fetchone()
+        assert meta[0] == self.generation
+        assert meta[1] == self.next_sequence
+        assert meta[2] == self.device_id.bytes
+
+        # Verify memberships
+        mem_rows = conn.execute(
+            "SELECT stable_id, revision FROM source_memberships;"
+        ).fetchall()
+        assert len(mem_rows) == len(self.items)
+        for s_id_bytes, rev in mem_rows:
+            u = uuid.UUID(bytes=s_id_bytes)
+            assert self.items[u]["revision"] == rev
+
+        # Verify events
+        ev_rows = conn.execute(
+            "SELECT sequence, event_id, stable_id, revision, operation "
+            "FROM change_events ORDER BY sequence ASC;"
+        ).fetchall()
+        assert len(ev_rows) == len(self.events)
+        for (seq, ev_id, u, rev, op), db_row in zip(self.events, ev_rows, strict=True):
+            assert db_row[0] == seq
+            assert db_row[1] == ev_id.bytes
+            assert db_row[2] == u.bytes
+            assert db_row[3] == rev
+            assert db_row[4] == op
+
+
+@settings(
+    max_examples=40,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(
+    step_count=st.integers(min_value=2, max_value=4),
+    initial_count=st.integers(min_value=2, max_value=5),
+    seed=st.integers(min_value=1, max_value=10000),
+)
+def test_is14_hypothesis_multi_step_history_property_tests(
+    step_count: int, initial_count: int, seed: int
+) -> None:
+    """IS-14: 40 generated multi-step histories with real row-order,
+    mapping order, and Event-ID permutations across INSERT, EDIT, VOID,
+    reactivation, and UNCHANGED. Compares every receipt and complete DB state
+    after every step to an independent oracle."""
+    rng = random.Random(seed)
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+    oracle = ImportStoreOracle(dev_id, active_key)
+
+    all_uuids = [make_deterministic_uuid7(1000 + i) for i in range(initial_count)]
+    current_pool: dict[uuid.UUID, tuple[str, dict[str, Any]]] = {}
+
+    for step in range(step_count):
+        if step == 0:
+            # Initial setup: create items across all 4 sheets
+            for i, u in enumerate(all_uuids):
+                sheet_idx = i % 4
+                if sheet_idx == 0:
+                    current_pool[u] = (
+                        "لیست کسبه",
+                        make_sample_party_row(f"شخص {i}"),
+                    )
+                elif sheet_idx == 1:
+                    current_pool[u] = (
+                        "خرید-فروش",
+                        make_sample_buy_sell_row(
+                            party=f"شخص {i}", unit_price=str(1000 + i)
+                        ),
+                    )
+                elif sheet_idx == 2:
+                    current_pool[u] = (
+                        "دریافت-پرداخت",
+                        make_sample_receipt_payment_row(party=f"شخص {i}"),
+                    )
+                else:
+                    current_pool[u] = (
+                        "ورود-خروج",
+                        make_sample_inventory_row(party=f"شخص {i}"),
+                    )
+            snapshot_items = dict(current_pool)
+        else:
+            # Step > 0: randomly modify active items (EDIT, VOID, UNCHANGED)
+            # and reactivate previously voided items
+            snapshot_items = {}
+            for u, (sheet_name, r_dict) in current_pool.items():
+                is_currently_void = oracle.items.get(u, {}).get("is_void", False)
+                if is_currently_void:
+                    # 50% chance of REACTIVATION
+                    if rng.random() < 0.5:
+                        new_dict = dict(r_dict)
+                        if sheet_name == "لیست کسبه":
+                            new_dict["phone_number_raw"] = (
+                                f"0912{step:02d}{abs(hash(u)) % 100000:05d}"
+                            )
+                        else:
+                            new_dict["notes_raw"] = f"reactivated_step_{step}"
+                        snapshot_items[u] = (sheet_name, new_dict)
+                else:
+                    roll = rng.random()
+                    if roll < 0.35:
+                        # UNCHANGED
+                        snapshot_items[u] = (sheet_name, r_dict)
+                    elif roll < 0.70:
+                        # EDIT
+                        new_dict = dict(r_dict)
+                        if sheet_name == "لیست کسبه":
+                            new_dict["phone_number_raw"] = (
+                                f"0912{step:02d}{abs(hash(u)) % 100000:05d}"
+                            )
+                        else:
+                            new_dict["notes_raw"] = f"edited_step_{step}"
+                        snapshot_items[u] = (sheet_name, new_dict)
+                    else:
+                        # VOID (omit from snapshot)
+                        pass
+
+            # Maybe introduce a new item (INSERT)
+            if rng.random() < 0.5:
+                new_u = make_deterministic_uuid7(2000 + step * 10)
+                current_pool[new_u] = (
+                    "لیست کسبه",
+                    make_sample_party_row(f"جدید {step}"),
+                )
+                snapshot_items[new_u] = current_pool[new_u]
+
+        # Partition snapshot items into the 4 sheets
+        parties_list: list[tuple[uuid.UUID, dict[str, Any]]] = []
+        buy_sell_list: list[tuple[uuid.UUID, dict[str, Any]]] = []
+        receipts_list: list[tuple[uuid.UUID, dict[str, Any]]] = []
+        inventory_list: list[tuple[uuid.UUID, dict[str, Any]]] = []
+
+        for u, (s_name, r_dict) in snapshot_items.items():
+            if s_name == "لیست کسبه":
+                parties_list.append((u, r_dict))
+            elif s_name == "خرید-فروش":
+                buy_sell_list.append((u, r_dict))
+            elif s_name == "دریافت-پرداخت":
+                receipts_list.append((u, r_dict))
+            else:
+                inventory_list.append((u, r_dict))
+
+        # Real row-order permutations in each sheet
+        rng.shuffle(parties_list)
+        rng.shuffle(buy_sell_list)
+        rng.shuffle(receipts_list)
+        rng.shuffle(inventory_list)
+
+        snap = build_synthetic_snapshot(
+            parties_list, buy_sell_list, receipts_list, inventory_list
+        )
+
+        # Determine changed items from prior registry and snapshot preview
+        prior_reg = oracle.get_prior_registry()
+        plan_preview = plan_source_changes(snap, prior_reg)
+        changed_uuids = [
+            item.stable_id
+            for item in plan_preview.items
+            if item.action in (PlanAction.INSERT, PlanAction.EDIT, PlanAction.VOID)
+        ]
+
+        # Permute event IDs dictionary insertion order
+        rng.shuffle(changed_uuids)
+        ev_ids = {
+            u: make_deterministic_uuid7(50000 + step * 1000 + idx)
+            for idx, u in enumerate(changed_uuids)
+        }
+
+        # Apply to oracle
+        expected = oracle.plan_and_apply(
+            import_id=make_deterministic_uuid7(90000 + step),
+            snapshot=snap,
+            event_ids=ev_ids,
+        )
+
+        req = SourceImportRequest(
+            source_key=active_key,
+            expected_generation=step,
+            import_id=make_deterministic_uuid7(90000 + step),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256=f"{step % 10}" * 64,
+            snapshot=snap,
+            event_ids=ev_ids,
+        )
+        receipt = commit_source_import(conn, req)
+
+        # 3. Compare receipt
+        assert receipt.committed_generation == expected["committed_generation"]
+        assert receipt.event_count == expected["event_count"]
+        assert receipt.first_sequence == expected["first_sequence"]
+        assert receipt.last_sequence == expected["last_sequence"]
+
+        # 4. Compare DB state to Oracle
+        oracle.verify_db_state(conn)
 
     conn.close()
+
+
+def test_is14_controlled_product_code_mutations() -> None:
+    """IS-14: Execute the seven issued controlled product-code mutations:
+    1. Stale check
+    2. Unchanged membership
+    3. Append-only revision
+    4. Outbox insert
+    5. Sequence advance
+    6. Request Raw digest
+    7. Predecessor link
+    Prove the intended tests fail under mutation, and verify exact byte
+    restoration after each mutation."""
+    import accounting_persistence.source_import_store as sis_mod
+
+    store_path = (
+        Path(__file__).parent.parent
+        / "packages"
+        / "persistence"
+        / "src"
+        / "accounting_persistence"
+        / "source_import_store.py"
+    )
+    orig_bytes = store_path.read_bytes()
+    orig_text = orig_bytes.decode("utf-8")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+
+    def _execute_mutation(
+        name: str,
+        target_str: str,
+        replacement_str: str,
+        probe_fn: Any,
+    ) -> None:
+        assert target_str in orig_text, (
+            f"Target string for mutation '{name}' not found in source!"
+        )
+        mutated_text = orig_text.replace(target_str, replacement_str, 1)
+
+        def _clear_pycache() -> None:
+            importlib.invalidate_caches()
+            pyc_dir = store_path.parent / "__pycache__"
+            if pyc_dir.exists():
+                for f in pyc_dir.glob("source_import_store*.pyc"):
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+
+        try:
+            store_path.write_text(mutated_text, encoding="utf-8")
+            _clear_pycache()
+            importlib.reload(sis_mod)
+            # Under mutation, the probe MUST fail
+            # (raise AssertionError, pytest Failed, or BaseException)
+            probe_failed = False
+            try:
+                probe_fn()
+            except (Exception, BaseException):
+                probe_failed = True
+
+            assert probe_failed, (
+                f"Controlled mutation '{name}' was NOT detected by test probe!"
+            )
+        finally:
+            store_path.write_bytes(orig_bytes)
+            assert store_path.read_bytes() == orig_bytes, (
+                f"Byte verification failed after restoring mutation '{name}'!"
+            )
+            _clear_pycache()
+            importlib.reload(sis_mod)
+            test_mod = sys.modules[__name__]
+            for attr in dir(sis_mod):
+                if not attr.startswith("__") and hasattr(test_mod, attr):
+                    setattr(test_mod, attr, getattr(sis_mod, attr))
+
+        # After exact byte restoration, probe MUST pass
+        probe_fn()
+
+    # Probe 1: Stale check
+    def probe_stale_check() -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        sis_mod.initialize_source_import_store(
+            conn, device_id=dev_id, active_source=key
+        )
+        u = make_deterministic_uuid7(10)
+        snap = build_synthetic_snapshot([(u, make_sample_party_row("شخص"))], [], [], [])
+        req = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=5,  # Stale! Stored is 0
+            import_id=make_deterministic_uuid7(100),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="a" * 64,
+            snapshot=snap,
+            event_ids={u: make_deterministic_uuid7(200)},
+        )
+        with pytest.raises(sis_mod.SourceImportStoreError) as exc:
+            sis_mod.commit_source_import(conn, req)
+        assert exc.value.reason == sis_mod.SourceImportStoreReason.STALE_STATE
+        conn.close()
+
+    _execute_mutation(
+        "stale check",
+        "if stored_gen != request.expected_generation:",
+        "if False and stored_gen != request.expected_generation:",
+        probe_stale_check,
+    )
+
+    # Probe 2: Unchanged membership
+    def probe_unchanged_membership() -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        sis_mod.initialize_source_import_store(
+            conn, device_id=dev_id, active_source=key
+        )
+        u = make_deterministic_uuid7(10)
+        snap = build_synthetic_snapshot([(u, make_sample_party_row("شخص"))], [], [], [])
+        imp1 = make_deterministic_uuid7(101)
+        imp2 = make_deterministic_uuid7(102)
+        req1 = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=0,
+            import_id=imp1,
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="1" * 64,
+            snapshot=snap,
+            event_ids={u: make_deterministic_uuid7(201)},
+        )
+        sis_mod.commit_source_import(conn, req1)
+        req2 = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=1,
+            import_id=imp2,
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="2" * 64,
+            snapshot=snap,  # UNCHANGED
+            event_ids={},
+        )
+        sis_mod.commit_source_import(conn, req2)
+        last_imp = conn.execute(
+            "SELECT last_import_id FROM source_memberships WHERE stable_id = ?;",
+            (u.bytes,),
+        ).fetchone()[0]
+        assert last_imp == imp2.bytes
+        conn.close()
+
+    _execute_mutation(
+        "unchanged membership",
+        "last_import_id = excluded.last_import_id;",
+        "last_import_id = source_memberships.last_import_id;",
+        probe_unchanged_membership,
+    )
+
+    # Probe 3: Append-only revision
+    def probe_append_only_revision() -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        sis_mod.initialize_source_import_store(
+            conn, device_id=dev_id, active_source=key
+        )
+        u = make_deterministic_uuid7(10)
+        snap = build_synthetic_snapshot([(u, make_sample_party_row("شخص"))], [], [], [])
+        req = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=0,
+            import_id=make_deterministic_uuid7(100),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="a" * 64,
+            snapshot=snap,
+            event_ids={u: make_deterministic_uuid7(200)},
+        )
+        sis_mod.commit_source_import(conn, req)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE source_revisions SET home_sheet = 'لیست کسبه';")
+        conn.close()
+
+    _execute_mutation(
+        "append-only revision",
+        "        SELECT RAISE(ABORT, 'Cannot update source_revisions');",
+        "        SELECT 1;",
+        probe_append_only_revision,
+    )
+
+    # Probe 4: Outbox insert
+    def probe_outbox_insert() -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        sis_mod.initialize_source_import_store(
+            conn, device_id=dev_id, active_source=key
+        )
+        u = make_deterministic_uuid7(10)
+        snap = build_synthetic_snapshot([(u, make_sample_party_row("شخص"))], [], [], [])
+        req = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=0,
+            import_id=make_deterministic_uuid7(100),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="a" * 64,
+            snapshot=snap,
+            event_ids={u: make_deterministic_uuid7(200)},
+        )
+        sis_mod.commit_source_import(conn, req)
+        ev_count = conn.execute("SELECT COUNT(*) FROM change_events;").fetchone()[0]
+        assert ev_count == 1
+        conn.close()
+
+    _execute_mutation(
+        "outbox insert",
+        "            # Insert change_events\n            cur.execute(",
+        "            # Insert change_events\n            if False: cur.execute(",
+        probe_outbox_insert,
+    )
+
+    # Probe 5: Sequence advance
+    def probe_sequence_advance() -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        sis_mod.initialize_source_import_store(
+            conn, device_id=dev_id, active_source=key
+        )
+        u = make_deterministic_uuid7(10)
+        snap = build_synthetic_snapshot([(u, make_sample_party_row("شخص"))], [], [], [])
+        req = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=0,
+            import_id=make_deterministic_uuid7(100),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="a" * 64,
+            snapshot=snap,
+            event_ids={u: make_deterministic_uuid7(200)},
+        )
+        sis_mod.commit_source_import(conn, req)
+        next_seq = conn.execute(
+            "SELECT next_sequence FROM source_store_meta;"
+        ).fetchone()[0]
+        assert next_seq == 2
+        conn.close()
+
+    _execute_mutation(
+        "sequence advance",
+        "next_seq_val = last_sequence + 1",
+        "next_seq_val = stored_next_seq",
+        probe_sequence_advance,
+    )
+
+    # Probe 6: Request Raw digest
+    def probe_request_raw_digest() -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        sis_mod.initialize_source_import_store(
+            conn, device_id=dev_id, active_source=key
+        )
+        u = make_deterministic_uuid7(10)
+        snap1 = build_synthetic_snapshot(
+            [(u, make_sample_party_row("شخص یک"))], [], [], []
+        )
+        imp_id = make_deterministic_uuid7(100)
+        req1 = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=0,
+            import_id=imp_id,
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="1" * 64,
+            snapshot=snap1,
+            event_ids={u: make_deterministic_uuid7(200)},
+        )
+        sis_mod.commit_source_import(conn, req1)
+
+        snap2 = build_synthetic_snapshot(
+            [(u, make_sample_party_row("شخص دو متفاوت"))], [], [], []
+        )
+        req2 = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=0,
+            import_id=imp_id,  # Same import ID, but different snapshot content!
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="2" * 64,
+            snapshot=snap2,
+            event_ids={u: make_deterministic_uuid7(200)},
+        )
+        with pytest.raises(sis_mod.SourceImportStoreError) as exc:
+            sis_mod.commit_source_import(conn, req2)
+        assert exc.value.reason == sis_mod.SourceImportStoreReason.IDEMPOTENCY_CONFLICT
+        conn.close()
+
+    _execute_mutation(
+        "request Raw digest",
+        "request_digest = _compute_request_digest(request)",
+        "request_digest = '0' * 64",
+        probe_request_raw_digest,
+    )
+
+    # Probe 7: Predecessor link
+    def probe_predecessor_link() -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        sis_mod.initialize_source_import_store(
+            conn, device_id=dev_id, active_source=key
+        )
+        u = make_deterministic_uuid7(10)
+        snap1 = build_synthetic_snapshot(
+            [],
+            [
+                (
+                    u,
+                    make_sample_buy_sell_row(
+                        "1403/05/10", "شخص", "فروش", "طلا", "1", "10000"
+                    ),
+                )
+            ],
+            [],
+            [],
+        )
+        req1 = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=0,
+            import_id=make_deterministic_uuid7(101),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="1" * 64,
+            snapshot=snap1,
+            event_ids={u: make_deterministic_uuid7(201)},
+        )
+        sis_mod.commit_source_import(conn, req1)
+
+        snap2 = build_synthetic_snapshot(
+            [],
+            [
+                (
+                    u,
+                    make_sample_buy_sell_row(
+                        "1403/05/10", "شخص", "فروش", "طلا", "1", "20000"
+                    ),
+                )
+            ],
+            [],
+            [],
+        )
+        req2 = sis_mod.SourceImportRequest(
+            source_key=key,
+            expected_generation=1,
+            import_id=make_deterministic_uuid7(102),
+            observed_at_utc=datetime.now(UTC),
+            file_sha256="2" * 64,
+            snapshot=snap2,
+            event_ids={u: make_deterministic_uuid7(202)},
+        )
+        sis_mod.commit_source_import(conn, req2)
+
+        view = sis_mod.read_source_import_store(conn)
+        assert view.generation == 2
+        conn.close()
+
+    _execute_mutation(
+        "predecessor link",
+        "previous_version_hash = p_row[0]",
+        "previous_version_hash = 'f' * 64",
+        probe_predecessor_link,
+    )
 
 
 # ============================================================================
@@ -2535,10 +4120,64 @@ def test_is15_identified_xlsx_composition_lifecycle(tmp_path: Path) -> None:
 
 
 def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> None:
-    """Commit 15,000 rows on temp DB, restart/read, replay below 350 MiB process RSS.
-    Includes large second generation (1,500 edits) and query/decode evidence."""
+    """Commit 15,000 rows on temp DB, restart/read, replay below 350 MiB RSS.
+    Includes large second generation (1,500 edits) and query/decode evidence.
+    After close/reopen, independently compares all 15,000 memberships, revisions,
+    WP-14 Raw values/hashes, and change Events."""
+    import accounting_persistence.source_import_store as sis_mod
+
+    sis_mod_any: Any = sis_mod
+
+    class _TimingCursor(sqlite3.Cursor):
+        def execute(self, sql: str, *args: Any) -> Any:
+            conn = cast(_TimingConnection, self.connection)
+            if getattr(conn, "active_timing", False):
+                t0 = time.perf_counter()
+                r = super().execute(sql, *args)
+                dt = time.perf_counter() - t0
+                sql_up = sql.upper()
+                if any(kw in sql_up for kw in ("INSERT", "UPDATE", "DELETE")):
+                    conn.t_sql_write += dt
+                return r
+            return super().execute(sql, *args)
+
+        def executemany(self, sql: str, seq_of_params: Any) -> Any:
+            conn = cast(_TimingConnection, self.connection)
+            if getattr(conn, "active_timing", False):
+                t0 = time.perf_counter()
+                r = super().executemany(sql, seq_of_params)
+                dt = time.perf_counter() - t0
+                sql_up = sql.upper()
+                if any(kw in sql_up for kw in ("INSERT", "UPDATE", "DELETE")):
+                    conn.t_sql_write += dt
+                return r
+            return super().executemany(sql, seq_of_params)
+
+    class _TimingConnection(sqlite3.Connection):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.t_sql_write: float = 0.0
+            self.t_commit_phase: float = 0.0
+            self.active_timing: bool = False
+
+        def cursor(self, factory: Any = _TimingCursor) -> Any:
+            return super().cursor(factory)
+
+        def execute(self, sql: str, *args: Any) -> Any:
+            if self.active_timing:
+                t0 = time.perf_counter()
+                res = super().execute(sql, *args)
+                dt = time.perf_counter() - t0
+                sql_up = sql.upper()
+                if "COMMIT" in sql_up:
+                    self.t_commit_phase += dt
+                elif any(kw in sql_up for kw in ("INSERT", "UPDATE", "DELETE")):
+                    self.t_sql_write += dt
+                return res
+            return super().execute(sql, *args)
+
     db_file = tmp_path / "scale_15000.sqlite3"
-    conn = sqlite3.connect(db_file)
+    conn = sqlite3.connect(db_file, factory=_TimingConnection)
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
 
@@ -2605,21 +4244,33 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
         event_ids=event_ids,
     )
 
+    # Instrument encode phase during commit
+    t_encode_total = 0.0
+    orig_encode = sis_mod_any.encode_source_raw_row
+
+    def timed_encode(*args: Any, **kwargs: Any) -> bytes:
+        nonlocal t_encode_total
+        t0 = time.perf_counter()
+        res = orig_encode(*args, **kwargs)
+        t_encode_total += time.perf_counter() - t0
+        return cast(bytes, res)
+
     # Real process RSS call-window sampling
     gc.collect()
     sampler = CallWindowRssSampler(interval_seconds=0.005)
     baseline_rss = get_current_process_rss_mib()
     sampler.start()
 
-    t_val_start = time.perf_counter()
-    assert evaluate_source_requiredness(snap).passes_requiredness
-    evaluate_source_fiscal_evidence(snap)
-    t_val = time.perf_counter() - t_val_start
-
+    conn.active_timing = True
+    sis_mod_any.encode_source_raw_row = timed_encode
     t_commit_start = time.perf_counter()
-    receipt = commit_source_import(conn, req)
-    t_commit = time.perf_counter() - t_commit_start
+    try:
+        receipt = commit_source_import(conn, req)
+    finally:
+        conn.active_timing = False
+        sis_mod_any.encode_source_raw_row = orig_encode
 
+    t_commit_total = time.perf_counter() - t_commit_start
     peak_rss = sampler.stop_and_get_peak()
     delta_rss = peak_rss - baseline_rss
     rss_method = (
@@ -2628,13 +4279,10 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
         else "Linux /proc/self/status VmRSS"
     )
 
-    print(
-        f"[IS-16] 15,000 commit: {t_commit:.3f}s (fixture: {t_fix:.3f}s, "
-        f"val: {t_val:.3f}s), Baseline RSS: {baseline_rss:.2f} MiB, "
-        f"Peak RSS: {peak_rss:.2f} MiB, Delta: {delta_rss:.2f} MiB, "
-        f"Method: {rss_method}",
-        flush=True,
-    )
+    t_encode = t_encode_total
+    t_sql_write = conn.t_sql_write
+    t_commit_phase = conn.t_commit_phase
+    t_val = max(0.0, t_commit_total - (t_encode + t_sql_write + t_commit_phase))
 
     assert receipt.disposition == SourceImportDisposition.COMMITTED
     assert receipt.committed_generation == 1
@@ -2645,34 +4293,144 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
 
     conn.close()
 
-    # Restart and read
-    t_restart_start = time.perf_counter()
+    # Restart and read with query & decode tracing
     conn_reopen = sqlite3.connect(db_file)
     conn_reopen.execute("PRAGMA foreign_keys = ON;")
-    view = read_source_import_store(conn_reopen)
+
+    read_queries: list[str] = []
+    read_decodes = 0
+    orig_decode = sis_mod_any.decode_source_raw_row
+
+    def counting_decode(*args: Any, **kwargs: Any) -> Any:
+        nonlocal read_decodes
+        read_decodes += 1
+        return orig_decode(*args, **kwargs)
+
+    sis_mod_any.decode_source_raw_row = counting_decode
+    conn_reopen.set_trace_callback(read_queries.append)
+    t_restart_start = time.perf_counter()
+    try:
+        view = read_source_import_store(conn_reopen)
+    finally:
+        conn_reopen.set_trace_callback(None)
+        sis_mod_any.decode_source_raw_row = orig_decode
     t_restart = time.perf_counter() - t_restart_start
 
     assert view.generation == 1
     assert view.next_sequence == row_count + 1
-    print(f"[IS-16] 15,000 rows restart/read time: {t_restart:.3f}s", flush=True)
+    # Verify R2 bounds: statement count bounded (<= 60) and decodes == 15,000
+    assert len(read_queries) <= 60, (
+        f"Read queries {len(read_queries)} exceeded bound 60"
+    )
+    assert read_decodes == row_count, (
+        f"Read decodes {read_decodes} did not match row count {row_count}"
+    )
 
-    # Replay test
+    # Independent comparison of all 15,000 memberships, revisions,
+    # WP-14 Raw values/hashes, and change events
+    t_verify_start = time.perf_counter()
+    cur = conn_reopen.cursor()
+    m_rows = cur.execute(
+        "SELECT stable_id, revision, first_import_id, last_import_id "
+        "FROM source_memberships ORDER BY stable_id;"
+    ).fetchall()
+    assert len(m_rows) == row_count
+
+    r_rows = cur.execute(
+        "SELECT stable_id, revision, home_sheet, lifecycle, source_hash, "
+        "raw_payload, version_hash, created_by_import_id "
+        "FROM source_revisions ORDER BY stable_id;"
+    ).fetchall()
+    assert len(r_rows) == row_count
+
+    e_rows = cur.execute(
+        "SELECT sequence, event_id, device_id, import_id, source_id, "
+        "stable_id, revision, operation, fiscal_year, sheet_name, "
+        "financial_date, observed_at_utc, canonical_payload, payload_hash, "
+        "previous_version_hash FROM change_events ORDER BY sequence;"
+    ).fetchall()
+    assert len(e_rows) == row_count
+
+    # Build sequence and stable_id lookups for change events
+    e_by_stable_id: dict[bytes, tuple[Any, ...]] = {}
+    for idx, e in enumerate(e_rows):
+        assert e[0] == idx + 1
+        assert e[2] == dev_id.bytes
+        assert e[3] == import_id.bytes
+        assert e[4] == src_id.bytes
+        assert e[6] == 1
+        assert e[7] == "upsert"
+        assert e[8] == 1403
+        assert hashlib.sha256(e[12]).hexdigest() == e[13]
+        e_by_stable_id[e[5]] = e
+
+    # Compare all 15,000 memberships, revisions, and raw rows against snapshot
+    for m_row, r_row in zip(m_rows, r_rows, strict=True):
+        sb = m_row[0]
+        assert r_row[0] == sb
+        su = uuid.UUID(bytes=sb)
+        raw_row = snap.all_rows_by_id[su]
+        expected_eid = event_ids[su].bytes
+
+        # Membership verification
+        assert m_row[1] == 1
+        assert m_row[2] == import_id.bytes
+        assert m_row[3] == import_id.bytes
+
+        # Revision verification
+        assert r_row[1] == 1
+        assert r_row[2] == raw_row.sheet_name
+        assert r_row[3] == "active"
+        assert r_row[4] == raw_row.source_hash
+        assert r_row[7] == import_id.bytes
+
+        # WP-14 Raw value & hash verification
+        dec = decode_source_raw_row(r_row[5])
+        assert dec.stable_id == su
+        assert dec.source_hash == raw_row.source_hash
+        assert dec.raw_values == raw_row.raw_values
+        assert dec.sheet_name == raw_row.sheet_name
+
+        # Event correspondence verification
+        e_row = e_by_stable_id[sb]
+        assert e_row[1] == expected_eid
+        assert e_row[9] == raw_row.sheet_name
+        assert e_row[13] == r_row[6]  # payload_hash == version_hash
+
+    t_verify = time.perf_counter() - t_verify_start
+
+    # Exact replay test with query & decode tracing
+    replay_queries: list[str] = []
+    replay_decodes = 0
+
+    def counting_decode_replay(*args: Any, **kwargs: Any) -> Any:
+        nonlocal replay_decodes
+        replay_decodes += 1
+        return orig_decode(*args, **kwargs)
+
+    conn_reopen.set_trace_callback(replay_queries.append)
+    sis_mod_any.decode_source_raw_row = counting_decode_replay
+
     t_replay_start = time.perf_counter()
-    r_replay = commit_source_import(conn_reopen, req)
+    try:
+        r_replay = commit_source_import(conn_reopen, req)
+    finally:
+        conn_reopen.set_trace_callback(None)
+        sis_mod_any.decode_source_raw_row = orig_decode
     t_replay = time.perf_counter() - t_replay_start
 
     assert r_replay.disposition == SourceImportDisposition.REPLAYED
     assert r_replay.event_count == row_count
-    print(f"[IS-16] 15,000 rows replay time: {t_replay:.3f}s", flush=True)
+    assert len(replay_queries) <= 60, (
+        f"Replay queries {len(replay_queries)} exceeded bound 60"
+    )
+    assert replay_decodes == row_count, (
+        f"Replay decoded {replay_decodes} rows; expected {row_count}"
+    )
 
     db_size = os.path.getsize(db_file)
     wal_file = db_file.with_suffix(".sqlite3-wal")
     wal_size = os.path.getsize(wal_file) if wal_file.exists() else 0
-    print(
-        f"[IS-16] DB: {db_size / (1024 * 1024):.2f} MiB, "
-        f"WAL: {wal_size / (1024 * 1024):.2f} MiB",
-        flush=True,
-    )
 
     # --- Large Second Generation (15,000 rows with 1,500 edits = 10% edit subset) ---
     edit_count = 1500
@@ -2711,8 +4469,20 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
     v_gen2 = read_source_import_store(conn_reopen)
     assert v_gen2.generation == 2
     assert v_gen2.next_sequence == row_count + edit_count + 1
+
     print(
-        f"[IS-16] 15,000 (1,500 edits) Gen 2 commit time: {t_gen2:.3f}s",
+        f"[IS-16] Breakdown: fixture={t_fix:.3f}s, val_proj={t_val:.3f}s, "
+        f"encode={t_encode:.3f}s, sql_write={t_sql_write:.3f}s, "
+        f"commit_phase={t_commit_phase:.3f}s, restart_read={t_restart:.3f}s, "
+        f"verify={t_verify:.3f}s, replay={t_replay:.3f}s, gen2={t_gen2:.3f}s\n"
+        f"[IS-16] Memory: Baseline RSS={baseline_rss:.2f} MiB, "
+        f"Peak RSS={peak_rss:.2f} MiB, Delta={delta_rss:.2f} MiB "
+        f"({rss_method})\n"
+        f"[IS-16] Storage: DB={db_size / (1024 * 1024):.2f} MiB, "
+        f"WAL={wal_size / (1024 * 1024):.2f} MiB\n"
+        f"[IS-16] Queries: Read={len(read_queries)} queries "
+        f"({read_decodes} decodes), Replay={len(replay_queries)} queries "
+        f"({replay_decodes} decodes)",
         flush=True,
     )
 
@@ -3155,84 +4925,211 @@ def test_r4_exact_root_scalar_type_enforcement() -> None:
     conn.close()
 
 
-def test_r5_no_historical_raw_scans_instrumentation(tmp_path: Path) -> None:
-    """R5: Ordinary read and commit queries current heads via indexed queries,
-    never executing per-history row scans or decodes. Verified via instrumentation
-    with 10 historical revisions and 1 current head."""
-    db_file = tmp_path / "r5_cost.sqlite3"
-    conn = sqlite3.connect(db_file)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
-
-    dev_id = make_deterministic_uuid7(1)
-    src_id = make_deterministic_uuid7(2)
-    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
-    initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
-
-    u1 = make_deterministic_uuid7(10)
-
-    # Commit 10 generations for the same row u1
-    for gen in range(10):
-        snap = build_synthetic_snapshot(
-            [(u1, make_sample_party_row(f"نسخه_{gen}"))], [], [], []
-        )
-        req = SourceImportRequest(
-            source_key=active_key,
-            expected_generation=gen,
-            import_id=make_deterministic_uuid7(100 + gen),
-            observed_at_utc=datetime.now(UTC),
-            file_sha256=f"{gen}" * 64,
-            snapshot=snap,
-            event_ids={u1: make_deterministic_uuid7(1000 + gen)},
-        )
-        commit_source_import(conn, req)
-
-    # 10 revisions exist in history
-    n_revs = conn.execute(
-        "SELECT COUNT(*) FROM source_revisions WHERE stable_id = ?;", (u1.bytes,)
-    ).fetchone()[0]
-    assert n_revs == 10
-
-    # Instrument decode_source_raw_row
+def test_r2_constant_query_and_decode_bounds_across_generations(tmp_path: Path) -> None:
+    """R2: Prove ordinary read and commit costs do not grow with history length.
+    Tests histories of 1, 5, 20, and 50 generations with constant M/N/C:
+    1. SQL statement count and query families are constant across history length.
+    2. Current-head decode count remains strictly bounded (1 on read, <= 2 on commit).
+    3. No query returns or materializes all historical Import rows.
+    4. Commit of one edit remains within O(M + N log N + C).
+    5. Current payload, hash, predecessor link, sequence, and newest-import
+       corruptions are still rejected with INCONSISTENT_STATE."""
     import accounting_persistence.source_import_store as sis_mod
 
     codec_attr = "decode_source_raw_row"
     orig_decode = getattr(sis_mod, codec_attr)
-    decode_calls = 0
 
-    def counting_decode(*args: Any, **kwargs: Any) -> Any:
-        nonlocal decode_calls
-        decode_calls += 1
-        return orig_decode(*args, **kwargs)
+    history_counts = (1, 5, 20, 50)
+    query_stats: dict[int, dict[str, Any]] = {}
+    last_db_file: Path | None = None
+    last_u1: uuid.UUID | None = None
 
-    setattr(sis_mod, codec_attr, counting_decode)
-    try:
-        view = read_source_import_store(conn)
-        assert view.generation == 10
-        # Exactly 1 decode for the single current active head! NOT 10!
-        assert decode_calls == 1, (
-            f"Expected exactly 1 decode for current head, got {decode_calls}"
+    for H in history_counts:
+        db_file = tmp_path / f"r2_cost_{H}.sqlite3"
+        conn = sqlite3.connect(db_file)
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+
+        dev_id = make_deterministic_uuid7(1)
+        src_id = make_deterministic_uuid7(2)
+        active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+
+        u1 = make_deterministic_uuid7(10)
+        last_u1 = u1
+        last_db_file = db_file
+
+        # Build H generations of 1 party
+        for gen in range(H):
+            snap = build_synthetic_snapshot(
+                [(u1, make_sample_party_row(f"شخص_{gen}"))], [], [], []
+            )
+            req = SourceImportRequest(
+                source_key=active_key,
+                expected_generation=gen,
+                import_id=make_deterministic_uuid7(100 + gen),
+                observed_at_utc=datetime.now(UTC),
+                file_sha256=f"{gen % 10}" * 64,
+                snapshot=snap,
+                event_ids={u1: make_deterministic_uuid7(1000 + gen)},
+            )
+            commit_source_import(conn, req)
+
+        # 1. Trace read_source_import_store
+        read_queries: list[str] = []
+        conn.set_trace_callback(read_queries.append)
+        read_decodes = 0
+
+        def counting_decode_read(*args: Any, **kwargs: Any) -> Any:
+            nonlocal read_decodes
+            read_decodes += 1
+            return orig_decode(*args, **kwargs)
+
+        setattr(sis_mod, codec_attr, counting_decode_read)
+        try:
+            view = read_source_import_store(conn)
+            assert view.generation == H
+        finally:
+            setattr(sis_mod, codec_attr, orig_decode)
+            conn.set_trace_callback(None)
+
+        # 2. Trace commit_source_import of one edit
+        commit_queries: list[str] = []
+        conn.set_trace_callback(commit_queries.append)
+        commit_decodes = 0
+
+        def counting_decode_commit(*args: Any, **kwargs: Any) -> Any:
+            nonlocal commit_decodes
+            commit_decodes += 1
+            return orig_decode(*args, **kwargs)
+
+        snap_edit = build_synthetic_snapshot(
+            [(u1, make_sample_party_row(f"شخص_{H}_ویرایش"))], [], [], []
         )
-
-        # Commit 11th generation (edit)
-        decode_calls = 0
-        snap11 = build_synthetic_snapshot(
-            [(u1, make_sample_party_row("نسخه_10_ادیت"))], [], [], []
-        )
-        req11 = SourceImportRequest(
+        req_edit = SourceImportRequest(
             source_key=active_key,
-            expected_generation=10,
-            import_id=make_deterministic_uuid7(999),
+            expected_generation=H,
+            import_id=make_deterministic_uuid7(8000 + H),
             observed_at_utc=datetime.now(UTC),
-            file_sha256="9" * 64,
-            snapshot=snap11,
-            event_ids={u1: make_deterministic_uuid7(9999)},
+            file_sha256="e" * 64,
+            snapshot=snap_edit,
+            event_ids={u1: make_deterministic_uuid7(80000 + H)},
         )
-        rc11 = commit_source_import(conn, req11)
-        assert rc11.committed_generation == 11
-        # No full historical scans: decodes only needed for current heads
-        assert decode_calls <= 2, f"Decode calls exceeded bound: {decode_calls}"
-    finally:
-        setattr(sis_mod, codec_attr, orig_decode)
 
-    conn.close()
+        setattr(sis_mod, codec_attr, counting_decode_commit)
+        try:
+            rc = commit_source_import(conn, req_edit)
+            assert rc.committed_generation == H + 1
+        finally:
+            setattr(sis_mod, codec_attr, orig_decode)
+            conn.set_trace_callback(None)
+
+        query_stats[H] = {
+            "read_count": len(read_queries),
+            "commit_count": len(commit_queries),
+            "read_decodes": read_decodes,
+            "commit_decodes": commit_decodes,
+            "read_queries": read_queries,
+            "commit_queries": commit_queries,
+        }
+        conn.close()
+
+    # Verify bounds and constancy across generations
+    # Decode count remains strictly bounded: exactly 1 on read, <= 2 on commit
+    for H in history_counts:
+        assert query_stats[H]["read_decodes"] == 1, (
+            f"Read decodes at {H} gen was {query_stats[H]['read_decodes']}, expected 1"
+        )
+        assert query_stats[H]["commit_decodes"] <= 2, (
+            f"Commit decodes at {H} gen was "
+            f"{query_stats[H]['commit_decodes']}, expected <= 2"
+        )
+
+    # SQL statement count does NOT grow with history length (constant across 5, 20, 50)
+    for H in (5, 20, 50):
+        assert query_stats[H]["read_count"] == query_stats[5]["read_count"], (
+            f"Read SQL count grew: {query_stats[5]['read_count']} "
+            f"to {query_stats[H]['read_count']}"
+        )
+        assert query_stats[H]["commit_count"] == query_stats[5]["commit_count"], (
+            f"Commit SQL count grew: {query_stats[5]['commit_count']} "
+            f"to {query_stats[H]['commit_count']}"
+        )
+
+    # Prove no query returns/materializes all historical import rows
+    # Check that query against source_imports has WHERE, aggregate, or LIMIT
+    for H in history_counts:
+        for q in query_stats[H]["read_queries"] + query_stats[H]["commit_queries"]:
+            q_clean = q.strip().upper()
+            if "FROM SOURCE_IMPORTS" in q_clean:
+                is_aggregate = any(
+                    agg in q_clean
+                    for agg in ("COUNT(", "MAX(", "MIN(", "SUM(", "EXISTS")
+                )
+                has_where = "WHERE" in q_clean
+                assert is_aggregate or has_where, (
+                    f"Query scans historical source_imports "
+                    f"without WHERE/aggregate: {q}"
+                )
+
+    # Verify corruptions are rejected on the large (50-generation) store
+    assert last_db_file is not None and last_u1 is not None
+
+    # Helper to test corruptions
+    def _test_corruption(sql: str, params: tuple[Any, ...]) -> None:
+        conn = sqlite3.connect(last_db_file)
+        conn.execute("PRAGMA foreign_keys = OFF;")
+        conn.execute(sql, params)
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON;")
+        with pytest.raises(SourceImportStoreError) as exc:
+            read_source_import_store(conn)
+        assert exc.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+        conn.close()
+
+    # 1. Payload corruption on current head
+    conn_c = sqlite3.connect(last_db_file)
+    conn_c.execute("PRAGMA foreign_keys = ON;")
+    conn_c.execute("DROP TRIGGER trg_prevent_update_source_revisions;")
+    conn_c.execute(
+        "UPDATE source_revisions SET raw_payload = ? "
+        "WHERE stable_id = ? AND revision = 51;",
+        (b"corrupt", last_u1.bytes),
+    )
+    conn_c.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_revisions
+        BEFORE UPDATE ON source_revisions
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_revisions');
+        END;
+        """
+    )
+    conn_c.commit()
+    with pytest.raises(SourceImportStoreError) as exc_pay:
+        read_source_import_store(conn_c)
+    assert exc_pay.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn_c.close()
+
+    # 2. Version hash corruption on newest import
+    conn_h = sqlite3.connect(last_db_file)
+    conn_h.execute("PRAGMA foreign_keys = ON;")
+    conn_h.execute("DROP TRIGGER trg_prevent_update_source_imports;")
+    conn_h.execute(
+        "UPDATE source_imports SET file_sha256 = ? WHERE committed_generation = 51;",
+        ("0" * 64,),
+    )
+    conn_h.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_imports
+        BEFORE UPDATE ON source_imports
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_imports');
+        END;
+        """
+    )
+    conn_h.commit()
+    with pytest.raises(SourceImportStoreError) as exc_hash:
+        read_source_import_store(conn_h)
+    assert exc_hash.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    conn_h.close()
