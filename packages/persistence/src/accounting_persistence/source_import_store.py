@@ -1059,6 +1059,32 @@ def _raw_cursor(connection: sqlite3.Connection) -> sqlite3.Cursor:
     return cur
 
 
+def _validate_canonical_utc_iso(obs_str: str) -> datetime:
+    """Validate that a stored observation timestamp is a canonical UTC ISO 8601 string.
+
+    Rejects non-string, length < 20, missing UTC suffix (+00:00 or Z), unparseable,
+    impossible calendar dates, and non-canonical format spellings.
+    """
+    if not isinstance(obs_str, str) or len(obs_str) < 20:
+        raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+    if not (obs_str.endswith("+00:00") or obs_str.endswith("Z")):
+        raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+    try:
+        dt = datetime.fromisoformat(obs_str)
+    except Exception as exc:
+        raise SourceImportStoreError(
+            SourceImportStoreReason.INCONSISTENT_STATE
+        ) from exc
+    if dt.tzinfo is None or dt.utcoffset() != timedelta(0):
+        raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+
+    expected_plus = dt.isoformat()
+    expected_z = expected_plus.replace("+00:00", "Z")
+    if obs_str != expected_plus and obs_str != expected_z:
+        raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
+    return dt
+
+
 def _verify_caller_connection(connection: sqlite3.Connection) -> None:
     """Ensure caller foreign_keys PRAGMA is ON."""
     cur = _raw_cursor(connection)
@@ -1093,6 +1119,8 @@ def _handle_transaction_failure(
     if not isinstance(primary_exc, Exception):
         raise primary_exc
     if isinstance(primary_exc, SourceImportStoreError):
+        raise primary_exc
+    if isinstance(primary_exc, (ExceptionGroup, BaseExceptionGroup)):
         raise primary_exc
     raise SourceImportStoreError(
         SourceImportStoreReason.STORAGE_FAILURE
@@ -1426,14 +1454,7 @@ def _read_source_import_store_internal(
         if latest_imp_row is None:
             raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
         lat_iid, lat_sid, lat_fyr, lat_obs, lat_sha, lat_dig = latest_imp_row
-        try:
-            parsed_obs = datetime.fromisoformat(lat_obs)
-            if parsed_obs.tzinfo is None or parsed_obs.utcoffset() != timedelta(0):
-                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
-        except Exception:
-            raise SourceImportStoreError(
-                SourceImportStoreReason.INCONSISTENT_STATE
-            ) from None
+        _validate_canonical_utc_iso(lat_obs)
 
         # (n) source_bindings last_import_id alignment
         bad_binding_last = cur.execute(
@@ -1609,7 +1630,22 @@ def _read_source_import_store_internal(
             if s_uuid.version != 7 or s_uuid.variant != uuid.RFC_4122:
                 raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
-            if len(first_imp_id) != 16 or len(last_imp_id) != 16 or len(c_imp_id) != 16:
+            try:
+                c_imp_uuid = uuid.UUID(bytes=c_imp_id)
+                first_imp_uuid = uuid.UUID(bytes=first_imp_id)
+                last_imp_uuid = uuid.UUID(bytes=last_imp_id)
+            except ValueError:
+                raise SourceImportStoreError(
+                    SourceImportStoreReason.INCONSISTENT_STATE
+                ) from None
+            if (
+                c_imp_uuid.version != 7
+                or c_imp_uuid.variant != uuid.RFC_4122
+                or first_imp_uuid.version != 7
+                or first_imp_uuid.variant != uuid.RFC_4122
+                or last_imp_uuid.version != 7
+                or last_imp_uuid.variant != uuid.RFC_4122
+            ):
                 raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
 
             if not (1 <= first_gen <= last_gen <= generation):
@@ -1667,6 +1703,33 @@ def _read_source_import_store_internal(
                         SourceImportStoreReason.INCONSISTENT_STATE
                     )
                 if ev_obs != c_imp_observed_at_utc:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    )
+                _validate_canonical_utc_iso(c_imp_observed_at_utc)
+
+                try:
+                    ev_eid_obj = uuid.UUID(bytes=ev_eid)
+                    ev_did_obj = uuid.UUID(bytes=ev_did)
+                    ev_iid_obj = uuid.UUID(bytes=ev_iid)
+                    ev_sid_obj = uuid.UUID(bytes=ev_sid)
+                    ev_stid_obj = uuid.UUID(bytes=ev_stid)
+                except ValueError:
+                    raise SourceImportStoreError(
+                        SourceImportStoreReason.INCONSISTENT_STATE
+                    ) from None
+                if (
+                    ev_eid_obj.version != 7
+                    or ev_eid_obj.variant != uuid.RFC_4122
+                    or ev_did_obj.version != 7
+                    or ev_did_obj.variant != uuid.RFC_4122
+                    or ev_iid_obj.version != 7
+                    or ev_iid_obj.variant != uuid.RFC_4122
+                    or ev_sid_obj.version != 7
+                    or ev_sid_obj.variant != uuid.RFC_4122
+                    or ev_stid_obj.version != 7
+                    or ev_stid_obj.variant != uuid.RFC_4122
+                ):
                     raise SourceImportStoreError(
                         SourceImportStoreReason.INCONSISTENT_STATE
                     )
@@ -1766,14 +1829,14 @@ def _read_source_import_store_internal(
                 # Reconstruct exact canonical wire payload and compare byte-for-byte
                 ev_wire_array = [
                     SOURCE_CHANGE_EVENT_VERSION,
-                    str(uuid.UUID(bytes=ev_did)).lower(),
-                    str(uuid.UUID(bytes=ev_eid)).lower(),
-                    str(uuid.UUID(bytes=ev_iid)).lower(),
+                    str(ev_did_obj).lower(),
+                    str(ev_eid_obj).lower(),
+                    str(ev_iid_obj).lower(),
                     str(ev_seq),
-                    str(uuid.UUID(bytes=ev_sid)).lower(),
+                    str(ev_sid_obj).lower(),
                     str(ev_fy),
                     ev_sh,
-                    str(uuid.UUID(bytes=ev_stid)).lower(),
+                    str(ev_stid_obj).lower(),
                     str(ev_rev),
                     ev_op,
                     ev_fdate,
@@ -1837,9 +1900,12 @@ def _read_source_import_store_internal(
         l_imp, l_file, l_obs = active_source_metadata
         if l_imp is not None:
             last_import_id = uuid.UUID(bytes=l_imp)
+            if last_import_id.version != 7 or last_import_id.variant != uuid.RFC_4122:
+                raise SourceImportStoreError(SourceImportStoreReason.INCONSISTENT_STATE)
         if l_file is not None:
             last_file_sha256 = l_file
         if l_obs is not None:
+            _validate_canonical_utc_iso(l_obs)
             last_observed_at_utc = datetime.fromisoformat(l_obs)
 
     return SourceImportStoreView(
@@ -1882,10 +1948,6 @@ def initialize_source_import_store(
 
     try:
         connection.execute("BEGIN;")
-    except Exception as exc:
-        raise SourceImportStoreError(SourceImportStoreReason.STORAGE_FAILURE) from exc
-
-    try:
         cur = _raw_cursor(connection)
         user_version = cur.execute("PRAGMA user_version;").fetchone()[0]
 
@@ -1934,10 +1996,6 @@ def initialize_source_import_store(
 
     try:
         connection.execute("BEGIN IMMEDIATE;")
-    except Exception as exc:
-        raise SourceImportStoreError(SourceImportStoreReason.STORAGE_FAILURE) from exc
-
-    try:
         cur = _raw_cursor(connection)
         for stmt in _SCHEMA_V1_DDL:
             cur.execute(stmt)
@@ -1981,10 +2039,6 @@ def read_source_import_store(
 
     try:
         connection.execute("BEGIN;")
-    except Exception as exc:
-        raise SourceImportStoreError(SourceImportStoreReason.STORAGE_FAILURE) from exc
-
-    try:
         view = _read_source_import_store_internal(connection)
         connection.execute("COMMIT;")
         return view
@@ -2050,10 +2104,6 @@ def commit_source_import(
 
     try:
         connection.execute("BEGIN IMMEDIATE;")
-    except Exception as exc:
-        raise SourceImportStoreError(SourceImportStoreReason.STORAGE_FAILURE) from exc
-
-    try:
         cur = _raw_cursor(connection)
         # Load and validate current generation
         meta_cur = cur.execute(

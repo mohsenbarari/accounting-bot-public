@@ -12,6 +12,7 @@ import gc
 import hashlib
 import importlib
 import inspect
+import json
 import os
 import random
 import sqlite3
@@ -33,6 +34,7 @@ import pytest
 from accounting_contracts import (
     evaluate_source_fiscal_evidence,
     evaluate_source_requiredness,
+    parse_canonical_jalali_date,
     plan_source_changes,
 )
 from accounting_contracts.raw_input_contracts import (
@@ -1697,6 +1699,34 @@ class SynchronizedRaceCursor(sqlite3.Cursor):
         return res
 
 
+class SynchronizedLoserConnection(sqlite3.Connection):
+    """Connection for race competitor that signals when BEGIN IMMEDIATE is attempted."""
+
+    begin_attempted: threading.Event | None = None
+
+    def cursor(self, factory: Any = None) -> sqlite3.Cursor:  # type: ignore[override]
+        cur: sqlite3.Cursor = super().cursor(factory=factory or SynchronizedLoserCursor)
+        return cur
+
+    def execute(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+        if (
+            "BEGIN IMMEDIATE" in sql
+            and SynchronizedLoserConnection.begin_attempted is not None
+        ):
+            SynchronizedLoserConnection.begin_attempted.set()
+        return super().execute(sql, *args, **kwargs)
+
+
+class SynchronizedLoserCursor(sqlite3.Cursor):
+    def execute(self, sql: str, *params: Any) -> Any:
+        if (
+            "BEGIN IMMEDIATE" in sql
+            and SynchronizedLoserConnection.begin_attempted is not None
+        ):
+            SynchronizedLoserConnection.begin_attempted.set()
+        return super().execute(sql, *params)
+
+
 def _execute_controlled_race(
     db_file: Path,
     req_winner: SourceImportRequest,
@@ -1707,49 +1737,78 @@ def _execute_controlled_race(
     and loser raises STALE_STATE."""
     SynchronizedRaceConnection.pause_after_meta_observed = threading.Event()
     SynchronizedRaceConnection.resume_after_competitor_attempt = threading.Event()
+    SynchronizedLoserConnection.begin_attempted = threading.Event()
 
     winner_receipt: list[SourceImportReceipt] = []
     loser_error: list[SourceImportStoreError] = []
     thread_exceptions: list[BaseException] = []
+    winner_conn: sqlite3.Connection | None = None
+    loser_conn: sqlite3.Connection | None = None
 
     def winner_worker() -> None:
+        nonlocal winner_conn
         try:
-            conn = sqlite3.connect(
+            winner_conn = sqlite3.connect(
                 db_file, timeout=10.0, factory=SynchronizedRaceConnection
             )
-            conn.execute("PRAGMA foreign_keys = ON;")
-            rc = commit_source_import(conn, req_winner)
+            winner_conn.execute("PRAGMA foreign_keys = ON;")
+            rc = commit_source_import(winner_conn, req_winner)
             winner_receipt.append(rc)
-            conn.close()
         except BaseException as exc:
             thread_exceptions.append(exc)
+        finally:
+            if winner_conn is not None:
+                try:
+                    winner_conn.close()
+                except Exception:
+                    pass
 
     def loser_worker() -> None:
+        nonlocal loser_conn
         try:
-            conn = sqlite3.connect(db_file, timeout=10.0)
-            conn.execute("PRAGMA foreign_keys = ON;")
-            commit_source_import(conn, req_loser)
-            conn.close()
+            loser_conn = sqlite3.connect(
+                db_file, timeout=10.0, factory=SynchronizedLoserConnection
+            )
+            loser_conn.execute("PRAGMA foreign_keys = ON;")
+            commit_source_import(loser_conn, req_loser)
         except SourceImportStoreError as exc:
             loser_error.append(exc)
         except BaseException as exc:
             thread_exceptions.append(exc)
+        finally:
+            if loser_conn is not None:
+                try:
+                    loser_conn.close()
+                except Exception:
+                    pass
 
     t_winner = threading.Thread(target=winner_worker)
     t_loser = threading.Thread(target=loser_worker)
 
-    t_winner.start()
-    assert SynchronizedRaceConnection.pause_after_meta_observed.wait(timeout=10.0)
+    try:
+        t_winner.start()
+        assert SynchronizedRaceConnection.pause_after_meta_observed.wait(timeout=10.0)
 
-    t_loser.start()
-    time.sleep(0.05)  # give loser thread time to enter and wait on SQLite lock
+        t_loser.start()
+        assert SynchronizedLoserConnection.begin_attempted.wait(timeout=10.0)
 
-    SynchronizedRaceConnection.resume_after_competitor_attempt.set()
+        SynchronizedRaceConnection.resume_after_competitor_attempt.set()
 
-    t_winner.join(timeout=10.0)
-    t_loser.join(timeout=10.0)
+        t_winner.join(timeout=10.0)
+        t_loser.join(timeout=10.0)
+    finally:
+        if SynchronizedRaceConnection.resume_after_competitor_attempt is not None:
+            SynchronizedRaceConnection.resume_after_competitor_attempt.set()
+        if SynchronizedLoserConnection.begin_attempted is not None:
+            SynchronizedLoserConnection.begin_attempted.set()
+        if t_winner.is_alive():
+            t_winner.join(timeout=2.0)
+        if t_loser.is_alive():
+            t_loser.join(timeout=2.0)
 
-    assert not t_winner.is_alive() and not t_loser.is_alive()
+    assert not t_winner.is_alive() and not t_loser.is_alive(), (
+        "Surviving race threads detected"
+    )
     assert not thread_exceptions, f"Unexpected thread exception: {thread_exceptions}"
     assert len(winner_receipt) == 1, "Winner did not return receipt"
     assert len(loser_error) == 1, "Loser did not raise SourceImportStoreError"
@@ -3234,20 +3293,61 @@ def test_is13_mutation_noncontiguous_sequence_rejected() -> None:
 # ============================================================================
 
 
+def oracle_compute_request_digest(request: SourceImportRequest) -> str:
+    """Independently compute deterministic request digest according to
+    ADR-0018 specification."""
+    hasher = hashlib.sha256()
+    hasher.update(b"source-import-request.v1:")
+    hasher.update(request.source_key.source_id.bytes)
+    hasher.update(f":{request.source_key.fiscal_year}:".encode("ascii"))
+    hasher.update(f"{request.expected_generation}:".encode("ascii"))
+    hasher.update(request.import_id.bytes)
+    hasher.update(f":{request.observed_at_utc.isoformat()}:".encode())
+    hasher.update(request.file_sha256.encode("ascii"))
+    hasher.update(b":events:")
+    for s_bytes, e_bytes in sorted(
+        ((k.bytes, v.bytes) for k, v in request.event_ids.items()),
+        key=lambda pair: pair[0],
+    ):
+        hasher.update(s_bytes)
+        hasher.update(e_bytes)
+    hasher.update(b":sheets:")
+    for sheet_name in RAW_CONTRACT_REGISTRY.sheets:
+        sheet = request.snapshot.sheets[sheet_name]
+        hasher.update(sheet_name.encode("utf-8"))
+        hasher.update(
+            f":{sheet.row_count}:{sheet.sheet_snapshot_hash}:".encode("ascii")
+        )
+        for row in sheet.rows:
+            raw_bytes = encode_source_raw_row(row)
+            hasher.update(raw_bytes)
+    return hasher.hexdigest()
+
+
 class ImportStoreOracle:
-    """Independent in-memory oracle for source import store state
-    and change planning."""
+    """Independent in-memory oracle for complete 7-table source import store state,
+    provenance tracking, and change planning."""
 
     def __init__(self, device_id: uuid.UUID, active_key: SourceBindingKey) -> None:
         self.device_id = device_id
         self.active_key = active_key
         self.generation = 0
         self.next_sequence = 1
-        # stable_id -> dict: revision, is_void, source_hash, sheet_name
+        self.last_import_id: uuid.UUID | None = None
+        self.last_file_sha256: str | None = None
+        self.last_observed_at_utc: str | None = None
+
+        # stable_id -> dict with latest state
         self.items: dict[uuid.UUID, dict[str, Any]] = {}
-        # list of (seq, event_id, stable_id, revision, operation)
-        self.events: list[tuple[int, uuid.UUID, uuid.UUID, int, str]] = []
-        self.imports: list[uuid.UUID] = []
+        # stable_id -> previous version_hash
+        self.previous_version_hashes: dict[uuid.UUID, str] = {}
+
+        # 7-table full models
+        self.import_records: list[tuple[Any, ...]] = []
+        self.sheet_records: list[tuple[Any, ...]] = []
+        self.revision_records: dict[tuple[bytes, int], tuple[Any, ...]] = {}
+        self.membership_records: dict[bytes, tuple[Any, ...]] = {}
+        self.event_records: list[tuple[Any, ...]] = []
 
     def get_prior_registry(self) -> PriorIdentityRegistry:
         prior_states = [
@@ -3269,81 +3369,354 @@ class ImportStoreOracle:
 
     def plan_and_apply(
         self,
-        import_id: uuid.UUID,
-        snapshot: Any,
-        event_ids: dict[uuid.UUID, uuid.UUID],
+        request: SourceImportRequest,
     ) -> dict[str, Any]:
         self.generation += 1
-        self.imports.append(import_id)
+        import_id = request.import_id
+        snapshot = request.snapshot
+        event_ids = request.event_ids
+        file_sha256 = request.file_sha256
+        obs_utc_str = request.observed_at_utc.isoformat()
+
+        self.last_import_id = import_id
+        self.last_file_sha256 = file_sha256
+        self.last_observed_at_utc = obs_utc_str
 
         prior_registry = self.get_prior_registry()
         plan = plan_source_changes(snapshot, prior_registry)
-        changed_items = [
-            item
-            for item in plan.items
-            if item.action in (PlanAction.INSERT, PlanAction.EDIT, PlanAction.VOID)
-        ]
 
-        first_seq = self.next_sequence if changed_items else None
-        for item in changed_items:
+        changed_items_by_sheet: dict[str, list[Any]] = {
+            s: [] for s in RAW_CONTRACT_REGISTRY.sheets
+        }
+        all_changed_items: list[Any] = []
+        for item in plan.items:
+            if item.action in (PlanAction.INSERT, PlanAction.EDIT, PlanAction.VOID):
+                changed_items_by_sheet[item.sheet_name].append(item)
+                all_changed_items.append(item)
+
+        first_seq = self.next_sequence if all_changed_items else None
+        tot_ins = 0
+        tot_edt = 0
+        tot_void = 0
+        tot_unchanged = 0
+
+        # Model each sheet's counts
+        for sheet_order, sheet_name in enumerate(RAW_CONTRACT_REGISTRY.sheets):
+            sh = snapshot.sheets[sheet_name]
+            sh_ins = sum(
+                1
+                for it in changed_items_by_sheet[sheet_name]
+                if it.action == PlanAction.INSERT
+            )
+            sh_edt = sum(
+                1
+                for it in changed_items_by_sheet[sheet_name]
+                if it.action == PlanAction.EDIT
+            )
+            sh_void = sum(
+                1
+                for it in changed_items_by_sheet[sheet_name]
+                if it.action == PlanAction.VOID
+            )
+            sh_unchanged = sh.row_count - (sh_ins + sh_edt)
+            tot_ins += sh_ins
+            tot_edt += sh_edt
+            tot_void += sh_void
+            tot_unchanged += sh_unchanged
+
+            self.sheet_records.append(
+                (
+                    import_id.bytes,
+                    sheet_order,
+                    sheet_name,
+                    sh.sheet_snapshot_hash,
+                    sh.row_count,
+                    sh_ins,
+                    sh_edt,
+                    sh_void,
+                    sh_unchanged,
+                )
+            )
+
+        total_row_count = sum(sh.row_count for sh in snapshot.sheets.values())
+        ev_count = len(all_changed_items)
+        last_seq = (self.next_sequence + ev_count - 1) if ev_count > 0 else None
+
+        # Compute request digest independently from spec formula
+        req_digest = oracle_compute_request_digest(request)
+        self.import_records.append(
+            (
+                import_id.bytes,
+                req_digest,
+                self.active_key.source_id.bytes,
+                self.active_key.fiscal_year,
+                self.generation - 1,
+                self.generation,
+                obs_utc_str,
+                file_sha256,
+                total_row_count,
+                tot_ins,
+                tot_edt,
+                tot_void,
+                tot_unchanged,
+                ev_count,
+                first_seq,
+                last_seq,
+            )
+        )
+
+        # Model events and revisions
+        for item in all_changed_items:
             seq = self.next_sequence
             self.next_sequence += 1
             ev_id = event_ids[item.stable_id]
             rev = 1 if item.action == PlanAction.INSERT else item.planned_revision
             assert rev is not None
             op = "void" if item.action == PlanAction.VOID else "upsert"
-            self.events.append((seq, ev_id, item.stable_id, rev, op))
-            if op == "void":
-                self.items[item.stable_id]["revision"] = rev
-                self.items[item.stable_id]["is_void"] = True
-                self.items[item.stable_id]["source_hash"] = None
-            else:
+            prev_vh = self.previous_version_hashes.get(item.stable_id)
+
+            if op == "upsert":
                 assert item.current_row is not None
+                source_hash = item.current_row.source_hash
+                raw_payload = encode_source_raw_row(item.current_row)
+                raw_b64 = base64.b64encode(raw_payload).decode("ascii")
+                raw_date_val = item.current_row.raw_values.get("date_raw")
+                parsed_j = (
+                    parse_canonical_jalali_date(raw_date_val)
+                    if raw_date_val is not None
+                    else None
+                )
+                financial_date = (
+                    parsed_j.canonical_date if parsed_j is not None else None
+                )
+            else:
+                source_hash = None
+                raw_payload = None
+                raw_b64 = None
+                prior_row = self.items[item.stable_id].get("raw_row")
+                raw_date_val = (
+                    prior_row.raw_values.get("date_raw")
+                    if prior_row is not None
+                    else None
+                )
+                parsed_j = (
+                    parse_canonical_jalali_date(raw_date_val)
+                    if raw_date_val is not None
+                    else None
+                )
+                financial_date = (
+                    parsed_j.canonical_date if parsed_j is not None else None
+                )
+
+            wire = [
+                "source-change-event.v1",
+                str(self.device_id).lower(),
+                str(ev_id).lower(),
+                str(import_id).lower(),
+                str(seq),
+                str(self.active_key.source_id).lower(),
+                str(self.active_key.fiscal_year),
+                item.sheet_name,
+                str(item.stable_id).lower(),
+                str(rev),
+                op,
+                financial_date,
+                source_hash,
+                raw_b64,
+                prev_vh,
+                obs_utc_str,
+            ]
+            wire_bytes = json.dumps(
+                wire, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+            payload_hash = hashlib.sha256(wire_bytes).hexdigest()
+            version_hash = payload_hash
+            self.previous_version_hashes[item.stable_id] = version_hash
+
+            # Revision record
+            self.revision_records[(item.stable_id.bytes, rev)] = (
+                item.stable_id.bytes,
+                rev,
+                item.sheet_name,
+                "active" if op == "upsert" else "voided",
+                source_hash,
+                raw_payload,
+                import_id.bytes,
+                version_hash,
+                prev_vh,
+            )
+
+            # Event record
+            self.event_records.append(
+                (
+                    seq,
+                    ev_id.bytes,
+                    self.device_id.bytes,
+                    import_id.bytes,
+                    self.active_key.source_id.bytes,
+                    item.stable_id.bytes,
+                    rev,
+                    op,
+                    self.active_key.fiscal_year,
+                    item.sheet_name,
+                    financial_date,
+                    obs_utc_str,
+                    wire_bytes,
+                    payload_hash,
+                    prev_vh,
+                )
+            )
+
+            if op == "void":
+                self.items[item.stable_id] = {
+                    "revision": rev,
+                    "is_void": True,
+                    "source_hash": None,
+                    "sheet_name": item.sheet_name,
+                    "raw_row": None,
+                }
+            else:
                 self.items[item.stable_id] = {
                     "revision": rev,
                     "is_void": False,
-                    "source_hash": item.current_row.source_hash,
+                    "source_hash": source_hash,
                     "sheet_name": item.sheet_name,
+                    "raw_row": item.current_row,
                 }
 
-        last_seq = (self.next_sequence - 1) if changed_items else None
+        # Model memberships
+        # 1. Advance void items
+        for item in all_changed_items:
+            if item.action == PlanAction.VOID:
+                assert item.planned_revision is not None
+                prior_mem = self.membership_records[item.stable_id.bytes]
+                self.membership_records[item.stable_id.bytes] = (
+                    self.active_key.source_id.bytes,
+                    item.stable_id.bytes,
+                    item.planned_revision,
+                    prior_mem[3],  # preserve first_import_id
+                    import_id.bytes,
+                )
+
+        # 2. Upsert every row in current snapshot
+        for row in snapshot.all_rows_by_id.values():
+            s_bytes = row.stable_id.bytes
+            rev = self.items[row.stable_id]["revision"]
+            if s_bytes in self.membership_records:
+                prior_mem = self.membership_records[s_bytes]
+                self.membership_records[s_bytes] = (
+                    self.active_key.source_id.bytes,
+                    s_bytes,
+                    max(prior_mem[2], rev),
+                    prior_mem[3],
+                    import_id.bytes,
+                )
+            else:
+                self.membership_records[s_bytes] = (
+                    self.active_key.source_id.bytes,
+                    s_bytes,
+                    rev,
+                    import_id.bytes,
+                    import_id.bytes,
+                )
 
         return {
             "committed_generation": self.generation,
-            "event_count": len(changed_items),
+            "event_count": ev_count,
             "first_sequence": first_seq,
             "last_sequence": last_seq,
         }
 
     def verify_db_state(self, conn: sqlite3.Connection) -> None:
+        # 1. source_store_meta
         meta = conn.execute(
-            "SELECT generation, next_sequence, device_id FROM source_store_meta;"
+            "SELECT singleton_id, store_version, schema_version, generation, "
+            "next_sequence, device_id FROM source_store_meta;"
         ).fetchone()
-        assert meta[0] == self.generation
-        assert meta[1] == self.next_sequence
-        assert meta[2] == self.device_id.bytes
+        assert meta == (
+            1,
+            SOURCE_IMPORT_STORE_VERSION,
+            1,
+            self.generation,
+            self.next_sequence,
+            self.device_id.bytes,
+        )
 
-        # Verify memberships
-        mem_rows = conn.execute(
-            "SELECT stable_id, revision FROM source_memberships;"
-        ).fetchall()
-        assert len(mem_rows) == len(self.items)
-        for s_id_bytes, rev in mem_rows:
-            u = uuid.UUID(bytes=s_id_bytes)
-            assert self.items[u]["revision"] == rev
+        # 2. source_bindings
+        bind = conn.execute(
+            "SELECT source_id, fiscal_year, state, final_file_sha256, "
+            "last_import_id, last_file_sha256, last_observed_at_utc "
+            "FROM source_bindings;"
+        ).fetchone()
+        assert bind == (
+            self.active_key.source_id.bytes,
+            self.active_key.fiscal_year,
+            "active",
+            None,
+            self.last_import_id.bytes if self.last_import_id else None,
+            self.last_file_sha256,
+            self.last_observed_at_utc,
+        )
 
-        # Verify events
-        ev_rows = conn.execute(
-            "SELECT sequence, event_id, stable_id, revision, operation "
-            "FROM change_events ORDER BY sequence ASC;"
+        # 3. source_imports
+        db_imports = conn.execute(
+            "SELECT import_id, request_digest, source_id, fiscal_year, "
+            "base_generation, committed_generation, observed_at_utc, file_sha256, "
+            "total_row_count, insert_count, edit_count, void_count, "
+            "unchanged_count, event_count, first_sequence, last_sequence "
+            "FROM source_imports ORDER BY committed_generation ASC;"
         ).fetchall()
-        assert len(ev_rows) == len(self.events)
-        for (seq, ev_id, u, rev, op), db_row in zip(self.events, ev_rows, strict=True):
-            assert db_row[0] == seq
-            assert db_row[1] == ev_id.bytes
-            assert db_row[2] == u.bytes
-            assert db_row[3] == rev
-            assert db_row[4] == op
+        assert len(db_imports) == len(self.import_records)
+        for exp, act in zip(self.import_records, db_imports, strict=True):
+            assert act == exp
+
+        # 4. source_import_sheets
+        db_sheets = conn.execute(
+            "SELECT import_id, sheet_order, sheet_name, snapshot_hash, "
+            "row_count, insert_count, edit_count, void_count, unchanged_count "
+            "FROM source_import_sheets ORDER BY import_id, sheet_order ASC;"
+        ).fetchall()
+        assert len(db_sheets) == len(self.sheet_records)
+        for exp, act in zip(self.sheet_records, db_sheets, strict=True):
+            assert act == exp
+
+        # 5. source_revisions
+        db_revs = conn.execute(
+            "SELECT stable_id, revision, home_sheet, lifecycle, source_hash, "
+            "raw_payload, created_by_import_id, version_hash, previous_version_hash "
+            "FROM source_revisions ORDER BY stable_id, revision ASC;"
+        ).fetchall()
+        sorted_exp_revs = [
+            self.revision_records[k] for k in sorted(self.revision_records.keys())
+        ]
+        assert len(db_revs) == len(sorted_exp_revs)
+        for exp, act in zip(sorted_exp_revs, db_revs, strict=True):
+            assert act == exp
+
+        # 6. source_memberships
+        db_mems = conn.execute(
+            "SELECT source_id, stable_id, revision, first_import_id, last_import_id "
+            "FROM source_memberships ORDER BY source_id, stable_id ASC;"
+        ).fetchall()
+        sorted_exp_mems = [
+            self.membership_records[k] for k in sorted(self.membership_records.keys())
+        ]
+        assert len(db_mems) == len(sorted_exp_mems)
+        for exp, act in zip(sorted_exp_mems, db_mems, strict=True):
+            assert act == exp
+
+        # 7. change_events
+        db_events = conn.execute(
+            "SELECT sequence, event_id, device_id, import_id, source_id, "
+            "stable_id, revision, operation, fiscal_year, sheet_name, "
+            "financial_date, observed_at_utc, canonical_payload, payload_hash, "
+            "previous_version_hash FROM change_events ORDER BY sequence ASC;"
+        ).fetchall()
+        assert len(db_events) == len(self.event_records)
+        for exp, act in zip(self.event_records, db_events, strict=True):
+            assert act == exp
+            # Verify event hash integrity and wire payload
+            assert hashlib.sha256(act[12]).hexdigest() == act[13]
 
 
 @settings(
@@ -3491,31 +3864,55 @@ def test_is14_hypothesis_multi_step_history_property_tests(
             for idx, u in enumerate(changed_uuids)
         }
 
-        # Apply to oracle
-        expected = oracle.plan_and_apply(
-            import_id=make_deterministic_uuid7(90000 + step),
-            snapshot=snap,
-            event_ids=ev_ids,
-        )
+        obs_time = datetime(2026, 9, 4, 12, step, 0, tzinfo=UTC)
+        file_sha = f"{step % 10}" * 64
+        imp_id = make_deterministic_uuid7(90000 + step)
 
         req = SourceImportRequest(
             source_key=active_key,
             expected_generation=step,
-            import_id=make_deterministic_uuid7(90000 + step),
-            observed_at_utc=datetime.now(UTC),
-            file_sha256=f"{step % 10}" * 64,
+            import_id=imp_id,
+            observed_at_utc=obs_time,
+            file_sha256=file_sha,
             snapshot=snap,
             event_ids=ev_ids,
         )
+
+        # Apply to oracle
+        expected = oracle.plan_and_apply(req)
+
         receipt = commit_source_import(conn, req)
 
-        # 3. Compare receipt
+        # 3. Compare complete receipt
+        assert receipt.disposition == SourceImportDisposition.COMMITTED
         assert receipt.committed_generation == expected["committed_generation"]
         assert receipt.event_count == expected["event_count"]
         assert receipt.first_sequence == expected["first_sequence"]
         assert receipt.last_sequence == expected["last_sequence"]
 
-        # 4. Compare DB state to Oracle
+        # Exact replay idempotency verification
+        receipt_rep = commit_source_import(conn, req)
+        assert receipt_rep.disposition == SourceImportDisposition.REPLAYED
+        assert receipt_rep.committed_generation == expected["committed_generation"]
+        assert receipt_rep.event_count == expected["event_count"]
+        assert receipt_rep.first_sequence == expected["first_sequence"]
+        assert receipt_rep.last_sequence == expected["last_sequence"]
+
+        # Stale state rejection verification
+        req_stale = SourceImportRequest(
+            source_key=active_key,
+            expected_generation=step,  # stale because store generation is now step + 1
+            import_id=make_deterministic_uuid7(999000 + step),
+            observed_at_utc=obs_time,
+            file_sha256=file_sha,
+            snapshot=snap,
+            event_ids=ev_ids,
+        )
+        with pytest.raises(SourceImportStoreError) as exc_stale:
+            commit_source_import(conn, req_stale)
+        assert exc_stale.value.reason == SourceImportStoreReason.STALE_STATE
+
+        # 4. Compare full 7-table DB state to Oracle
         oracle.verify_db_state(conn)
 
     conn.close()
@@ -3780,33 +4177,65 @@ def test_is14_controlled_product_code_mutations() -> None:
             conn, device_id=dev_id, active_source=key
         )
         u = make_deterministic_uuid7(10)
+        # Construct two otherwise identical requests sharing import_id, time,
+        # file SHA, event IDs and semantically equal row/sheet hashes,
+        # differing only in accepted Raw representation (Decimal scale: '2' vs '2.0').
         snap1 = build_synthetic_snapshot(
-            [(u, make_sample_party_row("شخص یک"))], [], [], []
+            [],
+            [
+                (
+                    u,
+                    make_sample_buy_sell_row(
+                        "1403/01/01", "شخص", "خرید", "کالا", "2", "1000"
+                    ),
+                )
+            ],
+            [],
+            [],
+        )
+        snap2 = build_synthetic_snapshot(
+            [],
+            [
+                (
+                    u,
+                    make_sample_buy_sell_row(
+                        "1403/01/01", "شخص", "خرید", "کالا", "2.0", "1000"
+                    ),
+                )
+            ],
+            [],
+            [],
         )
         imp_id = make_deterministic_uuid7(100)
+        ev_id = make_deterministic_uuid7(200)
+        fixed_time = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+        file_sha = "a" * 64
+
         req1 = sis_mod.SourceImportRequest(
             source_key=key,
             expected_generation=0,
             import_id=imp_id,
-            observed_at_utc=datetime.now(UTC),
-            file_sha256="1" * 64,
+            observed_at_utc=fixed_time,
+            file_sha256=file_sha,
             snapshot=snap1,
-            event_ids={u: make_deterministic_uuid7(200)},
+            event_ids={u: ev_id},
         )
-        sis_mod.commit_source_import(conn, req1)
+        rc1 = sis_mod.commit_source_import(conn, req1)
+        assert rc1.disposition == sis_mod.SourceImportDisposition.COMMITTED
 
-        snap2 = build_synthetic_snapshot(
-            [(u, make_sample_party_row("شخص دو متفاوت"))], [], [], []
-        )
         req2 = sis_mod.SourceImportRequest(
             source_key=key,
             expected_generation=0,
-            import_id=imp_id,  # Same import ID, but different snapshot content!
-            observed_at_utc=datetime.now(UTC),
-            file_sha256="2" * 64,
+            import_id=imp_id,
+            observed_at_utc=fixed_time,
+            file_sha256=file_sha,
             snapshot=snap2,
-            event_ids={u: make_deterministic_uuid7(200)},
+            event_ids={u: ev_id},
         )
+        # In unmodified implementation, hasher.update(raw_bytes) differentiates the
+        # requests, raising IDEMPOTENCY_CONFLICT.
+        # Under mutation where raw_bytes is omitted from digest, req2's digest matches
+        # req1, causing commit_source_import to return REPLAYED instead of raising.
         with pytest.raises(sis_mod.SourceImportStoreError) as exc:
             sis_mod.commit_source_import(conn, req2)
         assert exc.value.reason == sis_mod.SourceImportStoreReason.IDEMPOTENCY_CONFLICT
@@ -3814,8 +4243,8 @@ def test_is14_controlled_product_code_mutations() -> None:
 
     _execute_mutation(
         "request Raw digest",
-        "request_digest = _compute_request_digest(request)",
-        "request_digest = '0' * 64",
+        "            hasher.update(raw_bytes)",
+        "            pass  # hasher.update(raw_bytes)",
         probe_request_raw_digest,
     )
 
@@ -4244,7 +4673,7 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
         event_ids=event_ids,
     )
 
-    # Instrument encode phase during commit
+    # Instrument individual validation/projection and encode phases during commit
     t_encode_total = 0.0
     orig_encode = sis_mod_any.encode_source_raw_row
 
@@ -4255,6 +4684,46 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
         t_encode_total += time.perf_counter() - t0
         return cast(bytes, res)
 
+    t_digest = 0.0
+    orig_digest = sis_mod_any._compute_request_digest
+
+    def timed_digest(*args: Any, **kwargs: Any) -> Any:
+        nonlocal t_digest
+        t0 = time.perf_counter()
+        res = orig_digest(*args, **kwargs)
+        t_digest += time.perf_counter() - t0
+        return res
+
+    t_req = 0.0
+    orig_req = sis_mod_any.evaluate_source_requiredness
+
+    def timed_req(*args: Any, **kwargs: Any) -> Any:
+        nonlocal t_req
+        t0 = time.perf_counter()
+        res = orig_req(*args, **kwargs)
+        t_req += time.perf_counter() - t0
+        return res
+
+    t_fisc = 0.0
+    orig_fisc = sis_mod_any.evaluate_source_fiscal_evidence
+
+    def timed_fisc(*args: Any, **kwargs: Any) -> Any:
+        nonlocal t_fisc
+        t0 = time.perf_counter()
+        res = orig_fisc(*args, **kwargs)
+        t_fisc += time.perf_counter() - t0
+        return res
+
+    t_plan = 0.0
+    orig_plan = sis_mod_any.plan_source_changes
+
+    def timed_plan(*args: Any, **kwargs: Any) -> Any:
+        nonlocal t_plan
+        t0 = time.perf_counter()
+        res = orig_plan(*args, **kwargs)
+        t_plan += time.perf_counter() - t0
+        return res
+
     # Real process RSS call-window sampling
     gc.collect()
     sampler = CallWindowRssSampler(interval_seconds=0.005)
@@ -4263,12 +4732,20 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
 
     conn.active_timing = True
     sis_mod_any.encode_source_raw_row = timed_encode
+    sis_mod_any._compute_request_digest = timed_digest
+    sis_mod_any.evaluate_source_requiredness = timed_req
+    sis_mod_any.evaluate_source_fiscal_evidence = timed_fisc
+    sis_mod_any.plan_source_changes = timed_plan
     t_commit_start = time.perf_counter()
     try:
         receipt = commit_source_import(conn, req)
     finally:
         conn.active_timing = False
         sis_mod_any.encode_source_raw_row = orig_encode
+        sis_mod_any._compute_request_digest = orig_digest
+        sis_mod_any.evaluate_source_requiredness = orig_req
+        sis_mod_any.evaluate_source_fiscal_evidence = orig_fisc
+        sis_mod_any.plan_source_changes = orig_plan
 
     t_commit_total = time.perf_counter() - t_commit_start
     peak_rss = sampler.stop_and_get_peak()
@@ -4282,7 +4759,10 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
     t_encode = t_encode_total
     t_sql_write = conn.t_sql_write
     t_commit_phase = conn.t_commit_phase
-    t_val = max(0.0, t_commit_total - (t_encode + t_sql_write + t_commit_phase))
+    t_req_fisc = t_req + t_fisc
+    t_val_proj = t_digest + t_req_fisc + t_plan
+    t_accounted = t_val_proj + t_encode + t_sql_write + t_commit_phase
+    t_residual = max(0.0, t_commit_total - t_accounted)
 
     assert receipt.disposition == SourceImportDisposition.COMMITTED
     assert receipt.committed_generation == 1
@@ -4471,10 +4951,12 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
     assert v_gen2.next_sequence == row_count + edit_count + 1
 
     print(
-        f"[IS-16] Breakdown: fixture={t_fix:.3f}s, val_proj={t_val:.3f}s, "
+        f"[IS-16] Breakdown: fixture={t_fix:.3f}s, val_proj={t_val_proj:.3f}s "
+        f"(digest={t_digest:.3f}s, req_fisc={t_req_fisc:.3f}s, plan={t_plan:.3f}s), "
         f"encode={t_encode:.3f}s, sql_write={t_sql_write:.3f}s, "
-        f"commit_phase={t_commit_phase:.3f}s, restart_read={t_restart:.3f}s, "
-        f"verify={t_verify:.3f}s, replay={t_replay:.3f}s, gen2={t_gen2:.3f}s\n"
+        f"commit_phase={t_commit_phase:.3f}s, residual={t_residual:.3f}s, "
+        f"restart_read={t_restart:.3f}s, verify={t_verify:.3f}s, "
+        f"replay={t_replay:.3f}s, gen2={t_gen2:.3f}s\n"
         f"[IS-16] Memory: Baseline RSS={baseline_rss:.2f} MiB, "
         f"Peak RSS={peak_rss:.2f} MiB, Delta={delta_rss:.2f} MiB "
         f"({rss_method})\n"
@@ -4926,12 +5408,16 @@ def test_r4_exact_root_scalar_type_enforcement() -> None:
 
 
 def test_r2_constant_query_and_decode_bounds_across_generations(tmp_path: Path) -> None:
-    """R2: Prove ordinary read and commit costs do not grow with history length.
+    """R2: Verify constant statement count, bounded decodes, and bounded return rows.
     Tests histories of 1, 5, 20, and 50 generations with constant M/N/C:
     1. SQL statement count and query families are constant across history length.
     2. Current-head decode count remains strictly bounded (1 on read, <= 2 on commit).
-    3. No query returns or materializes all historical Import rows.
-    4. Commit of one edit remains within O(M + N log N + C).
+    3. No query returns or materializes all historical Import rows in Python
+       (all queries use WHERE, aggregates, or LIMIT). Note: constant statement count
+       does not prove history-independent total CPU/time because permitted SQL
+       aggregates still scan historical import index/table entries in SQLite VM.
+       historical import index/table entries in SQLite VM.
+    4. Commit of one edit remains within O(M + N log N + C) Python work.
     5. Current payload, hash, predecessor link, sequence, and newest-import
        corruptions are still rejected with INCONSISTENT_STATE."""
     import accounting_persistence.source_import_store as sis_mod
@@ -5056,8 +5542,9 @@ def test_r2_constant_query_and_decode_bounds_across_generations(tmp_path: Path) 
             f"to {query_stats[H]['commit_count']}"
         )
 
-    # Prove no query returns/materializes all historical import rows
-    # Check that query against source_imports has WHERE, aggregate, or LIMIT
+    # Verify no query returns/materializes all historical import rows in Python.
+    # Note: Permitted SQL aggregates still scan historical import records, so constant
+    # statement count does not imply history-independent SQLite VM instructions.
     for H in history_counts:
         for q in query_stats[H]["read_queries"] + query_stats[H]["commit_queries"]:
             q_clean = q.strip().upper()
@@ -5133,3 +5620,554 @@ def test_r2_constant_query_and_decode_bounds_across_generations(tmp_path: Path) 
         read_source_import_store(conn_h)
     assert exc_hash.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
     conn_h.close()
+
+
+# ============================================================================
+# Round 4 Review Corrections (R1 - R3)
+# ============================================================================
+
+
+def test_r4_01_current_event_uuidv4_tamper_rejected_by_read_and_replay(
+    tmp_path: Path,
+) -> None:
+    """R4-A: Tampering current Event event_id with RFC 4122 UUIDv4 is rejected.
+    Replaces current Event event_id with valid UUIDv4, updates wire payload and hash,
+    and updates Revision version_hash. Restores exact trigger guards before read.
+    Public read and exact replay must both raise INCONSISTENT_STATE, produce no partial
+    view/receipt, make no DB change, and leave caller connection open and idle."""
+    db_file = tmp_path / "r4_uuidv4.sqlite3"
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+
+    u1 = make_deterministic_uuid7(10)
+    ev_id_v7 = make_deterministic_uuid7(200)
+    imp_id = make_deterministic_uuid7(100)
+    obs_time = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+    snap = build_synthetic_snapshot([(u1, make_sample_party_row("شخص_یک"))], [], [], [])
+    req = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=imp_id,
+        observed_at_utc=obs_time,
+        file_sha256="a" * 64,
+        snapshot=snap,
+        event_ids={u1: ev_id_v7},
+    )
+    rc = commit_source_import(conn, req)
+    assert rc.disposition == SourceImportDisposition.COMMITTED
+
+    # Generate a valid RFC 4122 UUIDv4
+    ev_id_v4 = uuid.uuid4()
+    assert ev_id_v4.version == 4
+    assert ev_id_v4.variant == uuid.RFC_4122
+
+    # Tamper event_id to UUIDv4 in change_events and recompute wire hashes
+    cur = conn.cursor()
+    row = cur.execute(
+        "SELECT canonical_payload FROM change_events WHERE sequence = 1;"
+    ).fetchone()
+    assert row is not None
+    orig_payload = json.loads(row[0].decode("utf-8"))
+    orig_payload[2] = str(ev_id_v4).lower()  # Update event_id in wire payload
+    tampered_bytes = json.dumps(
+        orig_payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    tampered_hash = hashlib.sha256(tampered_bytes).hexdigest()
+
+    conn.execute("DROP TRIGGER trg_prevent_update_change_events;")
+    conn.execute("DROP TRIGGER trg_prevent_update_source_revisions;")
+    conn.execute(
+        "UPDATE change_events SET event_id = ?, canonical_payload = ?, "
+        "payload_hash = ? WHERE sequence = 1;",
+        (ev_id_v4.bytes, tampered_bytes, tampered_hash),
+    )
+    conn.execute(
+        "UPDATE source_revisions SET version_hash = ? "
+        "WHERE stable_id = ? AND revision = 1;",
+        (tampered_hash, u1.bytes),
+    )
+    # Restore exact trigger guards
+    conn.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_change_events
+        BEFORE UPDATE ON change_events
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update change_events');
+        END;
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_revisions
+        BEFORE UPDATE ON source_revisions
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_revisions');
+        END;
+        """
+    )
+    conn.commit()
+
+    # Capture db snapshot for asserting no changes
+    meta_before = conn.execute("SELECT * FROM source_store_meta;").fetchall()
+    revisions_before = conn.execute("SELECT * FROM source_revisions;").fetchall()
+
+    # 1. Public read must reject with INCONSISTENT_STATE
+    with pytest.raises(SourceImportStoreError) as exc_read:
+        read_source_import_store(conn)
+    assert exc_read.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    assert conn.in_transaction is False
+
+    # 2. Exact replay must also reject with INCONSISTENT_STATE
+    with pytest.raises(SourceImportStoreError) as exc_replay:
+        commit_source_import(conn, req)
+    assert exc_replay.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    assert conn.in_transaction is False
+
+    # Assert no DB changes occurred and connection remains usable
+    meta_after = conn.execute("SELECT * FROM source_store_meta;").fetchall()
+    revisions_after = conn.execute("SELECT * FROM source_revisions;").fetchall()
+    assert meta_before == meta_after
+    assert revisions_before == revisions_after
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1
+    conn.close()
+
+
+def test_r4_02_creating_import_impossible_timestamp_rejected_by_read_and_replay(
+    tmp_path: Path,
+) -> None:
+    """R4-B: Creating Import with impossible date is rejected on read and replay.
+    Commits 1 row in gen 1, then UNCHANGED gen 2 (current head references gen 1 import).
+    Tampers creating Import observation and current Event observation to
+    '2026-99-99T25:61:61+00:00', updates Event wire/hash and Revision version_hash,
+    leaves latest Import valid. Restores guards before read.
+    Both read and replay of gen 2 must raise INCONSISTENT_STATE, make no DB change,
+    and leave caller connection idle."""
+    db_file = tmp_path / "r4_impossible_ts.sqlite3"
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+
+    u1 = make_deterministic_uuid7(10)
+    ev_id1 = make_deterministic_uuid7(201)
+    imp_id1 = make_deterministic_uuid7(101)
+    obs_time1 = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+    snap1 = build_synthetic_snapshot(
+        [(u1, make_sample_party_row("شخص_یک"))], [], [], []
+    )
+    req1 = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=imp_id1,
+        observed_at_utc=obs_time1,
+        file_sha256="1" * 64,
+        snapshot=snap1,
+        event_ids={u1: ev_id1},
+    )
+    rc1 = commit_source_import(conn, req1)
+    assert rc1.disposition == SourceImportDisposition.COMMITTED
+
+    # Gen 2: unchanged zero-event snapshot
+    imp_id2 = make_deterministic_uuid7(102)
+    obs_time2 = datetime(2026, 9, 4, 13, 0, 0, tzinfo=UTC)
+    req2 = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=1,
+        import_id=imp_id2,
+        observed_at_utc=obs_time2,
+        file_sha256="2" * 64,
+        snapshot=snap1,  # unchanged
+        event_ids={},
+    )
+    rc2 = commit_source_import(conn, req2)
+    assert rc2.disposition == SourceImportDisposition.COMMITTED
+    assert rc2.event_count == 0
+
+    # Tamper creating Import 1 and its event 1 to impossible date
+    impossible_ts = "2026-99-99T25:61:61+00:00"
+    cur = conn.cursor()
+    row = cur.execute(
+        "SELECT canonical_payload FROM change_events WHERE sequence = 1;"
+    ).fetchone()
+    assert row is not None
+    orig_payload = json.loads(row[0].decode("utf-8"))
+    orig_payload[15] = impossible_ts
+    tampered_bytes = json.dumps(
+        orig_payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    tampered_hash = hashlib.sha256(tampered_bytes).hexdigest()
+
+    conn.execute("DROP TRIGGER trg_prevent_update_source_imports;")
+    conn.execute("DROP TRIGGER trg_prevent_update_change_events;")
+    conn.execute("DROP TRIGGER trg_prevent_update_source_revisions;")
+
+    conn.execute(
+        "UPDATE source_imports SET observed_at_utc = ? WHERE import_id = ?;",
+        (impossible_ts, imp_id1.bytes),
+    )
+    conn.execute(
+        "UPDATE change_events SET observed_at_utc = ?, canonical_payload = ?, "
+        "payload_hash = ? WHERE sequence = 1;",
+        (impossible_ts, tampered_bytes, tampered_hash),
+    )
+    conn.execute(
+        "UPDATE source_revisions SET version_hash = ? "
+        "WHERE stable_id = ? AND revision = 1;",
+        (tampered_hash, u1.bytes),
+    )
+
+    # Restore exact trigger guards
+    conn.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_imports
+        BEFORE UPDATE ON source_imports
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_imports');
+        END;
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_change_events
+        BEFORE UPDATE ON change_events
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update change_events');
+        END;
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER trg_prevent_update_source_revisions
+        BEFORE UPDATE ON source_revisions
+        BEGIN
+            SELECT RAISE(ABORT, 'Cannot update source_revisions');
+        END;
+        """
+    )
+    conn.commit()
+
+    # Capture snapshot
+    meta_before = conn.execute("SELECT * FROM source_store_meta;").fetchall()
+    imports_before = conn.execute("SELECT * FROM source_imports;").fetchall()
+
+    # Public read must reject with INCONSISTENT_STATE
+    with pytest.raises(SourceImportStoreError) as exc_read:
+        read_source_import_store(conn)
+    assert exc_read.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    assert conn.in_transaction is False
+
+    # Exact replay of gen 2 must also reject with INCONSISTENT_STATE
+    with pytest.raises(SourceImportStoreError) as exc_rep2:
+        commit_source_import(conn, req2)
+    assert exc_rep2.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+    assert conn.in_transaction is False
+
+    # Assert no DB changes and connection usable
+    assert meta_before == conn.execute("SELECT * FROM source_store_meta;").fetchall()
+    assert imports_before == conn.execute("SELECT * FROM source_imports;").fetchall()
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1
+    conn.close()
+
+
+def test_r4_03_non_utc_and_non_canonical_timestamps_rejected(tmp_path: Path) -> None:
+    """R4-A/B: Parseable timestamps that are non-UTC or non-canonical are rejected.
+    Tests timestamps with non-zero offset ('+03:30'), offset-free strings,
+    and non-canonical spellings. Restores guards before read.
+    Both read and replay reject with INCONSISTENT_STATE, leaving connection idle."""
+    for bad_ts in (
+        "2026-09-04T12:00:00+03:30",  # parseable non-zero offset
+        "2026-09-04T12:00:00",  # parseable offset-free
+        "2026-09-04T12:00:00.000000+00:00",  # non-canonical extra zeros
+    ):
+        db_file = tmp_path / f"r4_bad_ts_{abs(hash(bad_ts))}.sqlite3"
+        conn = sqlite3.connect(db_file)
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+
+        dev_id = make_deterministic_uuid7(1)
+        src_id = make_deterministic_uuid7(2)
+        active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+        initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+
+        u1 = make_deterministic_uuid7(10)
+        ev_id1 = make_deterministic_uuid7(201)
+        imp_id1 = make_deterministic_uuid7(101)
+        obs_time1 = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+        snap1 = build_synthetic_snapshot(
+            [(u1, make_sample_party_row("شخص_یک"))], [], [], []
+        )
+        req1 = SourceImportRequest(
+            source_key=active_key,
+            expected_generation=0,
+            import_id=imp_id1,
+            observed_at_utc=obs_time1,
+            file_sha256="1" * 64,
+            snapshot=snap1,
+            event_ids={u1: ev_id1},
+        )
+        commit_source_import(conn, req1)
+
+        # Tamper import 1 and event 1 to bad_ts
+        cur = conn.cursor()
+        row = cur.execute(
+            "SELECT canonical_payload FROM change_events WHERE sequence = 1;"
+        ).fetchone()
+        orig_payload = json.loads(row[0].decode("utf-8"))
+        orig_payload[15] = bad_ts
+        tampered_bytes = json.dumps(
+            orig_payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+        tampered_hash = hashlib.sha256(tampered_bytes).hexdigest()
+
+        conn.execute("DROP TRIGGER trg_prevent_update_source_imports;")
+        conn.execute("DROP TRIGGER trg_prevent_update_change_events;")
+        conn.execute("DROP TRIGGER trg_prevent_update_source_revisions;")
+
+        conn.execute(
+            "UPDATE source_imports SET observed_at_utc = ? WHERE import_id = ?;",
+            (bad_ts, imp_id1.bytes),
+        )
+        conn.execute(
+            "UPDATE change_events SET observed_at_utc = ?, canonical_payload = ?, "
+            "payload_hash = ? WHERE sequence = 1;",
+            (bad_ts, tampered_bytes, tampered_hash),
+        )
+        conn.execute(
+            "UPDATE source_revisions SET version_hash = ? "
+            "WHERE stable_id = ? AND revision = 1;",
+            (tampered_hash, u1.bytes),
+        )
+
+        conn.execute(
+            """
+            CREATE TRIGGER trg_prevent_update_source_imports
+            BEFORE UPDATE ON source_imports
+            BEGIN SELECT RAISE(ABORT, 'Cannot update source_imports'); END;
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER trg_prevent_update_change_events
+            BEFORE UPDATE ON change_events
+            BEGIN SELECT RAISE(ABORT, 'Cannot update change_events'); END;
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER trg_prevent_update_source_revisions
+            BEFORE UPDATE ON source_revisions
+            BEGIN SELECT RAISE(ABORT, 'Cannot update source_revisions'); END;
+            """
+        )
+        conn.commit()
+
+        with pytest.raises(SourceImportStoreError) as exc_read:
+            read_source_import_store(conn)
+        assert exc_read.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+        assert conn.in_transaction is False
+
+        with pytest.raises(SourceImportStoreError) as exc_rep:
+            commit_source_import(conn, req1)
+        assert exc_rep.value.reason == SourceImportStoreReason.INCONSISTENT_STATE
+        assert conn.in_transaction is False
+        conn.close()
+
+
+class AcquisitionFailureConnection(sqlite3.Connection):
+    """Test-only connection subclass simulating failures before or after BEGIN."""
+
+    fail_before_begin: BaseException | None = None
+    fail_after_begin: BaseException | None = None
+    fail_rollback: BaseException | None = None
+
+    def execute(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+        sql_up = sql.strip().upper()
+        if sql_up.startswith("BEGIN"):
+            if AcquisitionFailureConnection.fail_before_begin is not None:
+                raise AcquisitionFailureConnection.fail_before_begin
+            res = super().execute(sql, *args, **kwargs)
+            if AcquisitionFailureConnection.fail_after_begin is not None:
+                raise AcquisitionFailureConnection.fail_after_begin
+            return res
+        if (
+            sql_up.startswith("ROLLBACK")
+            and AcquisitionFailureConnection.fail_rollback is not None
+        ):
+            raise AcquisitionFailureConnection.fail_rollback
+        return super().execute(sql, *args, **kwargs)
+
+
+def test_r4_04_transaction_acquisition_owned_cleanup(tmp_path: Path) -> None:
+    """R2: Transaction acquisition and body form one owned rollback-protected lifecycle.
+    Covers:
+    1. Failure immediately after BEGIN takes effect:
+       - KeyboardInterrupt object
+       - SystemExit object
+       - Ordinary Exception object
+       Asserts exact exception identity, in_transaction False, tables/generation/seq
+       unchanged, and caller connection usable/open.
+    2. Failure before BEGIN takes effect (in_transaction was False, remains False).
+    3. Matching owned-BEGIN behavior in read and initialization stores.
+    4. Pre-existing caller transaction is NEVER rolled back.
+    5. Ordered ExceptionGroup / BaseExceptionGroup when rollback also fails."""
+    db_file = tmp_path / "r4_acquisition.sqlite3"
+    conn_setup = sqlite3.connect(db_file)
+    conn_setup.execute("PRAGMA foreign_keys = ON;")
+    conn_setup.execute("PRAGMA journal_mode = WAL;")
+
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    active_key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(
+        conn_setup, device_id=dev_id, active_source=active_key
+    )
+    conn_setup.close()
+
+    u1 = make_deterministic_uuid7(10)
+    snap = build_synthetic_snapshot([(u1, make_sample_party_row("شخص"))], [], [], [])
+    req = SourceImportRequest(
+        source_key=active_key,
+        expected_generation=0,
+        import_id=make_deterministic_uuid7(100),
+        observed_at_utc=datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC),
+        file_sha256="a" * 64,
+        snapshot=snap,
+        event_ids={u1: make_deterministic_uuid7(200)},
+    )
+
+    # 1. Failure immediately AFTER BEGIN takes effect in commit_source_import
+    # A. KeyboardInterrupt
+    conn = sqlite3.connect(db_file, factory=AcquisitionFailureConnection)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    specific_ki = KeyboardInterrupt("simulated cancel after begin")
+    AcquisitionFailureConnection.fail_before_begin = None
+    AcquisitionFailureConnection.fail_after_begin = specific_ki
+    AcquisitionFailureConnection.fail_rollback = None
+
+    with pytest.raises(KeyboardInterrupt) as exc_ki:
+        commit_source_import(conn, req)
+    assert exc_ki.value is specific_ki
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT generation FROM source_store_meta;").fetchone()[0] == 0
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1  # connection open and usable
+
+    # B. SystemExit
+    specific_se = SystemExit(42)
+    AcquisitionFailureConnection.fail_after_begin = specific_se
+    with pytest.raises(SystemExit) as exc_se:
+        commit_source_import(conn, req)
+    assert exc_se.value is specific_se
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT generation FROM source_store_meta;").fetchone()[0] == 0
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1
+
+    # C. Ordinary Exception
+    specific_err = RuntimeError("simulated error after begin")
+    AcquisitionFailureConnection.fail_after_begin = specific_err
+    with pytest.raises(SourceImportStoreError) as exc_err:
+        commit_source_import(conn, req)
+    assert exc_err.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+    assert exc_err.value.__cause__ is specific_err
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT generation FROM source_store_meta;").fetchone()[0] == 0
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1
+
+    # 2. Failure BEFORE BEGIN takes effect in commit_source_import
+    # A. KeyboardInterrupt
+    AcquisitionFailureConnection.fail_before_begin = specific_ki
+    AcquisitionFailureConnection.fail_after_begin = None
+    with pytest.raises(KeyboardInterrupt) as exc_ki_pre:
+        commit_source_import(conn, req)
+    assert exc_ki_pre.value is specific_ki
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1
+
+    # B. Ordinary Exception
+    AcquisitionFailureConnection.fail_before_begin = specific_err
+    with pytest.raises(SourceImportStoreError) as exc_err_pre:
+        commit_source_import(conn, req)
+    assert exc_err_pre.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+    assert exc_err_pre.value.__cause__ is specific_err
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1
+
+    # 3. Matching behavior in read and initialization stores
+    AcquisitionFailureConnection.fail_before_begin = None
+    AcquisitionFailureConnection.fail_after_begin = specific_ki
+    with pytest.raises(KeyboardInterrupt) as exc_read_ki:
+        read_source_import_store(conn)
+    assert exc_read_ki.value is specific_ki
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1
+
+    with pytest.raises(KeyboardInterrupt) as exc_init_ki:
+        initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+    assert exc_init_ki.value is specific_ki
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT 1;").fetchone()[0] == 1
+
+    # 4. Pre-existing caller transaction is NEVER rolled back
+    AcquisitionFailureConnection.fail_after_begin = None
+    conn.execute("BEGIN;")
+    assert conn.in_transaction is True
+
+    # commit_source_import with pre-existing caller tx
+    with pytest.raises(SourceImportStoreError) as exc_tx1:
+        commit_source_import(conn, req)
+    assert exc_tx1.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+    assert conn.in_transaction is True, (
+        "Pre-existing caller transaction was rolled back!"
+    )
+
+    # read_source_import_store with pre-existing caller tx
+    with pytest.raises(SourceImportStoreError) as exc_tx2:
+        read_source_import_store(conn)
+    assert exc_tx2.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+    assert conn.in_transaction is True, (
+        "Pre-existing caller transaction was rolled back!"
+    )
+
+    # initialize_source_import_store with pre-existing caller tx
+    with pytest.raises(SourceImportStoreError) as exc_tx3:
+        initialize_source_import_store(conn, device_id=dev_id, active_source=active_key)
+    assert exc_tx3.value.reason == SourceImportStoreReason.STORAGE_FAILURE
+    assert conn.in_transaction is True, (
+        "Pre-existing caller transaction was rolled back!"
+    )
+
+    conn.execute("ROLLBACK;")
+    assert conn.in_transaction is False
+
+    # 5. Dual failure with ExceptionGroup / BaseExceptionGroup
+    rollback_err = sqlite3.OperationalError("simulated rollback fail")
+    AcquisitionFailureConnection.fail_after_begin = specific_ki
+    AcquisitionFailureConnection.fail_rollback = rollback_err
+
+    with pytest.raises(BaseExceptionGroup) as exc_grp_base:
+        commit_source_import(conn, req)
+    assert exc_grp_base.value.exceptions[0] is specific_ki
+    assert exc_grp_base.value.exceptions[1] is rollback_err
+    conn.close()
+
+    conn2 = sqlite3.connect(db_file, factory=AcquisitionFailureConnection)
+    conn2.execute("PRAGMA foreign_keys = ON;")
+    AcquisitionFailureConnection.fail_after_begin = specific_err
+    AcquisitionFailureConnection.fail_rollback = rollback_err
+    with pytest.raises(ExceptionGroup) as exc_grp_norm:
+        commit_source_import(conn2, req)
+    assert exc_grp_norm.value.exceptions[0] is specific_err
+    assert exc_grp_norm.value.exceptions[1] is rollback_err
+
+    AcquisitionFailureConnection.fail_after_begin = None
+    AcquisitionFailureConnection.fail_rollback = None
+    conn2.close()
