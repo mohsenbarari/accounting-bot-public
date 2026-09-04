@@ -1,0 +1,1411 @@
+WORK PACKAGE: WP-14 / source-raw-codec.v1
+PHASE: 1
+RECORDED AT UTC: 2026-09-03T16:11:22.136911+00:00
+BRANCH: codex/phase-01-source-raw-codec
+EXECUTION BASELINE: a80f899aeb53feeffe9928d078de7aee68bdb6a4
+TESTED CODE: f4895f992accbe6dff6f6910643962ae264343ac
+DELIVERY: following documentation-only commit; actual SHA reported after creation.
+PLATFORM: native local Windows, Python 3.13.15. Local Linux NOT RUN; native PR CI PENDING.
+ENVIRONMENT: unchanged frozen dependencies, workspace-local pytest temp root,
+previously installed pinned UV/Python runtime and cache. Both mypy commands run on
+Windows; --platform win32 is static typing, not native Linux execution.
+Original captured stdout/stderr, argv and timestamps remain outside Git in
+work/reviews/wp14-implementation-20260903. Published output normalizes line endings
+and removes trailing whitespace only unless expressly labeled DERIVED.
+Hashes refer to original log bytes. The full node log contains existing synthetic
+XML parameter values; only the 173 added nodes are reproduced as a DERIVED index.
+An initial blocked-network sync log is retained as sync-sandbox-failure.log; the
+same frozen command succeeded with authorized PyPI access and no manifest changes.
+Development-only failed runs were corrected before this fixed tested-code commit;
+the final command evidence below covers the delivered bytes.
+
+CHECK: sync
+COMMAND: uv sync --frozen --all-packages --all-groups
+RECORDED AT UTC: 2026-09-03T15:33:20.334132+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: f6ffe9e29295020f189ea94b618dfd6154e3b8826f428741a222a9460ced678d
+CAPTURED OUTPUT:
+Building accounting-contracts @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/contracts
+   Building accounting-domain @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/domain
+   Building accounting-local-agent @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/local_agent
+   Building accounting-persistence @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/persistence
+   Building accounting-reporting @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/reporting
+   Building accounting-server-api @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/server_api
+   Building accounting-worker @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/worker
+      Built accounting-worker @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/worker
+      Built accounting-contracts @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/contracts
+      Built accounting-local-agent @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/local_agent
+      Built accounting-domain @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/domain
+      Built accounting-persistence @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/persistence
+      Built accounting-server-api @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/server_api
+      Built accounting-reporting @ file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/reporting
+Prepared 7 packages in 3.78s
+Installed 85 packages in 4.41s
+ + accounting-contracts==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/contracts)
+ + accounting-domain==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/domain)
+ + accounting-local-agent==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/local_agent)
+ + accounting-persistence==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/persistence)
+ + accounting-reporting==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/packages/reporting)
+ + accounting-server-api==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/server_api)
+ + accounting-worker==0.1.0 (from file:///C:/Users/mmcha/OneDrive/Documents/ChatGPT/accounting_bot/work/reviews/wp14-implementation-20260903/checkout/apps/worker)
+ + aiofiles==25.1.0
+ + aiogram==3.31.0
+ + aiohappyeyeballs==2.7.1
+ + aiohttp==3.14.3
+ + aiosignal==1.4.0
+ + alembic==1.19.1
+ + altgraph==0.17.5
+ + annotated-doc==0.0.5
+ + annotated-types==0.8.0
+ + anyio==4.14.2
+ + ast-serialize==0.8.0
+ + attrs==26.1.0
+ + certifi==2026.7.22
+ + cffi==2.1.1
+ + charset-normalizer==3.5.1
+ + click==8.5.0
+ + colorama==0.4.6
+ + cryptography==50.0.1
+ + docker==7.2.0
+ + fastapi==0.141.1
+ + frozenlist==1.8.0
+ + greenlet==3.5.5
+ + h11==0.16.0
+ + httpcore==1.0.9
+ + httptools==0.8.0
+ + httpx==0.28.1
+ + hypothesis==6.167.0
+ + idna==3.19
+ + iniconfig==2.3.0
+ + jinja2==3.1.6
+ + librt==0.15.0
+ + lxml==6.1.2
+ + magic-filter==1.0.12
+ + mako==1.4.1
+ + markupsafe==3.0.3
+ + multidict==6.7.1
+ + mypy==2.3.1
+ + mypy-extensions==1.1.0
+ + packaging==26.3
+ + pathspec==1.1.1
+ + pefile==2024.8.26
+ + persiantools==6.2.0
+ + playwright==1.62.0
+ + pluggy==1.6.0
+ + propcache==0.5.2
+ + psycopg==3.3.4
+ + psycopg-binary==3.3.4
+ + pycparser==3.0
+ + pydantic==2.13.5
+ + pydantic-core==2.46.5
+ + pydantic-settings==2.15.0
+ + pyee==13.0.1
+ + pygments==2.21.0
+ + pyinstaller==6.22.2
+ + pyinstaller-hooks-contrib==2026.7
+ + pytest==9.1.1
+ + pytest-asyncio==1.4.0
+ + python-dotenv==1.2.3
+ + pywin32==312
+ + pywin32-ctypes==0.2.3
+ + pyyaml==6.0.3
+ + requests==2.34.2
+ + ruff==0.16.5
+ + setuptools==84.0.0
+ + sortedcontainers==2.4.0
+ + sqlalchemy==2.0.52
+ + starlette==1.6.0
+ + testcontainers==4.15.0
+ + typing-extensions==4.16.0
+ + typing-inspection==0.4.4
+ + tzdata==2026.3
+ + urllib3==2.7.0
+ + uvicorn==0.52.4
+ + watchdog==6.0.0
+ + watchfiles==1.2.0
+ + websockets==17.1
+ + wrapt==2.4.0
+ + yarl==1.24.5
+
+CHECK: lock
+COMMAND: uv lock --check
+RECORDED AT UTC: 2026-09-03T15:33:20.363516+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 07c6ff62d7ceb5ba18416873caf5c7b56d6e25553e40875dbce13c14ed5e846d
+CAPTURED OUTPUT:
+Resolved 88 packages in 2ms
+
+CHECK: format
+COMMAND: uv run ruff format --check .
+RECORDED AT UTC: 2026-09-03T16:03:38.858946+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 8f54ec861a76fc44aebfec6bc4ffd4a23bf75dceacc9ae5028bb9d634db66a53
+CAPTURED OUTPUT:
+131 files already formatted
+
+CHECK: lint
+COMMAND: uv run ruff check .
+RECORDED AT UTC: 2026-09-03T16:03:38.933350+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+CAPTURED OUTPUT:
+All checks passed!
+
+CHECK: mypy
+COMMAND: uv run mypy .
+RECORDED AT UTC: 2026-09-03T16:03:39.446670+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 5149c97c5155de1dad6ad4d58d7973a2c434b8aacdbf7571e2ff062a8f8c7181
+CAPTURED OUTPUT:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 55 source files
+
+CHECK: mypy-win32
+COMMAND: uv run mypy --platform win32 .
+RECORDED AT UTC: 2026-09-03T16:03:39.845614+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 5149c97c5155de1dad6ad4d58d7973a2c434b8aacdbf7571e2ff062a8f8c7181
+CAPTURED OUTPUT:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 55 source files
+
+CHECK: dedicated
+COMMAND: uv run pytest tests/test_source_raw_codec.py tests/test_source_raw_codec_composition.py -v
+RECORDED AT UTC: 2026-09-03T16:03:46.674221+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 3bffebc7981458ddefbefb17317e570b9eecb8978490330699b482aee131083f
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 173 items
+
+tests\test_source_raw_codec.py ......................................... [ 23%]
+........................................................................ [ 65%]
+..........................................................               [ 98%]
+tests\test_source_raw_codec_composition.py ..                            [100%]
+
+============================= 173 passed in 6.26s =============================
+
+CHECK: collect
+COMMAND: uv run pytest --collect-only -q
+RECORDED AT UTC: 2026-09-03T16:03:47.705224+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 5e3fb7da4c8e9f796014c75bc6ce35030b0b74602b0acea81eb7a69240ebe62f
+CAPTURED OUTPUT:
+tests/test_architecture_guard.py: 14
+tests/test_canonical_date.py: 10
+tests/test_canonical_hashing.py: 18
+tests/test_imports.py: 7
+tests/test_raw_input_contracts.py: 15
+tests/test_save_import_coordinator.py: 40
+tests/test_source_binding.py: 71
+tests/test_source_change_plan.py: 25
+tests/test_source_fiscal_evidence.py: 56
+tests/test_source_identity_projection.py: 99
+tests/test_source_identity_projection_composition.py: 6
+tests/test_source_raw_codec.py: 171
+tests/test_source_raw_codec_composition.py: 2
+tests/test_source_requiredness.py: 53
+tests/test_source_watch_runtime.py: 33
+tests/test_source_watch_runtime_native.py: 3
+tests/test_xlsx_snapshot_acquisition.py: 74
+tests/test_xlsx_source_identity.py: 111
+tests/test_xlsx_source_identity_lifecycle.py: 37
+tests/test_xlsx_source_reader.py: 45
+tests/test_xlsx_source_reader_raw_contract_regressions.py: 7
+tests/test_xlsx_source_reader_sst_activity_regressions.py: 59
+
+CHECK: full
+COMMAND: uv run pytest -v
+RECORDED AT UTC: 2026-09-03T16:05:16.615768+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: a3337bfd550b6c383c6bf55abbb98f0c8323e8f4b4ee0a7a637ccf61db19e4e0
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 956 items
+
+tests\test_architecture_guard.py ..............                          [  1%]
+tests\test_canonical_date.py ..........                                  [  2%]
+tests\test_canonical_hashing.py ..................                       [  4%]
+tests\test_imports.py .......                                            [  5%]
+tests\test_raw_input_contracts.py ...............                        [  6%]
+tests\test_save_import_coordinator.py .................................. [ 10%]
+......                                                                   [ 10%]
+tests\test_source_binding.py ........................................... [ 15%]
+............................                                             [ 18%]
+tests\test_source_change_plan.py .........................               [ 20%]
+tests\test_source_fiscal_evidence.py ................................... [ 24%]
+.....................                                                    [ 26%]
+tests\test_source_identity_projection.py ............................... [ 30%]
+....................................................................     [ 37%]
+tests\test_source_identity_projection_composition.py ......              [ 37%]
+tests\test_source_raw_codec.py ......................................... [ 42%]
+........................................................................ [ 49%]
+..........................................................               [ 55%]
+tests\test_source_raw_codec_composition.py ..                            [ 55%]
+tests\test_source_requiredness.py ...................................... [ 59%]
+...............                                                          [ 61%]
+tests\test_source_watch_runtime.py .................................     [ 64%]
+tests\test_source_watch_runtime_native.py ...                            [ 65%]
+tests\test_xlsx_snapshot_acquisition.py ......s..............s....s...s. [ 68%]
+..s.......
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 2.9079s | baseline_current_rss_mib: 29.14 MiB | call_peak_rss_mib: 60.07 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 577088ba262056568b253745b70df591201387bccb3e55e4aced3257069e6c2b | platform: win32
+................................                               [ 72%]
+tests\test_xlsx_source_identity.py ..................................... [ 76%]
+........................................................................ [ 84%]
+..                                                                       [ 84%]
+tests\test_xlsx_source_identity_lifecycle.py ........................... [ 87%]
+..........                                                               [ 88%]
+tests\test_xlsx_source_reader.py ......................................
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 2.6945s | baseline_current_rss_mib: 29.32 MiB | call_peak_rss_mib: 60.39 MiB | rows: 15000 | platform: win32
+. [ 92%]
+......                                                                   [ 93%]
+tests\test_xlsx_source_reader_raw_contract_regressions.py .......        [ 93%]
+tests\test_xlsx_source_reader_sst_activity_regressions.py .............. [ 95%]
+.............................................                            [100%]
+
+=========================== short test summary info ===========================
+SKIPPED [4] tests\test_xlsx_snapshot_acquisition.py:134: Account lacks SeCreateSymbolicLinkPrivilege (WinError/errno 1314)
+SKIPPED [1] tests\test_xlsx_snapshot_acquisition.py:1174: POSIX permission check only applicable on POSIX
+================== 951 passed, 5 skipped in 80.20s (0:01:20) ==================
+
+CHECK: benchmark-rc13
+COMMAND: uv run pytest tests/test_source_raw_codec.py -k rc13 -v -s
+RECORDED AT UTC: 2026-09-03T16:05:22.536974+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 0f4aac3b2d99b1713c7cca4e702ce1cc24332ac7014da5e87b01fc84ca108e6e
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 171 items / 170 deselected / 1 selected
+
+tests\test_source_raw_codec.py {"rows_checked": 15000, "planner_items_checked": 15000, "max_caller_payloads_retained": 1, "encoded_bytes": 6563472, "fixture_seconds": 1.7134080000000722, "encode_seconds": 0.18975020000743825, "decode_seconds": 0.9731411000025219, "snapshot_seconds": 1.1848969000002398, "planner_seconds": 0.09925049999992552, "peak_rss_mib": 120.23046875}
+.
+
+====================== 1 passed, 170 deselected in 5.40s ======================
+
+CHECK: benchmark-xi14
+COMMAND: uv run pytest tests/test_xlsx_source_identity.py::test_xi14_combined_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T16:05:28.682421+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 5a257521f5dddd7da7d886929f37ba14f182d98fa69484b2e7413a49289974b1
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_source_identity.py {"fixture_seconds": 2.0581765000001724, "peak_rss_mib": 82.84765625, "rows": 15000, "seconds": 2.718629299999975}
+.
+
+============================== 1 passed in 5.61s ==============================
+
+CHECK: benchmark-xr12
+COMMAND: uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T16:05:35.064213+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 36e9bd41b8b4f5bf3b423ee775023d76f29b5def5728938226754a3ceac0a8c6
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_source_reader.py
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 2.8214s | baseline_current_rss_mib: 29.16 MiB | call_peak_rss_mib: 58.61 MiB | rows: 15000 | platform: win32
+.
+
+============================== 1 passed in 5.81s ==============================
+
+CHECK: benchmark-sa14
+COMMAND: uv run pytest tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark -v -s
+RECORDED AT UTC: 2026-09-03T16:05:43.812184+00:00
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 967aba178c6b798f1bfe11981edb28ec648007eab395f862cc62ae0524c7ce66
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests\test_xlsx_snapshot_acquisition.py
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 2.9271s | baseline_current_rss_mib: 29.12 MiB | call_peak_rss_mib: 60.20 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 95e8bb2c1374e98af78e86f0fe8e37c5703be10c6f5cfe57c6f7cfb29545deca | platform: win32
+.
+
+============================== 1 passed in 8.18s ==============================
+
+CHECK: derived node index
+COMMAND: uv run pytest --collect-only -q -o addopts=
+EXIT CODE: 0
+ORIGINAL FULL NODE LOG SHA256: 086f22d2250064b2e44b9ecbb90ba0ed865f6215068719d1405abe5d0c163564
+ORIGINAL BASELINE NODE LOG SHA256: 79b3972cc8614cef04f19f9e2aa7602dafcfbf49040a5b61a685a5f7718302d0
+DERIVED OUTPUT (173 added nodes; all 783 baseline nodes retained):
+tests/test_source_raw_codec.py::test_rc01_public_api_and_valid_row_subclass
+tests/test_source_raw_codec.py::test_rc01_inert_import_with_negative_control[normal-0]
+tests/test_source_raw_codec.py::test_rc01_inert_import_with_negative_control[inject_write-73]
+tests/test_source_raw_codec.py::test_rc02_literal_complete_golden_vectors[0]
+tests/test_source_raw_codec.py::test_rc02_literal_complete_golden_vectors[1]
+tests/test_source_raw_codec.py::test_rc02_literal_complete_golden_vectors[2]
+tests/test_source_raw_codec.py::test_rc02_literal_complete_golden_vectors[3]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[None]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[ \t\r\n]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[\u06f0\u06f1\u06f2\u0663\u0664]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[\xe9]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[e\u0301]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[\u0627\u0644\u0641\u200c\u0628]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[quote" slash/ back\\]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[\x00\x01\x08\x0c\t\n\r]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[\U0001f600]
+tests/test_source_raw_codec.py::test_rc03_text_and_null_are_preserved[\u2028\u2029]
+tests/test_source_raw_codec.py::test_rc03_original_date_text_is_preserved[None]
+tests/test_source_raw_codec.py::test_rc03_original_date_text_is_preserved[ \u06f1\u06f4\u06f0\u06f5/\u06f1/\u06f1 ]
+tests/test_source_raw_codec.py::test_rc03_original_date_text_is_preserved[\u0661\u0664\u0660\u0665-\u0661-\u0661]
+tests/test_source_raw_codec.py::test_rc03_original_date_text_is_preserved[1405/01/01]
+tests/test_source_raw_codec.py::test_rc03_blank_date_remains_an_upstream_contract_error[]
+tests/test_source_raw_codec.py::test_rc03_blank_date_remains_an_upstream_contract_error[ \t]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[0]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[-12]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[ \u06f0\u06f0\u06f1.\u06f0\u06f0 ]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[value4]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[value5]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[value6]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[value7]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[value8]
+tests/test_source_raw_codec.py::test_rc04_exact_numeric_types_and_tuples[value9]
+tests/test_source_raw_codec.py::test_rc04_integral_decimal_toman[value0]
+tests/test_source_raw_codec.py::test_rc04_integral_decimal_toman[value1]
+tests/test_source_raw_codec.py::test_rc04_integral_decimal_toman[ \u06f0\u06f0\u06f1 ]
+tests/test_source_raw_codec.py::test_rc04_integral_decimal_toman[10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000]
+tests/test_source_raw_codec.py::test_rc04_integral_decimal_toman[-500]
+tests/test_source_raw_codec.py::test_rc04_context_settings_flags_and_failure_preserved[False-2-ROUND_UP-0]
+tests/test_source_raw_codec.py::test_rc04_context_settings_flags_and_failure_preserved[False-50-ROUND_DOWN-1]
+tests/test_source_raw_codec.py::test_rc04_context_settings_flags_and_failure_preserved[True-2-ROUND_UP-0]
+tests/test_source_raw_codec.py::test_rc04_context_settings_flags_and_failure_preserved[True-50-ROUND_DOWN-1]
+tests/test_source_raw_codec.py::test_rc05_scalar_subclasses_rejected_only_at_codec[1_0]
+tests/test_source_raw_codec.py::test_rc05_scalar_subclasses_rejected_only_at_codec[1_1]
+tests/test_source_raw_codec.py::test_rc05_scalar_subclasses_rejected_only_at_codec[value2]
+tests/test_source_raw_codec.py::test_rc05_invalid_encoder_root[None]
+tests/test_source_raw_codec.py::test_rc05_invalid_encoder_root[False]
+tests/test_source_raw_codec.py::test_rc05_invalid_encoder_root[1]
+tests/test_source_raw_codec.py::test_rc05_invalid_encoder_root[1.0]
+tests/test_source_raw_codec.py::test_rc05_invalid_encoder_root[row]
+tests/test_source_raw_codec.py::test_rc05_invalid_encoder_root[value5]
+tests/test_source_raw_codec.py::test_rc05_invalid_encoder_root[value6]
+tests/test_source_raw_codec.py::test_rc05_invalid_encoder_root[value7]
+tests/test_source_raw_codec.py::test_rc05_invalid_root_class_descriptor_is_never_called[error]
+tests/test_source_raw_codec.py::test_rc05_invalid_root_class_descriptor_is_never_called[spoof]
+tests/test_source_raw_codec.py::test_rc05_invalid_root_class_descriptor_is_never_called[context]
+tests/test_source_raw_codec.py::test_rc05_invalid_root_class_descriptor_is_never_called[cancel]
+tests/test_source_raw_codec.py::test_rc05_invalid_decoder_root[None]
+tests/test_source_raw_codec.py::test_rc05_invalid_decoder_root[True]
+tests/test_source_raw_codec.py::test_rc05_invalid_decoder_root[1]
+tests/test_source_raw_codec.py::test_rc05_invalid_decoder_root[bytes]
+tests/test_source_raw_codec.py::test_rc05_invalid_decoder_root[value4]
+tests/test_source_raw_codec.py::test_rc05_invalid_decoder_root[value5]
+tests/test_source_raw_codec.py::test_rc05_invalid_decoder_root[[]]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[[]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[[]]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[null]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[false]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape["text"]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[{}]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[{"a":"x","a":"y"}]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[[\xff]]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[\xef\xbb\xbf[]]
+tests/test_source_raw_codec.py::test_rc05_malformed_json_and_root_shape[[] []]
+tests/test_source_raw_codec.py::test_rc05_numeric_tokens_fail_during_parsing[1]
+tests/test_source_raw_codec.py::test_rc05_numeric_tokens_fail_during_parsing[-0]
+tests/test_source_raw_codec.py::test_rc05_numeric_tokens_fail_during_parsing[1.0]
+tests/test_source_raw_codec.py::test_rc05_numeric_tokens_fail_during_parsing[1e20]
+tests/test_source_raw_codec.py::test_rc05_numeric_tokens_fail_during_parsing[NaN]
+tests/test_source_raw_codec.py::test_rc05_numeric_tokens_fail_during_parsing[Infinity]
+tests/test_source_raw_codec.py::test_rc05_numeric_tokens_fail_during_parsing[-Infinity]
+tests/test_source_raw_codec.py::test_rc05_numeric_tokens_fail_during_parsing[99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[0-source-raw-codec.v2]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[1-raw-source-contract.v2]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[2-source-hash.v2]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[3-unknown]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[3-None]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[4-not-a-uuid]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[4-00000000-0000-4000-8000-000000000001]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[4-00000000-0000-7000-0000-000000000001]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[4-00000000000070008000000000000001]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[5-0000000000000000000000000000000000000000000000000000000000000000]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[5-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[5-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF]
+tests/test_source_raw_codec.py::test_rc06_envelope_uuid_and_hash_rejection[5-True]
+tests/test_source_raw_codec.py::test_rc06_exact_whitelist_and_shape[missing]
+tests/test_source_raw_codec.py::test_rc06_exact_whitelist_and_shape[extra]
+tests/test_source_raw_codec.py::test_rc06_exact_whitelist_and_shape[duplicate]
+tests/test_source_raw_codec.py::test_rc06_exact_whitelist_and_shape[reordered]
+tests/test_source_raw_codec.py::test_rc06_exact_whitelist_and_shape[derived]
+tests/test_source_raw_codec.py::test_rc06_exact_whitelist_and_shape[bad_pair]
+tests/test_source_raw_codec.py::test_rc06_exact_whitelist_and_shape[bad_name]
+tests/test_source_raw_codec.py::test_rc06_exact_whitelist_and_shape[bad_envelope]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged0]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged1]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged2]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged3]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged4]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged5]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged6]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged7]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged8]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged9]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged10]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged11]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged12]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged13]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged14]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged15]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged16]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged17]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged18]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged19]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged20]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged21]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged22]
+tests/test_source_raw_codec.py::test_rc06_bad_tags_and_scalar_grammar[tagged23]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged0-1]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged1-1]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged2-0]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged3-1]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged4-1]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged5-semantic5]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged6-semantic6]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged7-semantic7]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged8-semantic8]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_scalars_with_matching_semantic_hash[tagged9-semantic9]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_uuid_spellings[uppercase]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_uuid_spellings[braces]
+tests/test_source_raw_codec.py::test_rc06_noncanonical_uuid_spellings[urn]
+tests/test_source_raw_codec.py::test_rc06_field_type_rules_remain_upstream[0-value0]
+tests/test_source_raw_codec.py::test_rc06_field_type_rules_remain_upstream[1-value1]
+tests/test_source_raw_codec.py::test_rc06_field_type_rules_remain_upstream[5-value2]
+tests/test_source_raw_codec.py::test_rc07_noncanonical_byte_spellings[space]
+tests/test_source_raw_codec.py::test_rc07_noncanonical_byte_spellings[newline]
+tests/test_source_raw_codec.py::test_rc07_noncanonical_byte_spellings[unicode_escape]
+tests/test_source_raw_codec.py::test_rc07_noncanonical_byte_spellings[slash_escape]
+tests/test_source_raw_codec.py::test_rc07_noncanonical_byte_spellings[surrogate]
+tests/test_source_raw_codec.py::test_rc07_permutation_and_deep_immutability
+tests/test_source_raw_codec.py::test_rc10_generated_rows_against_scalar_and_wire_oracles
+tests/test_source_raw_codec.py::test_rc10_generated_invalid_tags
+tests/test_source_raw_codec.py::test_rc11_exact_safe_public_error[invalid_input-Invalid Raw codec input.]
+tests/test_source_raw_codec.py::test_rc11_exact_safe_public_error[invalid_payload-Invalid Raw row payload.]
+tests/test_source_raw_codec.py::test_rc11_error_reason_is_strict[invalid_input]
+tests/test_source_raw_codec.py::test_rc11_error_reason_is_strict[invalid_payload]
+tests/test_source_raw_codec.py::test_rc11_error_reason_is_strict[None]
+tests/test_source_raw_codec.py::test_rc11_foreign_enum_and_payload_markers
+tests/test_source_raw_codec.py::test_rc11_exact_causes_cancellation_and_context[failure0-encode]
+tests/test_source_raw_codec.py::test_rc11_exact_causes_cancellation_and_context[failure0-decode]
+tests/test_source_raw_codec.py::test_rc11_exact_causes_cancellation_and_context[failure1-encode]
+tests/test_source_raw_codec.py::test_rc11_exact_causes_cancellation_and_context[failure1-decode]
+tests/test_source_raw_codec.py::test_rc11_exact_causes_cancellation_and_context[failure2-encode]
+tests/test_source_raw_codec.py::test_rc11_exact_causes_cancellation_and_context[failure2-decode]
+tests/test_source_raw_codec.py::test_rc11_preclassified_error_not_wrapped_again
+tests/test_source_raw_codec.py::test_rc12_semantic_mutation_oracles[decimal-tuple]
+tests/test_source_raw_codec.py::test_rc12_semantic_mutation_oracles[raw-text]
+tests/test_source_raw_codec.py::test_rc12_semantic_mutation_oracles[source-hash]
+tests/test_source_raw_codec.py::test_rc12_call_purity_and_injected_write_control
+tests/test_source_raw_codec.py::test_rc13_complete_15000_row_replay_benchmark
+tests/test_source_raw_codec_composition.py::test_rc08_representation_changes_do_not_create_revisions_or_membership
+tests/test_source_raw_codec_composition.py::test_rc09_identified_xlsx_reorder_formula_cache_and_raw_edit
+
+CHECK: mutation Decimal sign/scale
+COMMAND: python ../mutation_probe.py decimal-tuple
+EXIT CODE: 1 (EXPECTED semantic assertion failure)
+ORIGINAL LOG SHA256: c7895122f6d86debaa15b689ab4dadc04688607fc0c35d7e8b216d54f421aaec
+CAPTURED OUTPUT:
+IN_MEMORY_MUTATION: decimal-tuple
+F                                                                        [100%]
+================================== FAILURES ===================================
+_____________ test_rc12_semantic_mutation_oracles[decimal-tuple] ______________
+
+case = 'decimal-tuple'
+
+    @pytest.mark.parametrize("case", ["decimal-tuple", "raw-text", "source-hash"])
+    def test_rc12_semantic_mutation_oracles(case: str) -> None:
+        row = make_row(0, {"quantity_raw": Decimal("-0.00")})
+        if case == "source-hash":
+            tree = wire_tree(row)
+            tree[5] = "0" * 64
+            rejected = False
+            try:
+                decode_source_raw_row(wire(tree))
+            except SourceRawCodecError as error:
+                rejected = error.reason is SourceRawCodecReason.INVALID_PAYLOAD
+            assert rejected is True
+        else:
+            tagged = dict(json.loads(encode_source_raw_row(row))[6])
+            if case == "decimal-tuple":
+>               assert tagged["quantity_raw"] == ["decimal", ["1", "0", "-2"]]
+E               AssertionError: assert ['decimal', ['0', '0', '0']] == ['decimal', ['1', '0', '-2']]
+E
+E                 At index 1 diff: ['0', '0', '0'] != ['1', '0', '-2']
+E                 Use -v to get more diff
+
+tests\test_source_raw_codec.py:753: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_source_raw_codec.py::test_rc12_semantic_mutation_oracles[decimal-tuple]
+1 failed in 0.27s
+
+CHECK: mutation original Raw text
+COMMAND: python ../mutation_probe.py raw-text
+EXIT CODE: 1 (EXPECTED semantic assertion failure)
+ORIGINAL LOG SHA256: 8a8414af420f31a90c86f5d9ad9df7908d1d54b454cc01a047b25fb023523808
+CAPTURED OUTPUT:
+IN_MEMORY_MUTATION: raw-text
+F                                                                        [100%]
+================================== FAILURES ===================================
+________________ test_rc12_semantic_mutation_oracles[raw-text] ________________
+
+case = 'raw-text'
+
+    @pytest.mark.parametrize("case", ["decimal-tuple", "raw-text", "source-hash"])
+    def test_rc12_semantic_mutation_oracles(case: str) -> None:
+        row = make_row(0, {"quantity_raw": Decimal("-0.00")})
+        if case == "source-hash":
+            tree = wire_tree(row)
+            tree[5] = "0" * 64
+            rejected = False
+            try:
+                decode_source_raw_row(wire(tree))
+            except SourceRawCodecError as error:
+                rejected = error.reason is SourceRawCodecReason.INVALID_PAYLOAD
+            assert rejected is True
+        else:
+            tagged = dict(json.loads(encode_source_raw_row(row))[6])
+            if case == "decimal-tuple":
+                assert tagged["quantity_raw"] == ["decimal", ["1", "0", "-2"]]
+            else:
+>               assert tagged["date_raw"] == ["text", " ۱۴۰۵/۱/۱ "]
+E               AssertionError: assert ['text', '1405/1/1'] == ['text', ' ۱۴۰۵/۱/۱ ']
+E
+E                 At index 1 diff: '1405/1/1' != ' ۱۴۰۵/۱/۱ '
+E                 Use -v to get more diff
+
+tests\test_source_raw_codec.py:755: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_source_raw_codec.py::test_rc12_semantic_mutation_oracles[raw-text]
+1 failed in 0.25s
+
+CHECK: mutation decoder hash agreement
+COMMAND: python ../mutation_probe.py source-hash
+EXIT CODE: 1 (EXPECTED semantic assertion failure)
+ORIGINAL LOG SHA256: ad9cc942d7a46a1760827a0a0895e5102fcc3ce8fb555a99d337b63fcd06ef0a
+CAPTURED OUTPUT:
+IN_MEMORY_MUTATION: source-hash
+F                                                                        [100%]
+================================== FAILURES ===================================
+______________ test_rc12_semantic_mutation_oracles[source-hash] _______________
+
+case = 'source-hash'
+
+    @pytest.mark.parametrize("case", ["decimal-tuple", "raw-text", "source-hash"])
+    def test_rc12_semantic_mutation_oracles(case: str) -> None:
+        row = make_row(0, {"quantity_raw": Decimal("-0.00")})
+        if case == "source-hash":
+            tree = wire_tree(row)
+            tree[5] = "0" * 64
+            rejected = False
+            try:
+                decode_source_raw_row(wire(tree))
+            except SourceRawCodecError as error:
+                rejected = error.reason is SourceRawCodecReason.INVALID_PAYLOAD
+>           assert rejected is True
+E           assert False is True
+
+tests\test_source_raw_codec.py:749: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_source_raw_codec.py::test_rc12_semantic_mutation_oracles[source-hash]
+1 failed in 0.26s
+
+CHECK: mutation verification
+COMMAND: python ../mutation_probe.py
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 27308594964b4dbfdf2f2d5f49f38c49d91c7580b5d376fc60f4783d4ea4c66b
+CAPTURED OUTPUT:
+{
+  "mode": "isolated-process in-memory function/constructor mutation",
+  "product_bytes_unchanged": true,
+  "product_sha256": "efff3c9d8d6781ad0eba37bb01457c0963ef9b0f1a659ceae3878026b740f1b1",
+  "cases": [
+    {
+      "case": "decimal-tuple",
+      "exit_code": 1,
+      "log": "mutation-decimal-tuple.log",
+      "intended_semantic_assertion_failed": true
+    },
+    {
+      "case": "raw-text",
+      "exit_code": 1,
+      "log": "mutation-raw-text.log",
+      "intended_semantic_assertion_failed": true
+    },
+    {
+      "case": "source-hash",
+      "exit_code": 1,
+      "log": "mutation-source-hash.log",
+      "intended_semantic_assertion_failed": true
+    }
+  ],
+  "result": "PASS"
+}
+
+CHECK: R1 regression before correction
+COMMAND: python ../run_r1_boundary.py before
+EXIT CODE: outer 0; pytest 1 EXPECTED: four semantic failures
+ORIGINAL LOG SHA256: d30ce85206b80b3aed996c83ffd5336461aa6e8500454da479ad78e41331255b
+DERIVED OUTPUT: literal angle characters rendered as [LT] and [GT]; no other substantive change:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 171 items / 167 deselected / 4 selected
+
+tests\test_source_raw_codec.py FFFF                                      [100%]
+
+================================== FAILURES ===================================
+_______ test_rc05_invalid_root_class_descriptor_is_never_called[error] ________
+
+mode = 'error'
+
+    @pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+    def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -[GT] None:
+        touches: list[str] = []
+        with localcontext(Context(prec=13)) as context:
+            before = context_view(context)
+
+            class WrongRoot:
+                @property
+                def __class__(self) -[GT] type[object]:
+                    touches.append(mode)
+                    if mode == "error":
+                        raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "cancel":
+                        raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "context":
+                        context.prec = 2
+                        context.flags[Inexact] = True
+                    return ValidatedSourceRow
+
+            try:
+[GT]               encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_source_raw_codec.py:344:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+packages\contracts\src\accounting_contracts\source_raw_codec.py:171: in encode_source_raw_row
+    if not isinstance(row, ValidatedSourceRow):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = [LT]test_source_raw_codec.test_rc05_invalid_root_class_descriptor_is_never_called.[LT]locals[GT].WrongRoot object at 0x00000270B91BEBA0[GT]
+
+    @property
+    def __class__(self) -[GT] type[object]:
+        touches.append(mode)
+        if mode == "error":
+[GT]           raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+E           ValueError: SYNTHETIC-INPUT-CLASS-MARKER
+
+tests\test_source_raw_codec.py:335: ValueError
+
+During handling of the above exception, another exception occurred:
+
+mode = 'error'
+
+    @pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+    def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -[GT] None:
+        touches: list[str] = []
+        with localcontext(Context(prec=13)) as context:
+            before = context_view(context)
+
+            class WrongRoot:
+                @property
+                def __class__(self) -[GT] type[object]:
+                    touches.append(mode)
+                    if mode == "error":
+                        raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "cancel":
+                        raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "context":
+                        context.prec = 2
+                        context.flags[Inexact] = True
+                    return ValidatedSourceRow
+
+            try:
+                encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+            except BaseException as error:
+[GT]               assert type(error) is SourceRawCodecError
+E               AssertionError: assert [LT]class 'ValueError'[GT] is SourceRawCodecError
+E                +  where [LT]class 'ValueError'[GT] = type(ValueError('SYNTHETIC-INPUT-CLASS-MARKER'))
+
+tests\test_source_raw_codec.py:346: AssertionError
+_______ test_rc05_invalid_root_class_descriptor_is_never_called[spoof] ________
+
+row = [LT]test_source_raw_codec.test_rc05_invalid_root_class_descriptor_is_never_called.[LT]locals[GT].WrongRoot object at 0x00000270B91BEE40[GT]
+
+    def encode_source_raw_row(row: ValidatedSourceRow) -[GT] bytes:
+        """Encode a validated row, preserving exact supported scalar representations."""
+        if not isinstance(row, ValidatedSourceRow):
+            raise SourceRawCodecError(SourceRawCodecReason.INVALID_INPUT)
+        try:
+            with localcontext():
+[GT]               return _encode_row(row)
+                       ^^^^^^^^^^^^^^^^
+
+packages\contracts\src\accounting_contracts\source_raw_codec.py:175:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+row = [LT]test_source_raw_codec.test_rc05_invalid_root_class_descriptor_is_never_called.[LT]locals[GT].WrongRoot object at 0x00000270B91BEE40[GT]
+
+    def _encode_row(row: ValidatedSourceRow) -[GT] bytes:
+        fields = [
+            [column.field_name, _encode_scalar(row.raw_values[column.field_name])]
+[GT]           for column in RAW_CONTRACT_REGISTRY.sheets[row.sheet_name].raw_columns
+                                                       ^^^^^^^^^^^^^^
+        ]
+E       AttributeError: 'WrongRoot' object has no attribute 'sheet_name'
+
+packages\contracts\src\accounting_contracts\source_raw_codec.py:68: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+mode = 'spoof'
+
+    @pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+    def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -[GT] None:
+        touches: list[str] = []
+        with localcontext(Context(prec=13)) as context:
+            before = context_view(context)
+
+            class WrongRoot:
+                @property
+                def __class__(self) -[GT] type[object]:
+                    touches.append(mode)
+                    if mode == "error":
+                        raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "cancel":
+                        raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "context":
+                        context.prec = 2
+                        context.flags[Inexact] = True
+                    return ValidatedSourceRow
+
+            try:
+[GT]               encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_source_raw_codec.py:344:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+row = [LT]test_source_raw_codec.test_rc05_invalid_root_class_descriptor_is_never_called.[LT]locals[GT].WrongRoot object at 0x00000270B91BEE40[GT]
+
+    def encode_source_raw_row(row: ValidatedSourceRow) -[GT] bytes:
+        """Encode a validated row, preserving exact supported scalar representations."""
+        if not isinstance(row, ValidatedSourceRow):
+            raise SourceRawCodecError(SourceRawCodecReason.INVALID_INPUT)
+        try:
+            with localcontext():
+                return _encode_row(row)
+        except SourceRawCodecError:
+            raise
+        except Exception as exc:
+[GT]           raise SourceRawCodecError(SourceRawCodecReason.INVALID_INPUT) from exc
+E           accounting_contracts.source_raw_codec.SourceRawCodecError: Invalid Raw codec input.
+
+packages\contracts\src\accounting_contracts\source_raw_codec.py:179: SourceRawCodecError
+
+During handling of the above exception, another exception occurred:
+
+mode = 'spoof'
+
+    @pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+    def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -[GT] None:
+        touches: list[str] = []
+        with localcontext(Context(prec=13)) as context:
+            before = context_view(context)
+
+            class WrongRoot:
+                @property
+                def __class__(self) -[GT] type[object]:
+                    touches.append(mode)
+                    if mode == "error":
+                        raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "cancel":
+                        raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "context":
+                        context.prec = 2
+                        context.flags[Inexact] = True
+                    return ValidatedSourceRow
+
+            try:
+                encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+            except BaseException as error:
+                assert type(error) is SourceRawCodecError
+                assert error.reason is SourceRawCodecReason.INVALID_INPUT
+                assert error.args == ("Invalid Raw codec input.",)
+[GT]               assert error.__cause__ is None
+E               assert AttributeError("'WrongRoot' object has no attribute 'sheet_name'") is None
+E                +  where AttributeError("'WrongRoot' object has no attribute 'sheet_name'") = SourceRawCodecError('Invalid Raw codec input.').__cause__
+
+tests\test_source_raw_codec.py:349: AssertionError
+______ test_rc05_invalid_root_class_descriptor_is_never_called[context] _______
+
+row = [LT]test_source_raw_codec.test_rc05_invalid_root_class_descriptor_is_never_called.[LT]locals[GT].WrongRoot object at 0x00000270B91BEF90[GT]
+
+    def encode_source_raw_row(row: ValidatedSourceRow) -[GT] bytes:
+        """Encode a validated row, preserving exact supported scalar representations."""
+        if not isinstance(row, ValidatedSourceRow):
+            raise SourceRawCodecError(SourceRawCodecReason.INVALID_INPUT)
+        try:
+            with localcontext():
+[GT]               return _encode_row(row)
+                       ^^^^^^^^^^^^^^^^
+
+packages\contracts\src\accounting_contracts\source_raw_codec.py:175:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+row = [LT]test_source_raw_codec.test_rc05_invalid_root_class_descriptor_is_never_called.[LT]locals[GT].WrongRoot object at 0x00000270B91BEF90[GT]
+
+    def _encode_row(row: ValidatedSourceRow) -[GT] bytes:
+        fields = [
+            [column.field_name, _encode_scalar(row.raw_values[column.field_name])]
+[GT]           for column in RAW_CONTRACT_REGISTRY.sheets[row.sheet_name].raw_columns
+                                                       ^^^^^^^^^^^^^^
+        ]
+E       AttributeError: 'WrongRoot' object has no attribute 'sheet_name'
+
+packages\contracts\src\accounting_contracts\source_raw_codec.py:68: AttributeError
+
+The above exception was the direct cause of the following exception:
+
+mode = 'context'
+
+    @pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+    def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -[GT] None:
+        touches: list[str] = []
+        with localcontext(Context(prec=13)) as context:
+            before = context_view(context)
+
+            class WrongRoot:
+                @property
+                def __class__(self) -[GT] type[object]:
+                    touches.append(mode)
+                    if mode == "error":
+                        raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "cancel":
+                        raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "context":
+                        context.prec = 2
+                        context.flags[Inexact] = True
+                    return ValidatedSourceRow
+
+            try:
+[GT]               encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_source_raw_codec.py:344:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+row = [LT]test_source_raw_codec.test_rc05_invalid_root_class_descriptor_is_never_called.[LT]locals[GT].WrongRoot object at 0x00000270B91BEF90[GT]
+
+    def encode_source_raw_row(row: ValidatedSourceRow) -[GT] bytes:
+        """Encode a validated row, preserving exact supported scalar representations."""
+        if not isinstance(row, ValidatedSourceRow):
+            raise SourceRawCodecError(SourceRawCodecReason.INVALID_INPUT)
+        try:
+            with localcontext():
+                return _encode_row(row)
+        except SourceRawCodecError:
+            raise
+        except Exception as exc:
+[GT]           raise SourceRawCodecError(SourceRawCodecReason.INVALID_INPUT) from exc
+E           accounting_contracts.source_raw_codec.SourceRawCodecError: Invalid Raw codec input.
+
+packages\contracts\src\accounting_contracts\source_raw_codec.py:179: SourceRawCodecError
+
+During handling of the above exception, another exception occurred:
+
+mode = 'context'
+
+    @pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+    def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -[GT] None:
+        touches: list[str] = []
+        with localcontext(Context(prec=13)) as context:
+            before = context_view(context)
+
+            class WrongRoot:
+                @property
+                def __class__(self) -[GT] type[object]:
+                    touches.append(mode)
+                    if mode == "error":
+                        raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "cancel":
+                        raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "context":
+                        context.prec = 2
+                        context.flags[Inexact] = True
+                    return ValidatedSourceRow
+
+            try:
+                encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+            except BaseException as error:
+                assert type(error) is SourceRawCodecError
+                assert error.reason is SourceRawCodecReason.INVALID_INPUT
+                assert error.args == ("Invalid Raw codec input.",)
+[GT]               assert error.__cause__ is None
+E               assert AttributeError("'WrongRoot' object has no attribute 'sheet_name'") is None
+E                +  where AttributeError("'WrongRoot' object has no attribute 'sheet_name'") = SourceRawCodecError('Invalid Raw codec input.').__cause__
+
+tests\test_source_raw_codec.py:349: AssertionError
+_______ test_rc05_invalid_root_class_descriptor_is_never_called[cancel] _______
+
+mode = 'cancel'
+
+    @pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+    def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -[GT] None:
+        touches: list[str] = []
+        with localcontext(Context(prec=13)) as context:
+            before = context_view(context)
+
+            class WrongRoot:
+                @property
+                def __class__(self) -[GT] type[object]:
+                    touches.append(mode)
+                    if mode == "error":
+                        raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "cancel":
+                        raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "context":
+                        context.prec = 2
+                        context.flags[Inexact] = True
+                    return ValidatedSourceRow
+
+            try:
+[GT]               encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_source_raw_codec.py:344:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+packages\contracts\src\accounting_contracts\source_raw_codec.py:171: in encode_source_raw_row
+    if not isinstance(row, ValidatedSourceRow):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = [LT]test_source_raw_codec.test_rc05_invalid_root_class_descriptor_is_never_called.[LT]locals[GT].WrongRoot object at 0x00000270B91BF770[GT]
+
+    @property
+    def __class__(self) -[GT] type[object]:
+        touches.append(mode)
+        if mode == "error":
+            raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+        if mode == "cancel":
+[GT]           raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+E           KeyboardInterrupt: SYNTHETIC-INPUT-CLASS-MARKER
+
+tests\test_source_raw_codec.py:337: KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+mode = 'cancel'
+
+    @pytest.mark.parametrize("mode", ["error", "spoof", "context", "cancel"])
+    def test_rc05_invalid_root_class_descriptor_is_never_called(mode: str) -[GT] None:
+        touches: list[str] = []
+        with localcontext(Context(prec=13)) as context:
+            before = context_view(context)
+
+            class WrongRoot:
+                @property
+                def __class__(self) -[GT] type[object]:
+                    touches.append(mode)
+                    if mode == "error":
+                        raise ValueError("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "cancel":
+                        raise KeyboardInterrupt("SYNTHETIC-INPUT-CLASS-MARKER")
+                    if mode == "context":
+                        context.prec = 2
+                        context.flags[Inexact] = True
+                    return ValidatedSourceRow
+
+            try:
+                encode_source_raw_row(WrongRoot())  # type: ignore[arg-type]
+            except BaseException as error:
+[GT]               assert type(error) is SourceRawCodecError
+E               AssertionError: assert [LT]class 'KeyboardInterrupt'[GT] is SourceRawCodecError
+E                +  where [LT]class 'KeyboardInterrupt'[GT] = type(KeyboardInterrupt('SYNTHETIC-INPUT-CLASS-MARKER'))
+
+tests\test_source_raw_codec.py:346: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_source_raw_codec.py::test_rc05_invalid_root_class_descriptor_is_never_called[error]
+FAILED tests/test_source_raw_codec.py::test_rc05_invalid_root_class_descriptor_is_never_called[spoof]
+FAILED tests/test_source_raw_codec.py::test_rc05_invalid_root_class_descriptor_is_never_called[context]
+FAILED tests/test_source_raw_codec.py::test_rc05_invalid_root_class_descriptor_is_never_called[cancel]
+====================== 4 failed, 167 deselected in 0.48s ======================
+
+CHECK: R1 regression after correction
+COMMAND: python ../run_r1_boundary.py after
+EXIT CODE: 0; pytest 0: four passed
+ORIGINAL LOG SHA256: 6eb950c14876a826aff9e2bf5db0fa7f86e3a0fa6606dc805e5e0423427fa4c5
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 171 items / 167 deselected / 4 selected
+
+tests\test_source_raw_codec.py ....                                      [100%]
+
+====================== 4 passed, 167 deselected in 0.34s ======================
+
+CHECK: rollback
+COMMAND: python ../verify_rollback.py
+EXIT CODE: 0 (individual Git statuses follow)
+ORIGINAL LOG SHA256: 3505c0f7bd0cb9df983ebb6d0c657955b1bc108185a980162c2d0b02d44884f4
+CAPTURED OUTPUT:
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+COMMAND: git rev-parse HEAD
+EXIT CODE: 0
+f4895f992accbe6dff6f6910643962ae264343ac
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+COMMAND: git status --porcelain
+EXIT CODE: 0
+?? handoffs/phase-01/wp-14-source-raw-codec/
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+COMMAND: git rev-list a80f899aeb53feeffe9928d078de7aee68bdb6a4..f4895f992accbe6dff6f6910643962ae264343ac
+EXIT CODE: 0
+f4895f992accbe6dff6f6910643962ae264343ac
+80339af0b882aad1180b03fed3807ae08220fe3d
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903
+COMMAND: git clone --no-hardlinks --branch codex/phase-01-source-raw-codec C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+EXIT CODE: 0
+Cloning into 'C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout'...
+done.
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git switch -c codex/wp14-rollback-verification
+EXIT CODE: 0
+Switched to a new branch 'codex/wp14-rollback-verification'
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git rev-parse HEAD
+EXIT CODE: 0
+f4895f992accbe6dff6f6910643962ae264343ac
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git -c user.name=mohsen barari -c user.email=mohsenbarari.v2@gmail.com revert --no-edit f4895f992accbe6dff6f6910643962ae264343ac
+EXIT CODE: 0
+[codex/wp14-rollback-verification 66b89df] Revert "fix(contracts): classify Raw codec input without caller descriptors"
+ Date: Thu Sep 3 19:37:37 2026 +0330
+ 2 files changed, 1 insertion(+), 34 deletions(-)
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git -c user.name=mohsen barari -c user.email=mohsenbarari.v2@gmail.com revert --no-edit 80339af0b882aad1180b03fed3807ae08220fe3d
+EXIT CODE: 0
+[codex/wp14-rollback-verification 745ce5f] Revert "feat(contracts): implement lossless Raw row codec under WP-14"
+ Date: Thu Sep 3 19:37:38 2026 +0330
+ 8 files changed, 1572 deletions(-)
+ delete mode 100644 packages/contracts/src/accounting_contracts/source_raw_codec.py
+ delete mode 100644 tests/source_raw_codec_benchmark.py
+ delete mode 100644 tests/source_raw_codec_import_probe.py
+ delete mode 100644 tests/source_raw_codec_support.py
+ delete mode 100644 tests/test_source_raw_codec.py
+ delete mode 100644 tests/test_source_raw_codec_composition.py
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git diff --quiet a80f899aeb53feeffe9928d078de7aee68bdb6a4
+EXIT CODE: 0
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git diff --cached --quiet a80f899aeb53feeffe9928d078de7aee68bdb6a4
+EXIT CODE: 0
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git status --porcelain
+EXIT CODE: 0
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git rev-parse HEAD^{tree}
+EXIT CODE: 0
+1b16b81d5d5727935ddb7cd8e998dc1d6d61540a
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\rollback-code-r1-checkout
+COMMAND: git rev-parse a80f899aeb53feeffe9928d078de7aee68bdb6a4^{tree}
+EXIT CODE: 0
+1b16b81d5d5727935ddb7cd8e998dc1d6d61540a
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+COMMAND: git rev-parse HEAD
+EXIT CODE: 0
+f4895f992accbe6dff6f6910643962ae264343ac
+
+DIRECTORY: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+COMMAND: git status --porcelain
+EXIT CODE: 0
+?? handoffs/phase-01/wp-14-source-raw-codec/
+
+CHECK: rollback verification
+COMMAND: python ../verify_rollback.py
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 9c56219b82f068712e301f7547d1b20b25849877c9e298e61dea0b0c0cc94895
+CAPTURED OUTPUT:
+{
+  "code": "f4895f992accbe6dff6f6910643962ae264343ac",
+  "baseline": "a80f899aeb53feeffe9928d078de7aee68bdb6a4",
+  "isolated_scratch": "C:\\Users\\mmcha\\OneDrive\\Documents\\ChatGPT\\accounting_bot\\work\\reviews\\wp14-implementation-20260903\\rollback-code-r1-checkout",
+  "worktree_and_index_equal_baseline": true,
+  "code_checkout_unchanged": true,
+  "scope": "two fixed code commits only; excludes subsequent handoff documentation",
+  "source_status_before_and_after": "?? handoffs/phase-01/wp-14-source-raw-codec/",
+  "reverted_commits": [
+    "f4895f992accbe6dff6f6910643962ae264343ac",
+    "80339af0b882aad1180b03fed3807ae08220fe3d"
+  ],
+  "result": "PASS"
+}
+
+CHECK: code scan
+COMMAND: python ../scan_implementation.py
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 4b02569c16a8fde562cd91d609c1a6943b03b2ff2507993bf7f6daa08a9b44aa
+CAPTURED OUTPUT:
+{"branch_blobs_scanned": 10, "candidate_files": 2, "files_scanned": 170, "finding_count": 0, "findings": [], "head": "f4895f992accbe6dff6f6910643962ae264343ac", "tracked_files": 168}
+
+CHECK: scope/evidence
+COMMAND: python ../verify_code.py
+EXIT CODE: 0
+ORIGINAL LOG SHA256: 689b235e7ed60ecdbce316903174a417841cdc0cce2e9c76cba3a061d1342acf
+CAPTURED OUTPUT:
+{
+  "baseline": "a80f899aeb53feeffe9928d078de7aee68bdb6a4",
+  "head": "f4895f992accbe6dff6f6910643962ae264343ac",
+  "code_files": [
+    "packages/contracts/README.md",
+    "packages/contracts/src/accounting_contracts/__init__.py",
+    "packages/contracts/src/accounting_contracts/source_raw_codec.py",
+    "tests/source_raw_codec_benchmark.py",
+    "tests/source_raw_codec_import_probe.py",
+    "tests/source_raw_codec_support.py",
+    "tests/test_source_raw_codec.py",
+    "tests/test_source_raw_codec_composition.py"
+  ],
+  "file_sha256": {
+    "packages/contracts/README.md": "3b13448a21855d6697db6bf386b49a4c95cbc17fcd1421baa102da257b931135",
+    "packages/contracts/src/accounting_contracts/__init__.py": "b57a107170e38530b25c2d1f89c11b19626197a86b37e4c36a015d4c81d10d43",
+    "packages/contracts/src/accounting_contracts/source_raw_codec.py": "efff3c9d8d6781ad0eba37bb01457c0963ef9b0f1a659ceae3878026b740f1b1",
+    "tests/source_raw_codec_benchmark.py": "f0685aea1a0497482b07795ddf5668dc43021cadfbb10ff63b35d527cdd5e998",
+    "tests/source_raw_codec_import_probe.py": "ec6e9820398090ff2b8ac4084ff4d834411bde4215f9b0fefed427839bee7471",
+    "tests/source_raw_codec_support.py": "6cb194eea13602227ab8e488c07dc063ebbdc7ab496120982b7d1efb1180b44a",
+    "tests/test_source_raw_codec.py": "7f8ffcaf2d5160bdc3521375c9cde2109e6d924ee30c3a6adac669cefa8fed49",
+    "tests/test_source_raw_codec_composition.py": "c5c4425a9eab41763e7b288adead120a3e2849621493ed5050663e93ca067205"
+  },
+  "baseline_nodes_retained": 783,
+  "new_nodes": 173,
+  "collected": 956,
+  "existing_test_files_unchanged": 29,
+  "new_exports": 5,
+  "required_checks_passed": [
+    "benchmark-rc13",
+    "benchmark-sa14",
+    "benchmark-xi14",
+    "benchmark-xr12",
+    "collect",
+    "dedicated",
+    "format",
+    "full",
+    "lint",
+    "lock",
+    "mypy",
+    "mypy-win32",
+    "nodes",
+    "sync"
+  ],
+  "mutation_semantic_failures_verified": 3,
+  "product_sha256": "efff3c9d8d6781ad0eba37bb01457c0963ef9b0f1a659ceae3878026b740f1b1",
+  "gate_g1": "OPEN / IN PROGRESS",
+  "result": "PASS"
+}
+
+CHECK: independent R1 original input-boundary probe
+COMMAND: python ../reviewer_input_boundary_probe.py
+EXIT CODE: 0; output independently inspected
+ORIGINAL LOG SHA256: 6beed88d70330cc10b0899160ee1eff2c18464cf53eee85d8b6de4e99ca19c45
+CAPTURED OUTPUT:
+{
+  "exception_type": "SourceRawCodecError",
+  "is_typed_codec_error": true,
+  "is_original_ordinary_failure": false,
+  "public_message": "Invalid Raw codec input."
+}
+
+CHECK: independent reviewer-dedicated
+COMMAND: python -m pytest -p no:cacheprovider tests/test_source_raw_codec.py tests/test_source_raw_codec_composition.py -v -s
+EXIT CODE: 0
+
+STREAM: stdout
+ORIGINAL LOG SHA256: 19e068fb745977ce74c18162e890dda7838dfa8d554a81d9546a9dd2cc2e1eba
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 169 items
+
+tests\test_source_raw_codec.py ......................................................................................................................................................................{"rows_checked": 15000, "planner_items_checked": 15000, "max_caller_payloads_retained": 1, "encoded_bytes": 6563472, "fixture_seconds": 1.7469292999999197, "encode_seconds": 0.17917520004539256, "decode_seconds": 0.9166331999931572, "snapshot_seconds": 1.005652899999859, "planner_seconds": 0.08344979999992574, "peak_rss_mib": 122.83984375}
+.
+tests\test_source_raw_codec_composition.py ..
+
+============================= 169 passed in 6.08s =============================
+
+STREAM: stderr
+ORIGINAL LOG SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+CAPTURED OUTPUT:
+
+
+CHECK: independent reviewer-independent-probe
+COMMAND: python C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\reviewer_probe.py
+EXIT CODE: 0
+
+STREAM: stdout
+ORIGINAL LOG SHA256: d7f79bbf28dede75fa3ccd25a54649fdf51b0d55f864c64a7b71f605fac0d835
+CAPTURED OUTPUT:
+{
+  "result": "PASS",
+  "tested_code_commit": "80339af0b882aad1180b03fed3807ae08220fe3d",
+  "product_sha256": "ce55f83665dfb7cf4faa41ba3498c3ce301553db2fccd5c66e64745c1e9a52aa",
+  "counts": {
+    "boundary_roundtrips_with_full_context_preservation": 10,
+    "forbidden_nodes_rejected_at_each_leaf": 204,
+    "alternative_wire_spellings_rejected": 7,
+    "oversized_exponent_does_not_change_interpreter_limit": 2,
+    "parser_serializer_exact_causes_and_cancellation": 6
+  },
+  "interpreter_digit_limit_unchanged": 4300,
+  "decimal_context_identity_and_all_settings_unchanged": true
+}
+
+STREAM: stderr
+ORIGINAL LOG SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+CAPTURED OUTPUT:
+
+
+CHECK: independent reviewer-r1-dedicated
+COMMAND: python -m pytest -p no:cacheprovider tests/test_source_raw_codec.py tests/test_source_raw_codec_composition.py -v -s
+EXIT CODE: 0
+
+STREAM: stdout
+ORIGINAL LOG SHA256: cb49a41441ffcad5f6445bfa7201cc405ee30a2497ccc8e4c88019a7ea1355ba
+CAPTURED OUTPUT:
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\checkout
+configfile: pyproject.toml
+plugins: anyio-4.14.2, hypothesis-6.167.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 173 items
+
+tests\test_source_raw_codec.py ..........................................................................................................................................................................{"rows_checked": 15000, "planner_items_checked": 15000, "max_caller_payloads_retained": 1, "encoded_bytes": 6563472, "fixture_seconds": 1.7319753000001583, "encode_seconds": 0.18782990004774547, "decode_seconds": 0.9615546999343678, "snapshot_seconds": 0.8382880999997724, "planner_seconds": 0.09396719999995184, "peak_rss_mib": 124.1640625}
+.
+tests\test_source_raw_codec_composition.py ..
+
+============================= 173 passed in 6.07s =============================
+
+STREAM: stderr
+ORIGINAL LOG SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+CAPTURED OUTPUT:
+
+
+CHECK: independent reviewer-r1-independent-probe
+COMMAND: python C:\Users\mmcha\OneDrive\Documents\ChatGPT\accounting_bot\work\reviews\wp14-implementation-20260903\reviewer_probe_r1.py
+EXIT CODE: 0
+
+STREAM: stdout
+ORIGINAL LOG SHA256: 38e37122260f16378b368a2ed6d3320953ec425664bef8c111fa2f0532fcdca7
+CAPTURED OUTPUT:
+{
+  "result": "PASS",
+  "tested_code_commit": "f4895f992accbe6dff6f6910643962ae264343ac",
+  "product_sha256": "efff3c9d8d6781ad0eba37bb01457c0963ef9b0f1a659ceae3878026b740f1b1",
+  "counts": {
+    "boundary_roundtrips_with_full_context_preservation": 10,
+    "forbidden_nodes_rejected_at_each_leaf": 204,
+    "alternative_wire_spellings_rejected": 7,
+    "oversized_exponent_does_not_change_interpreter_limit": 2,
+    "parser_serializer_exact_causes_and_cancellation": 6
+  },
+  "interpreter_digit_limit_unchanged": 4300,
+  "decimal_context_identity_and_all_settings_unchanged": true
+}
+
+STREAM: stderr
+ORIGINAL LOG SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+CAPTURED OUTPUT:
+
+
+CHECK: whitespace
+COMMAND: git diff --check a80f899aeb53feeffe9928d078de7aee68bdb6a4...HEAD
+EXIT CODE: 0
+CAPTURED OUTPUT: empty
+
+FINAL SUMMARY
+173 dedicated tests passed in 6.26s. All 783 baseline nodes retained; 956 collected.
+Full local Windows: 951 passed, 5 skipped in 80.20s (four missing symlink-privilege
+cases and one POSIX-only case). No background-thread warning was emitted.
+Ruff format/lint and both full mypy commands passed; no dependency/CI change.
+RC-13: 15000 rows and 15000 complete Planner items; maximum caller payloads 1;
+6563472 encoded bytes; fixture 1.7134080s, encode 0.1897502s, decode 0.9731411s,
+snapshot reconstruction 1.1848969s, Planner 0.0992505s; call-window peak RSS
+120.23046875 MiB. Existing hash expansion costs included; no new threshold imposed.
+Original WP-05: 2.8214s / 58.61 MiB; WP-06: 2.9271s / 60.20 MiB;
+WP-12 read: 2.7186293s / 82.84765625 MiB, fixture 2.0581765s separately. Prior limits intact.
+Three in-memory mutations failed at the expected semantic assertion, not setup;
+product bytes unchanged. Fixed-code scratch rollback equals baseline index/tree.
+Initial non-author execution: 169 cases in 6.08s and 229 independent probe checks.
+Subsequent R1 found input class-descriptor execution. Four regressions fail before
+the actual-type fix and pass afterward. Final independent R1 execution at f4895f9:
+173 cases in 6.07s, 229 reviewer probe checks, and the original failing input probe
+all pass. Final fixed-document review is recorded separately; initial evidence is
+retained unchanged. The reviewer found no outstanding product issue.
+Local Linux NOT RUN; native Windows/Linux PR CI PENDING, including all four
+mandatory Windows symlink cases. Handoff validator runs after document generation;
+its exact result and final document hashes are in the external delivery report.
+No protected source, roadmap/gate, baseline test, existing contract or runtime changed.
+No publication, merge, deployment or next package performed by implementation.
+G1 remains OPEN / IN PROGRESS.

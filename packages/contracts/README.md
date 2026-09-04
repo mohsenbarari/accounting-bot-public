@@ -174,3 +174,45 @@ record Raw/revision/membership/outbox changes, including **new party membership
 after UNCHANGED**. Otherwise its later deletion could be missed. Archive views
 remain fixed; crash recovery, real-source enrollment and rollover require their
 own contracts and evidence. WP-04, WP-11 and runtime behavior remain unchanged.
+
+## Lossless Raw Row Codec (`source_raw_codec`)
+
+`source-raw-codec.v1` implements ADR-0017 for a single validated Raw row:
+
+```python
+from accounting_contracts import decode_source_raw_row, encode_source_raw_row
+
+# row is a synthetic, already validated WP-04 row.
+payload = encode_source_raw_row(row)
+restored = decode_source_raw_row(payload)
+```
+
+The deterministic UTF-8 JSON array includes versions, sheet, canonical UUID,
+source hash and all whitelist fields in registry order. Null, text, int and
+Decimal have distinct tags. Text is preserved exactly; Decimal retains its sign,
+coefficient and exponent, including negative zero and trailing zeros. Encoder
+input scalars must be exact base types; scalar subclasses are rejected without
+changing upstream validators. Valid row subclasses are accepted. The decoder
+requires exact bytes, strict grammar, a matching WP-03 source hash and byte-identical
+canonical re-encoding. It returns a new immutable WP-04 row. No I/O, arithmetic
+rounding, decimal context mutation, evaluation or Planner call occurs.
+
+Both entry points raise fixed-message `SourceRawCodecError` with INVALID_INPUT
+or INVALID_PAYLOAD. Ordinary failures retain their causes, which may contain
+diagnostic data; cancellation propagates unchanged. Do not publish raw payloads
+or arbitrary chained tracebacks as sanitized diagnostics.
+
+Codec bytes preserve representations that canonical source hashing deliberately
+equates. Different bytes with the same source hash still mean UNCHANGED to WP-04;
+they do not create revisions/events or overwrite the Raw of a committed revision.
+New-source membership after UNCHANGED remains a separate ADR-0016 obligation.
+The embedded semantic hash does not authenticate byte spelling, UUID/source
+association or durable history. This is a Raw component, not the complete Sync
+envelope or the definition of its payload_hash. Storage must separately enforce
+byte integrity, history, generation freshness and atomic Raw/membership/outbox.
+
+Work is row by row; temporary memory depends on that row's representation and
+existing canonical hashing costs. No new size/time cap or whole-workbook payload
+buffer is introduced. Parser/runtime resource limits remain applicable, and this
+codec does not provide transport admission controls. Future changes after durable
+use require a new format version and explicit migration/replay support.
