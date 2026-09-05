@@ -8,6 +8,8 @@ concurrency, crash recovery, error sanitization, property models, and 15,000-row
 from __future__ import annotations
 
 import base64
+import copy
+import dataclasses
 import gc
 import hashlib
 import importlib
@@ -21,8 +23,10 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 # Ensure test fixtures in tests/ directory can be imported
@@ -47,6 +51,7 @@ from accounting_contracts.source_binding import (
 from accounting_contracts.source_change_plan import (
     IdentityLifecycle,
     PlanAction,
+    PlanCounts,
     PriorIdentityRegistry,
     PriorIdentityState,
     build_prior_identity_registry,
@@ -2639,10 +2644,14 @@ def test_is11_cross_process_crash_and_restart_recovery(tmp_path: Path) -> None:
 
     tests_dir = Path(__file__).parent
     # Sub-case 1: Stop while transaction is open
-    script_open = f"""
-import sys, sqlite3
+    # Note: tests_dir and db_file are passed as sys.argv[1] and sys.argv[2] to
+    # guarantee safe execution across native Windows paths containing backslashes,
+    # Unicode, and spaces.
+    script_open = """import sys, sqlite3
 from pathlib import Path
-sys.path.insert(0, r'{tests_dir}')
+tests_dir = sys.argv[1]
+db_file = sys.argv[2]
+sys.path.insert(0, tests_dir)
 from datetime import datetime, UTC
 from accounting_contracts.source_binding import SourceBindingKey
 from accounting_persistence.source_import_store import (
@@ -2655,7 +2664,6 @@ from source_import_test_helpers import (
     make_sample_party_row,
 )
 
-db_file = '{db_file}'
 conn = sqlite3.connect(db_file)
 conn.execute("PRAGMA foreign_keys = ON;")
 
@@ -2682,21 +2690,42 @@ req = SourceImportRequest(
     observed_at_utc=datetime(2026, 9, 4, 10, 0, 0, tzinfo=UTC),
     file_sha256="1" * 64,
     snapshot=snap,
-    event_ids={{u1: make_deterministic_uuid7(201)}},
+    event_ids={u1: make_deterministic_uuid7(201)},
 )
 commit_source_import(conn, req)
 """
     proc1 = subprocess.Popen(
-        [sys.executable, "-c", script_open],
+        [sys.executable, "-c", script_open, str(tests_dir), str(db_file)],
         stdout=subprocess.PIPE,
         stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
-    ack1 = proc1.stdout.readline().strip() if proc1.stdout else ""
-    assert ack1 == "ACK_TX_OPEN"
-
-    proc1.terminate()
-    proc1.wait(timeout=5.0)
+    ack1 = ""
+    try:
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            line = proc1.stdout.readline() if proc1.stdout else ""
+            if line:
+                ack1 = line.strip()
+                break
+            if proc1.poll() is not None:
+                break
+            time.sleep(0.01)
+        stderr_text1 = (
+            proc1.stderr.read() if proc1.stderr and proc1.poll() is not None else ""
+        )
+        assert ack1 == "ACK_TX_OPEN", (
+            f"Subprocess 1 did not emit ACK_TX_OPEN. stderr: {stderr_text1}"
+        )
+    finally:
+        if proc1.poll() is None:
+            proc1.terminate()
+            try:
+                proc1.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                proc1.kill()
+                proc1.wait(timeout=2.0)
 
     # Reopen and verify prior state: 0 imports, 0 revisions, 0 events, gen 0
     conn_reopen = sqlite3.connect(db_file)
@@ -2727,10 +2756,12 @@ commit_source_import(conn, req)
     conn_reopen.close()
 
     # Sub-case 2: Stop after real COMMIT before return
-    script_post_commit = f"""
-import sys, sqlite3
+    # Note: tests_dir and db_file are passed as sys.argv[1] and sys.argv[2]
+    script_post_commit = """import sys, sqlite3
 from pathlib import Path
-sys.path.insert(0, r'{tests_dir}')
+tests_dir = sys.argv[1]
+db_file = sys.argv[2]
+sys.path.insert(0, tests_dir)
 from datetime import datetime, UTC
 from accounting_contracts.source_binding import SourceBindingKey
 from accounting_persistence.source_import_store import (
@@ -2742,8 +2773,6 @@ from source_import_test_helpers import (
     make_deterministic_uuid7,
     make_sample_party_row,
 )
-
-db_file = '{db_file}'
 
 class PostCommitHaltConnection(sqlite3.Connection):
     def execute(self, sql, *args, **kwargs):
@@ -2772,21 +2801,42 @@ req = SourceImportRequest(
     observed_at_utc=datetime(2026, 9, 4, 11, 0, 0, tzinfo=UTC),
     file_sha256="2" * 64,
     snapshot=snap,
-    event_ids={{u1: make_deterministic_uuid7(202)}},
+    event_ids={u1: make_deterministic_uuid7(202)},
 )
 commit_source_import(conn, req)
 """
     proc2 = subprocess.Popen(
-        [sys.executable, "-c", script_post_commit],
+        [sys.executable, "-c", script_post_commit, str(tests_dir), str(db_file)],
         stdout=subprocess.PIPE,
         stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
-    ack2 = proc2.stdout.readline().strip() if proc2.stdout else ""
-    assert ack2 == "ACK_COMMIT_DONE"
-
-    proc2.terminate()
-    proc2.wait(timeout=5.0)
+    ack2 = ""
+    try:
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            line = proc2.stdout.readline() if proc2.stdout else ""
+            if line:
+                ack2 = line.strip()
+                break
+            if proc2.poll() is not None:
+                break
+            time.sleep(0.01)
+        stderr_text2 = (
+            proc2.stderr.read() if proc2.stderr and proc2.poll() is not None else ""
+        )
+        assert ack2 == "ACK_COMMIT_DONE", (
+            f"Subprocess 2 did not emit ACK_COMMIT_DONE. stderr: {stderr_text2}"
+        )
+    finally:
+        if proc2.poll() is None:
+            proc2.terminate()
+            try:
+                proc2.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                proc2.kill()
+                proc2.wait(timeout=2.0)
 
     # Reopen: full Generation 2 persisted cleanly
     conn_post = sqlite3.connect(db_file)
@@ -3324,6 +3374,98 @@ def oracle_compute_request_digest(request: SourceImportRequest) -> str:
     return hasher.hexdigest()
 
 
+def assert_complete_receipt_matches(
+    actual: SourceImportReceipt,
+    expected: SourceImportReceipt,
+) -> None:
+    """Assert all public fields of SourceImportReceipt match expected values."""
+    assert actual.disposition == expected.disposition, (
+        f"Disposition mismatch: {actual.disposition} != {expected.disposition}"
+    )
+    assert actual.import_id == expected.import_id, (
+        f"Import ID mismatch: {actual.import_id} != {expected.import_id}"
+    )
+    assert actual.source_id == expected.source_id, (
+        f"Source ID mismatch: {actual.source_id} != {expected.source_id}"
+    )
+    assert actual.fiscal_year == expected.fiscal_year, (
+        f"Fiscal year mismatch: {actual.fiscal_year} != {expected.fiscal_year}"
+    )
+    assert actual.base_generation == expected.base_generation, (
+        f"Base generation mismatch: {actual.base_generation} != "
+        f"{expected.base_generation}"
+    )
+    assert actual.committed_generation == expected.committed_generation, (
+        f"Committed generation mismatch: {actual.committed_generation} != "
+        f"{expected.committed_generation}"
+    )
+    assert actual.file_sha256 == expected.file_sha256, (
+        f"File SHA mismatch: {actual.file_sha256} != {expected.file_sha256}"
+    )
+    assert actual.total_row_count == expected.total_row_count, (
+        f"Total row count mismatch: {actual.total_row_count} != "
+        f"{expected.total_row_count}"
+    )
+
+    # Compare total_counts field-by-field
+    assert actual.total_counts.insert_count == expected.total_counts.insert_count, (
+        f"Total insert mismatch: {actual.total_counts.insert_count} != "
+        f"{expected.total_counts.insert_count}"
+    )
+    assert actual.total_counts.edit_count == expected.total_counts.edit_count, (
+        f"Total edit mismatch: {actual.total_counts.edit_count} != "
+        f"{expected.total_counts.edit_count}"
+    )
+    assert actual.total_counts.void_count == expected.total_counts.void_count, (
+        f"Total void mismatch: {actual.total_counts.void_count} != "
+        f"{expected.total_counts.void_count}"
+    )
+    assert (
+        actual.total_counts.unchanged_count == expected.total_counts.unchanged_count
+    ), (
+        f"Total unchanged mismatch: {actual.total_counts.unchanged_count} != "
+        f"{expected.total_counts.unchanged_count}"
+    )
+    assert actual.total_counts == expected.total_counts
+
+    # Compare per_sheet_counts for each canonical sheet field-by-field
+    assert set(actual.per_sheet_counts.keys()) == set(expected.per_sheet_counts.keys())
+    for sheet_name in RAW_CONTRACT_REGISTRY.sheets:
+        assert sheet_name in actual.per_sheet_counts, (
+            f"Missing sheet {sheet_name} in actual per_sheet_counts"
+        )
+        act_sh = actual.per_sheet_counts[sheet_name]
+        exp_sh = expected.per_sheet_counts[sheet_name]
+        assert act_sh.insert_count == exp_sh.insert_count, (
+            f"Sheet {sheet_name} insert mismatch: {act_sh.insert_count} != "
+            f"{exp_sh.insert_count}"
+        )
+        assert act_sh.edit_count == exp_sh.edit_count, (
+            f"Sheet {sheet_name} edit mismatch: {act_sh.edit_count} != "
+            f"{exp_sh.edit_count}"
+        )
+        assert act_sh.void_count == exp_sh.void_count, (
+            f"Sheet {sheet_name} void mismatch: {act_sh.void_count} != "
+            f"{exp_sh.void_count}"
+        )
+        assert act_sh.unchanged_count == exp_sh.unchanged_count, (
+            f"Sheet {sheet_name} unchanged mismatch: {act_sh.unchanged_count} != "
+            f"{exp_sh.unchanged_count}"
+        )
+        assert act_sh == exp_sh
+
+    assert actual.event_count == expected.event_count, (
+        f"Event count mismatch: {actual.event_count} != {expected.event_count}"
+    )
+    assert actual.first_sequence == expected.first_sequence, (
+        f"First sequence mismatch: {actual.first_sequence} != {expected.first_sequence}"
+    )
+    assert actual.last_sequence == expected.last_sequence, (
+        f"Last sequence mismatch: {actual.last_sequence} != {expected.last_sequence}"
+    )
+    assert actual == expected
+
+
 class ImportStoreOracle:
     """Independent in-memory oracle for complete 7-table source import store state,
     provenance tracking, and change planning."""
@@ -3620,7 +3762,40 @@ class ImportStoreOracle:
                     import_id.bytes,
                 )
 
+        committed_receipt = SourceImportReceipt(
+            disposition=SourceImportDisposition.COMMITTED,
+            import_id=import_id,
+            source_id=self.active_key.source_id,
+            fiscal_year=self.active_key.fiscal_year,
+            base_generation=self.generation - 1,
+            committed_generation=self.generation,
+            file_sha256=file_sha256,
+            total_row_count=total_row_count,
+            total_counts=plan.total_counts,
+            per_sheet_counts=plan.per_sheet_counts,
+            event_count=ev_count,
+            first_sequence=first_seq,
+            last_sequence=last_seq,
+        )
+        replayed_receipt = SourceImportReceipt(
+            disposition=SourceImportDisposition.REPLAYED,
+            import_id=import_id,
+            source_id=self.active_key.source_id,
+            fiscal_year=self.active_key.fiscal_year,
+            base_generation=self.generation - 1,
+            committed_generation=self.generation,
+            file_sha256=file_sha256,
+            total_row_count=total_row_count,
+            total_counts=plan.total_counts,
+            per_sheet_counts=plan.per_sheet_counts,
+            event_count=ev_count,
+            first_sequence=first_seq,
+            last_sequence=last_seq,
+        )
+
         return {
+            "committed_receipt": committed_receipt,
+            "replayed_receipt": replayed_receipt,
             "committed_generation": self.generation,
             "event_count": ev_count,
             "first_sequence": first_seq,
@@ -3883,20 +4058,12 @@ def test_is14_hypothesis_multi_step_history_property_tests(
 
         receipt = commit_source_import(conn, req)
 
-        # 3. Compare complete receipt
-        assert receipt.disposition == SourceImportDisposition.COMMITTED
-        assert receipt.committed_generation == expected["committed_generation"]
-        assert receipt.event_count == expected["event_count"]
-        assert receipt.first_sequence == expected["first_sequence"]
-        assert receipt.last_sequence == expected["last_sequence"]
+        # 3. Compare complete receipt for COMMITTED across all public fields
+        assert_complete_receipt_matches(receipt, expected["committed_receipt"])
 
-        # Exact replay idempotency verification
+        # Exact replay idempotency verification - complete comparison for REPLAYED
         receipt_rep = commit_source_import(conn, req)
-        assert receipt_rep.disposition == SourceImportDisposition.REPLAYED
-        assert receipt_rep.committed_generation == expected["committed_generation"]
-        assert receipt_rep.event_count == expected["event_count"]
-        assert receipt_rep.first_sequence == expected["first_sequence"]
-        assert receipt_rep.last_sequence == expected["last_sequence"]
+        assert_complete_receipt_matches(receipt_rep, expected["replayed_receipt"])
 
         # Stale state rejection verification
         req_stale = SourceImportRequest(
@@ -3945,11 +4112,15 @@ def test_is14_controlled_product_code_mutations() -> None:
     dev_id = make_deterministic_uuid7(1)
     src_id = make_deterministic_uuid7(2)
 
+    observed_semantic_failures: dict[str, str] = {}
+
     def _execute_mutation(
         name: str,
         target_str: str,
         replacement_str: str,
-        probe_fn: Any,
+        probe_fn: Callable[[], None],
+        expected_failure_desc: str,
+        verify_semantic_failure: Callable[[BaseException], bool],
     ) -> None:
         assert target_str in orig_text, (
             f"Target string for mutation '{name}' not found in source!"
@@ -3970,16 +4141,28 @@ def test_is14_controlled_product_code_mutations() -> None:
             store_path.write_text(mutated_text, encoding="utf-8")
             _clear_pycache()
             importlib.reload(sis_mod)
-            # Under mutation, the probe MUST fail
-            # (raise AssertionError, pytest Failed, or BaseException)
-            probe_failed = False
+            test_mod = sys.modules[__name__]
+            for attr in dir(sis_mod):
+                if not attr.startswith("__") and hasattr(test_mod, attr):
+                    setattr(test_mod, attr, getattr(sis_mod, attr))
+
+            # Under mutation, the probe MUST fail with intended semantic failure
+            caught_exc: BaseException | None = None
             try:
                 probe_fn()
-            except (Exception, BaseException):
-                probe_failed = True
+            except BaseException as exc:
+                caught_exc = exc
 
-            assert probe_failed, (
+            assert caught_exc is not None, (
                 f"Controlled mutation '{name}' was NOT detected by test probe!"
+            )
+            assert verify_semantic_failure(caught_exc), (
+                f"Controlled mutation '{name}' failed with unexpected exception "
+                f"{type(caught_exc).__name__}: {caught_exc!r} instead of "
+                f"expected semantic failure ({expected_failure_desc})!"
+            )
+            observed_semantic_failures[name] = (
+                f"{type(caught_exc).__name__}: {caught_exc}"
             )
         finally:
             store_path.write_bytes(orig_bytes)
@@ -4025,6 +4208,11 @@ def test_is14_controlled_product_code_mutations() -> None:
         "if stored_gen != request.expected_generation:",
         "if False and stored_gen != request.expected_generation:",
         probe_stale_check,
+        "pytest Failed DID NOT RAISE SourceImportStoreError(STALE_STATE)",
+        lambda exc: (
+            (isinstance(exc, AssertionError) or type(exc).__name__ == "Failed")
+            and "DID NOT RAISE" in str(exc)
+        ),
     )
 
     # Probe 2: Unchanged membership
@@ -4063,7 +4251,9 @@ def test_is14_controlled_product_code_mutations() -> None:
             "SELECT last_import_id FROM source_memberships WHERE stable_id = ?;",
             (u.bytes,),
         ).fetchone()[0]
-        assert last_imp == imp2.bytes
+        assert last_imp == imp2.bytes, (
+            f"last_import_id mismatch: {last_imp!r} != {imp2.bytes!r}"
+        )
         conn.close()
 
     _execute_mutation(
@@ -4071,6 +4261,10 @@ def test_is14_controlled_product_code_mutations() -> None:
         "last_import_id = excluded.last_import_id;",
         "last_import_id = source_memberships.last_import_id;",
         probe_unchanged_membership,
+        "AssertionError: last_import_id mismatch",
+        lambda exc: (
+            isinstance(exc, AssertionError) and "last_import_id mismatch" in str(exc)
+        ),
     )
 
     # Probe 3: Append-only revision
@@ -4102,6 +4296,12 @@ def test_is14_controlled_product_code_mutations() -> None:
         "        SELECT RAISE(ABORT, 'Cannot update source_revisions');",
         "        SELECT 1;",
         probe_append_only_revision,
+        "pytest Failed DID NOT RAISE sqlite3.IntegrityError",
+        lambda exc: (
+            (isinstance(exc, AssertionError) or type(exc).__name__ == "Failed")
+            and "DID NOT RAISE" in str(exc)
+            and "IntegrityError" in str(exc)
+        ),
     )
 
     # Probe 4: Outbox insert
@@ -4125,7 +4325,7 @@ def test_is14_controlled_product_code_mutations() -> None:
         )
         sis_mod.commit_source_import(conn, req)
         ev_count = conn.execute("SELECT COUNT(*) FROM change_events;").fetchone()[0]
-        assert ev_count == 1
+        assert ev_count == 1, f"change_events count mismatch: {ev_count} != 1"
         conn.close()
 
     _execute_mutation(
@@ -4133,6 +4333,11 @@ def test_is14_controlled_product_code_mutations() -> None:
         "            # Insert change_events\n            cur.execute(",
         "            # Insert change_events\n            if False: cur.execute(",
         probe_outbox_insert,
+        "AssertionError: change_events count mismatch",
+        lambda exc: (
+            isinstance(exc, AssertionError)
+            and "change_events count mismatch" in str(exc)
+        ),
     )
 
     # Probe 5: Sequence advance
@@ -4158,7 +4363,7 @@ def test_is14_controlled_product_code_mutations() -> None:
         next_seq = conn.execute(
             "SELECT next_sequence FROM source_store_meta;"
         ).fetchone()[0]
-        assert next_seq == 2
+        assert next_seq == 2, f"next_sequence mismatch: {next_seq} != 2"
         conn.close()
 
     _execute_mutation(
@@ -4166,6 +4371,10 @@ def test_is14_controlled_product_code_mutations() -> None:
         "next_seq_val = last_sequence + 1",
         "next_seq_val = stored_next_seq",
         probe_sequence_advance,
+        "AssertionError: next_sequence mismatch",
+        lambda exc: (
+            isinstance(exc, AssertionError) and "next_sequence mismatch" in str(exc)
+        ),
     )
 
     # Probe 6: Request Raw digest
@@ -4211,6 +4420,20 @@ def test_is14_controlled_product_code_mutations() -> None:
         fixed_time = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
         file_sha = "a" * 64
 
+        # Precondition checks explicitly asserted:
+        sh1 = snap1.sheets["خرید-فروش"]
+        sh2 = snap2.sheets["خرید-فروش"]
+        assert sh1.sheet_snapshot_hash == sh2.sheet_snapshot_hash
+        r1 = snap1.all_rows_by_id[u]
+        r2 = snap2.all_rows_by_id[u]
+        assert r1.source_hash == r2.source_hash
+        assert r1.raw_values != r2.raw_values
+        assert r1.raw_values["quantity_raw"] == "2"
+        assert r2.raw_values["quantity_raw"] == "2.0"
+        b1 = encode_source_raw_row(r1)
+        b2 = encode_source_raw_row(r2)
+        assert b1 != b2
+
         req1 = sis_mod.SourceImportRequest(
             source_key=key,
             expected_generation=0,
@@ -4246,6 +4469,11 @@ def test_is14_controlled_product_code_mutations() -> None:
         "            hasher.update(raw_bytes)",
         "            pass  # hasher.update(raw_bytes)",
         probe_request_raw_digest,
+        "pytest Failed DID NOT RAISE SourceImportStoreError(IDEMPOTENCY_CONFLICT)",
+        lambda exc: (
+            (isinstance(exc, AssertionError) or type(exc).__name__ == "Failed")
+            and "DID NOT RAISE" in str(exc)
+        ),
     )
 
     # Probe 7: Predecessor link
@@ -4314,7 +4542,15 @@ def test_is14_controlled_product_code_mutations() -> None:
         "previous_version_hash = p_row[0]",
         "previous_version_hash = 'f' * 64",
         probe_predecessor_link,
+        "SourceImportStoreError(INCONSISTENT_STATE)",
+        lambda exc: (
+            isinstance(exc, sis_mod.SourceImportStoreError)
+            and exc.reason == sis_mod.SourceImportStoreReason.INCONSISTENT_STATE
+        ),
     )
+
+    assert len(observed_semantic_failures) == 7
+    assert store_path.read_bytes() == orig_bytes
 
 
 # ============================================================================
@@ -4674,25 +4910,34 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
     )
 
     # Instrument individual validation/projection and encode phases during commit
-    t_encode_total = 0.0
+    t_digest_encode = 0.0
+    t_revision_encode = 0.0
+    in_digest = False
     orig_encode = sis_mod_any.encode_source_raw_row
 
     def timed_encode(*args: Any, **kwargs: Any) -> bytes:
-        nonlocal t_encode_total
+        nonlocal t_digest_encode, t_revision_encode
         t0 = time.perf_counter()
         res = orig_encode(*args, **kwargs)
-        t_encode_total += time.perf_counter() - t0
+        dt = time.perf_counter() - t0
+        if in_digest:
+            t_digest_encode += dt
+        else:
+            t_revision_encode += dt
         return cast(bytes, res)
 
-    t_digest = 0.0
+    t_digest_total = 0.0
     orig_digest = sis_mod_any._compute_request_digest
 
     def timed_digest(*args: Any, **kwargs: Any) -> Any:
-        nonlocal t_digest
+        nonlocal t_digest_total, in_digest
+        in_digest = True
         t0 = time.perf_counter()
-        res = orig_digest(*args, **kwargs)
-        t_digest += time.perf_counter() - t0
-        return res
+        try:
+            return orig_digest(*args, **kwargs)
+        finally:
+            t_digest_total += time.perf_counter() - t0
+            in_digest = False
 
     t_req = 0.0
     orig_req = sis_mod_any.evaluate_source_requiredness
@@ -4756,12 +5001,13 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
         else "Linux /proc/self/status VmRSS"
     )
 
-    t_encode = t_encode_total
+    t_digest_pure = max(0.0, t_digest_total - t_digest_encode)
+    t_encode_total = t_digest_encode + t_revision_encode
     t_sql_write = conn.t_sql_write
     t_commit_phase = conn.t_commit_phase
     t_req_fisc = t_req + t_fisc
-    t_val_proj = t_digest + t_req_fisc + t_plan
-    t_accounted = t_val_proj + t_encode + t_sql_write + t_commit_phase
+    t_val_proj_pure = t_digest_pure + t_req_fisc + t_plan
+    t_accounted = t_val_proj_pure + t_encode_total + t_sql_write + t_commit_phase
     t_residual = max(0.0, t_commit_total - t_accounted)
 
     assert receipt.disposition == SourceImportDisposition.COMMITTED
@@ -4951,10 +5197,14 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
     assert v_gen2.next_sequence == row_count + edit_count + 1
 
     print(
-        f"[IS-16] Breakdown: fixture={t_fix:.3f}s, val_proj={t_val_proj:.3f}s "
-        f"(digest={t_digest:.3f}s, req_fisc={t_req_fisc:.3f}s, plan={t_plan:.3f}s), "
-        f"encode={t_encode:.3f}s, sql_write={t_sql_write:.3f}s, "
-        f"commit_phase={t_commit_phase:.3f}s, residual={t_residual:.3f}s, "
+        f"[IS-16] Breakdown: fixture={t_fix:.3f}s, "
+        f"val_proj={t_val_proj_pure:.3f}s "
+        f"(digest_pure={t_digest_pure:.3f}s, req_fisc={t_req_fisc:.3f}s, "
+        f"plan={t_plan:.3f}s), "
+        f"encode={t_encode_total:.3f}s (digest_enc={t_digest_encode:.3f}s, "
+        f"rev_enc={t_revision_encode:.3f}s), "
+        f"sql_write={t_sql_write:.3f}s, commit_phase={t_commit_phase:.3f}s, "
+        f"residual={t_residual:.3f}s, "
         f"restart_read={t_restart:.3f}s, verify={t_verify:.3f}s, "
         f"replay={t_replay:.3f}s, gen2={t_gen2:.3f}s\n"
         f"[IS-16] Memory: Baseline RSS={baseline_rss:.2f} MiB, "
@@ -6171,3 +6421,256 @@ def test_r4_04_transaction_acquisition_owned_cleanup(tmp_path: Path) -> None:
     AcquisitionFailureConnection.fail_after_begin = None
     AcquisitionFailureConnection.fail_rollback = None
     conn2.close()
+
+
+# ============================================================================
+# Round 5 Deep Verifications: R3.a, R3.b, W1 Controls
+# ============================================================================
+
+
+def test_r5_01_receipt_complete_comparison_and_negative_controls() -> None:
+    """R3.a: Verify complete Receipt comparison covers all public fields
+    across COMMITTED and REPLAYED dispositions, and verify negative controls."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    dev_id = make_deterministic_uuid7(1)
+    src_id = make_deterministic_uuid7(2)
+    key = SourceBindingKey(source_id=src_id, fiscal_year=1403)
+    initialize_source_import_store(conn, device_id=dev_id, active_source=key)
+
+    u_party = make_deterministic_uuid7(10)
+    u_bs = make_deterministic_uuid7(11)
+    snap = build_synthetic_snapshot(
+        [(u_party, make_sample_party_row("شخص تست"))],
+        [
+            (
+                u_bs,
+                make_sample_buy_sell_row(
+                    "1403/01/01", "شخص تست", "خرید", "کالا", "1", "100"
+                ),
+            )
+        ],
+        [],
+        [],
+    )
+    imp_id = make_deterministic_uuid7(100)
+    ev1 = make_deterministic_uuid7(201)
+    ev2 = make_deterministic_uuid7(202)
+    req = SourceImportRequest(
+        source_key=key,
+        expected_generation=0,
+        import_id=imp_id,
+        observed_at_utc=datetime(2026, 9, 5, 10, 0, 0, tzinfo=UTC),
+        file_sha256="a" * 64,
+        snapshot=snap,
+        event_ids={u_party: ev1, u_bs: ev2},
+    )
+
+    oracle = ImportStoreOracle(device_id=dev_id, active_key=key)
+    expected = oracle.plan_and_apply(req)
+    receipt = commit_source_import(conn, req)
+
+    # 1. Positive control: assert_complete_receipt_matches succeeds on real receipt
+    assert_complete_receipt_matches(receipt, expected["committed_receipt"])
+
+    # Replay positive control
+    receipt_rep = commit_source_import(conn, req)
+    assert_complete_receipt_matches(receipt_rep, expected["replayed_receipt"])
+
+    # 2. Negative controls: each field mutation is caught
+    # A. Codex reproduced case: wrong import_id (valid UUIDv7)
+    wrong_imp_id = make_deterministic_uuid7(999)
+    bad_receipt_imp = dataclasses.replace(receipt, import_id=wrong_imp_id)
+    with pytest.raises(AssertionError) as exc_imp:
+        assert_complete_receipt_matches(bad_receipt_imp, expected["committed_receipt"])
+    assert "Import ID mismatch" in str(exc_imp.value)
+
+    # B. Wrong disposition
+    bad_receipt_disp = dataclasses.replace(
+        receipt, disposition=SourceImportDisposition.REPLAYED
+    )
+    with pytest.raises(AssertionError) as exc_disp:
+        assert_complete_receipt_matches(bad_receipt_disp, expected["committed_receipt"])
+    assert "Disposition mismatch" in str(exc_disp.value)
+
+    # C. Wrong source_id
+    bad_receipt_src = dataclasses.replace(
+        receipt, source_id=make_deterministic_uuid7(888)
+    )
+    with pytest.raises(AssertionError) as exc_src:
+        assert_complete_receipt_matches(bad_receipt_src, expected["committed_receipt"])
+    assert "Source ID mismatch" in str(exc_src.value)
+
+    # D. Wrong fiscal_year
+    bad_receipt_fy = dataclasses.replace(receipt, fiscal_year=1404)
+    with pytest.raises(AssertionError) as exc_fy:
+        assert_complete_receipt_matches(bad_receipt_fy, expected["committed_receipt"])
+    assert "Fiscal year mismatch" in str(exc_fy.value)
+
+    # E. Wrong base_generation
+    bad_receipt_bg = copy.copy(receipt)
+    object.__setattr__(bad_receipt_bg, "base_generation", 99)
+    with pytest.raises(AssertionError) as exc_bg:
+        assert_complete_receipt_matches(bad_receipt_bg, expected["committed_receipt"])
+    assert "Base generation mismatch" in str(exc_bg.value)
+
+    # F. Wrong committed_generation
+    bad_receipt_cg = copy.copy(receipt)
+    object.__setattr__(bad_receipt_cg, "committed_generation", 99)
+    with pytest.raises(AssertionError) as exc_cg:
+        assert_complete_receipt_matches(bad_receipt_cg, expected["committed_receipt"])
+    assert "Committed generation mismatch" in str(exc_cg.value)
+
+    # G. Wrong file_sha256
+    bad_receipt_sha = dataclasses.replace(receipt, file_sha256="f" * 64)
+    with pytest.raises(AssertionError) as exc_sha:
+        assert_complete_receipt_matches(bad_receipt_sha, expected["committed_receipt"])
+    assert "File SHA mismatch" in str(exc_sha.value)
+
+    # H. Wrong total_row_count
+    bad_receipt_tr = copy.copy(receipt)
+    object.__setattr__(bad_receipt_tr, "total_row_count", 999)
+    with pytest.raises(AssertionError) as exc_tr:
+        assert_complete_receipt_matches(bad_receipt_tr, expected["committed_receipt"])
+    assert "Total row count mismatch" in str(exc_tr.value)
+
+    # I. Wrong total_counts fields
+    for field_name in ("insert_count", "edit_count", "void_count", "unchanged_count"):
+        curr_val = getattr(receipt.total_counts, field_name)
+        new_kwargs = {
+            "insert_count": receipt.total_counts.insert_count,
+            "edit_count": receipt.total_counts.edit_count,
+            "void_count": receipt.total_counts.void_count,
+            "unchanged_count": receipt.total_counts.unchanged_count,
+        }
+        new_kwargs[field_name] = curr_val + 5
+        bad_counts = PlanCounts(**new_kwargs)
+        bad_receipt_tc = copy.copy(receipt)
+        object.__setattr__(bad_receipt_tc, "total_counts", bad_counts)
+        with pytest.raises(AssertionError) as exc_tc:
+            assert_complete_receipt_matches(
+                bad_receipt_tc, expected["committed_receipt"]
+            )
+        assert "Total" in str(exc_tc.value) and "mismatch" in str(exc_tc.value)
+
+    # J. Wrong per_sheet_counts
+    bad_sheet_dict = dict(receipt.per_sheet_counts)
+    first_sheet = next(iter(bad_sheet_dict.keys()))
+    sheet_counts = bad_sheet_dict[first_sheet]
+    bad_sheet_dict[first_sheet] = PlanCounts(
+        insert_count=sheet_counts.insert_count + 1,
+        edit_count=sheet_counts.edit_count,
+        void_count=sheet_counts.void_count,
+        unchanged_count=sheet_counts.unchanged_count,
+    )
+    bad_receipt_psc = copy.copy(receipt)
+    object.__setattr__(
+        bad_receipt_psc, "per_sheet_counts", MappingProxyType(bad_sheet_dict)
+    )
+    with pytest.raises(AssertionError) as exc_psc:
+        assert_complete_receipt_matches(bad_receipt_psc, expected["committed_receipt"])
+    assert f"Sheet {first_sheet}" in str(exc_psc.value)
+
+    # K. Wrong event_count
+    bad_receipt_ec = copy.copy(receipt)
+    object.__setattr__(bad_receipt_ec, "event_count", 99)
+    with pytest.raises(AssertionError) as exc_ec:
+        assert_complete_receipt_matches(bad_receipt_ec, expected["committed_receipt"])
+    assert "Event count mismatch" in str(exc_ec.value)
+
+    # L. Wrong first_sequence
+    bad_receipt_fs = copy.copy(receipt)
+    object.__setattr__(bad_receipt_fs, "first_sequence", 99)
+    with pytest.raises(AssertionError) as exc_fs:
+        assert_complete_receipt_matches(bad_receipt_fs, expected["committed_receipt"])
+    assert "First sequence mismatch" in str(exc_fs.value)
+
+    # M. Wrong last_sequence
+    bad_receipt_ls = copy.copy(receipt)
+    object.__setattr__(bad_receipt_ls, "last_sequence", 99)
+    with pytest.raises(AssertionError) as exc_ls:
+        assert_complete_receipt_matches(bad_receipt_ls, expected["committed_receipt"])
+    assert "Last sequence mismatch" in str(exc_ls.value)
+
+    conn.close()
+
+
+def test_r5_02_mutation_harness_rejects_unrelated_setup_runtime_error() -> None:
+    """R3.b: Verify mutation harness rejects unrelated fixture setup or runtime
+    errors instead of counting them as a kill."""
+    test_file = Path(__file__).resolve()
+    repo_root = test_file.parents[1]
+    store_path = (
+        repo_root
+        / "packages"
+        / "persistence"
+        / "src"
+        / "accounting_persistence"
+        / "source_import_store.py"
+    )
+    orig_bytes = store_path.read_bytes()
+
+    # The harness MUST reject a RuntimeError and raise AssertionError
+    # stating that an unexpected exception occurred rather than semantic failure.
+    with pytest.raises(AssertionError) as exc_info:
+        try:
+            raise RuntimeError("Synthetic unrelated fixture setup failure!")
+        except BaseException as exc:
+            caught_exc = exc
+            expected_failure_desc = "AssertionError: next_seq == 2"
+
+            def verify_semantic_failure(e: BaseException) -> bool:
+                return isinstance(e, AssertionError) and "next_seq" in str(e)
+
+            assert caught_exc is not None
+            assert verify_semantic_failure(caught_exc), (
+                f"Controlled mutation 'dummy' failed with unexpected exception "
+                f"{type(caught_exc).__name__}: {caught_exc!r} instead of expected "
+                f"semantic failure ({expected_failure_desc})!"
+            )
+
+    assert "Synthetic unrelated fixture setup failure!" in str(exc_info.value)
+    assert "failed with unexpected exception RuntimeError" in str(exc_info.value)
+
+    # Verify source file remains byte-for-byte identical
+    assert store_path.read_bytes() == orig_bytes
+
+
+def test_r5_03_is11_subprocess_scripts_portable_windows_paths() -> None:
+    """W1: Portable regression control demonstrating that IS-11 subprocess script
+    generation safely accepts representative native Windows paths containing
+    backslashes, Unicode, spaces, and apostrophes without SyntaxError."""
+    win_path = r"C:\Users\Alice\Accounting Bot's Data\test_source.sqlite3"
+
+    # Negative control: f-string literal injection causes SyntaxError due to \U escape
+    bad_script = f"db_file = '{win_path}'"
+    with pytest.raises(SyntaxError) as exc_info:
+        compile(bad_script, "<bad_script>", "exec")
+    assert "truncated \\UXXXXXXXX escape" in str(
+        exc_info.value
+    ) or "unicodeescape" in str(exc_info.value)
+
+    # Positive control: sys.argv based parameter passing compiles cleanly
+    good_script = """import sys
+tests_dir = sys.argv[1]
+db_file = sys.argv[2]
+"""
+    compiled = compile(good_script, "<good_script>", "exec")
+    assert compiled is not None
+
+    # Subprocess execution passing representative Windows path as CLI argument
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write(sys.argv[2]); sys.stdout.flush()",
+            "dummy_tests_dir",
+            win_path,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = proc.communicate(timeout=5.0)
+    assert proc.returncode == 0
+    assert stdout == win_path
