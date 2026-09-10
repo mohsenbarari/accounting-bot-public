@@ -16,7 +16,9 @@ import importlib
 import inspect
 import json
 import os
+import queue
 import random
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -35,6 +37,7 @@ if str(Path(__file__).parent) not in sys.path:
 
 import accounting_persistence as persistence
 import pytest
+from _pytest.outcomes import Failed as PytestFailed
 from accounting_contracts import (
     evaluate_source_fiscal_evidence,
     evaluate_source_requiredness,
@@ -2627,6 +2630,475 @@ def test_is10_commit_and_rollback_ordered_dual_failure_exception_group() -> None
 # ============================================================================
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """Check whether a process with the given PID is currently alive."""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, wintypes.DWORD(pid)
+        )
+        if not handle:
+            return False
+        try:
+            exit_code = wintypes.DWORD()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        status_path = Path(f"/proc/{pid}/status")
+        if status_path.exists():
+            try:
+                for line in status_path.read_text().splitlines():
+                    if line.startswith("State:"):
+                        state_val = line.split()[1]
+                        return state_val != "Z"
+            except Exception:
+                pass
+        elif Path("/proc").exists():
+            return False
+        return True
+
+
+def _kill_pid(pid: int, timeout: float = 0.5) -> None:
+    """Forcefully kill a process by PID across platforms within the given timeout."""
+    if not _is_pid_alive(pid):
+        return
+    if sys.platform == "win32":
+        if timeout > 0.0:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=max(0.001, timeout),
+                )
+            except Exception:
+                pass
+        if _is_pid_alive(pid):
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            PROCESS_TERMINATE = 0x0001
+            handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, wintypes.DWORD(pid))
+            if handle:
+                try:
+                    kernel32.TerminateProcess(handle, 1)
+                finally:
+                    kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+
+
+def _peek_pipe_windows(fd: int) -> tuple[bool, int]:
+    """Returns (is_alive, bytes_available) for Windows anonymous pipe."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = msvcrt.get_osfhandle(fd)
+            if handle == -1:
+                return False, 0
+            avail = wintypes.DWORD(0)
+            kernel32.PeekNamedPipe.restype = wintypes.BOOL
+            kernel32.PeekNamedPipe.argtypes = [
+                wintypes.HANDLE,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+                ctypes.c_void_p,
+                ctypes.POINTER(wintypes.DWORD),
+                ctypes.c_void_p,
+            ]
+            success = kernel32.PeekNamedPipe(
+                wintypes.HANDLE(handle),
+                None,
+                0,
+                None,
+                ctypes.byref(avail),
+                None,
+            )
+            if not success:
+                return False, 0
+            return True, avail.value
+        except Exception:
+            return False, 0
+    return False, 0
+
+
+class BoundedProcessAckReader:
+    """Windows-compatible bounded subprocess ACK reader with leak-free termination."""
+
+    def __init__(self, proc: subprocess.Popen[str]) -> None:
+        self.proc = proc
+        self.stdout_queue: queue.Queue[str | None] = queue.Queue()
+        self.stderr_chunks: list[str] = []
+        self._cleanup_workers: list[threading.Thread] = []
+        self._tracked_pids: list[int] = []
+        self._stop_event = threading.Event()
+        self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
+        self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
+        self.thread = self._stdout_thread
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+    def track_pid(self, pid: int) -> None:
+        """Register a descendant process PID for bounded cleanup and leak tracking."""
+        if pid not in self._tracked_pids:
+            self._tracked_pids.append(pid)
+
+    def _read_stdout(self) -> None:
+        if self.proc.stdout is None:
+            self.stdout_queue.put(None)
+            return
+        fd = self.proc.stdout.fileno()
+        if sys.platform != "win32":
+            try:
+                os.set_blocking(fd, False)
+            except Exception:
+                pass
+        buffer = bytearray()
+        try:
+            if sys.platform == "win32":
+                while not self._stop_event.is_set():
+                    alive, avail = _peek_pipe_windows(fd)
+                    if not alive:
+                        break
+                    if avail > 0:
+                        try:
+                            chunk = os.read(fd, min(avail, 4096))
+                            if not chunk:
+                                break
+                            buffer.extend(chunk)
+                            while b"\n" in buffer:
+                                line_bytes, _, rest = buffer.partition(b"\n")
+                                buffer = bytearray(rest)
+                                line = line_bytes.decode(
+                                    "utf-8", errors="replace"
+                                ).rstrip("\r")
+                                self.stdout_queue.put(line.strip())
+                        except OSError:
+                            break
+                    else:
+                        self._stop_event.wait(0.02)
+            else:
+                import select
+
+                poller = select.poll()
+                poller.register(
+                    fd,
+                    select.POLLIN | select.POLLPRI | select.POLLHUP | select.POLLERR,
+                )
+                while not self._stop_event.is_set():
+                    events = poller.poll(50)
+                    if not events:
+                        continue
+                    should_exit = False
+                    for _, event in events:
+                        if event & (select.POLLIN | select.POLLPRI):
+                            try:
+                                chunk = os.read(fd, 4096)
+                                if not chunk:
+                                    should_exit = True
+                                    break
+                                buffer.extend(chunk)
+                                while b"\n" in buffer:
+                                    line_bytes, _, rest = buffer.partition(b"\n")
+                                    buffer = bytearray(rest)
+                                    line = line_bytes.decode(
+                                        "utf-8", errors="replace"
+                                    ).rstrip("\r")
+                                    self.stdout_queue.put(line.strip())
+                            except (BlockingIOError, InterruptedError):
+                                continue
+                            except OSError:
+                                should_exit = True
+                                break
+                        elif event & (select.POLLHUP | select.POLLERR):
+                            try:
+                                chunk = os.read(fd, 4096)
+                                if chunk:
+                                    buffer.extend(chunk)
+                                    while b"\n" in buffer:
+                                        line_bytes, _, rest = buffer.partition(b"\n")
+                                        buffer = bytearray(rest)
+                                        line = line_bytes.decode(
+                                            "utf-8", errors="replace"
+                                        ).rstrip("\r")
+                                        self.stdout_queue.put(line.strip())
+                            except OSError:
+                                pass
+                            should_exit = True
+                            break
+                    if should_exit:
+                        break
+        except Exception:
+            pass
+        finally:
+            if buffer:
+                line = buffer.decode("utf-8", errors="replace").rstrip("\r")
+                if line.strip():
+                    self.stdout_queue.put(line.strip())
+            self.stdout_queue.put(None)
+
+    def _read_stderr(self) -> None:
+        if self.proc.stderr is None:
+            return
+        fd = self.proc.stderr.fileno()
+        if sys.platform != "win32":
+            try:
+                os.set_blocking(fd, False)
+            except Exception:
+                pass
+        buffer = bytearray()
+        try:
+            if sys.platform == "win32":
+                while not self._stop_event.is_set():
+                    alive, avail = _peek_pipe_windows(fd)
+                    if not alive:
+                        break
+                    if avail > 0:
+                        try:
+                            chunk = os.read(fd, min(avail, 4096))
+                            if not chunk:
+                                break
+                            buffer.extend(chunk)
+                            while b"\n" in buffer:
+                                line_bytes, _, rest = buffer.partition(b"\n")
+                                buffer = bytearray(rest)
+                                line = line_bytes.decode(
+                                    "utf-8", errors="replace"
+                                ).rstrip("\r")
+                                self.stderr_chunks.append(line + "\n")
+                        except OSError:
+                            break
+                    else:
+                        self._stop_event.wait(0.02)
+            else:
+                import select
+
+                poller = select.poll()
+                poller.register(
+                    fd,
+                    select.POLLIN | select.POLLPRI | select.POLLHUP | select.POLLERR,
+                )
+                while not self._stop_event.is_set():
+                    events = poller.poll(50)
+                    if not events:
+                        continue
+                    should_exit = False
+                    for _, event in events:
+                        if event & (select.POLLIN | select.POLLPRI):
+                            try:
+                                chunk = os.read(fd, 4096)
+                                if not chunk:
+                                    should_exit = True
+                                    break
+                                buffer.extend(chunk)
+                                while b"\n" in buffer:
+                                    line_bytes, _, rest = buffer.partition(b"\n")
+                                    buffer = bytearray(rest)
+                                    line = line_bytes.decode(
+                                        "utf-8", errors="replace"
+                                    ).rstrip("\r")
+                                    self.stderr_chunks.append(line + "\n")
+                            except (BlockingIOError, InterruptedError):
+                                continue
+                            except OSError:
+                                should_exit = True
+                                break
+                        elif event & (select.POLLHUP | select.POLLERR):
+                            try:
+                                chunk = os.read(fd, 4096)
+                                if chunk:
+                                    buffer.extend(chunk)
+                                    while b"\n" in buffer:
+                                        line_bytes, _, rest = buffer.partition(b"\n")
+                                        buffer = bytearray(rest)
+                                        line = line_bytes.decode(
+                                            "utf-8", errors="replace"
+                                        ).rstrip("\r")
+                                        self.stderr_chunks.append(line + "\n")
+                            except OSError:
+                                pass
+                            should_exit = True
+                            break
+                    if should_exit:
+                        break
+        except Exception:
+            pass
+        finally:
+            if buffer:
+                line = buffer.decode("utf-8", errors="replace").rstrip("\r")
+                self.stderr_chunks.append(line)
+
+    def get_stderr(self) -> str:
+        return "".join(self.stderr_chunks)
+
+    def wait_for_ack(self, expected_ack: str, timeout: float = 10.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                return False
+            try:
+                line = self.stdout_queue.get(timeout=remaining)
+                if line is None:
+                    return False
+                if line == expected_ack:
+                    return True
+            except queue.Empty:
+                return False
+
+    def close(self, timeout: float = 5.0) -> None:
+        close_start = time.monotonic()
+        deadline = close_start + timeout
+
+        def _rem() -> float:
+            rem = deadline - time.monotonic()
+            return rem if rem > 0.0 else 0.0
+
+        # Signal reader threads to stop cancelable loops
+        self._stop_event.set()
+
+        # 1. Terminate / kill and reap child process while stdin remains OPEN.
+        # Keeping stdin open ensures child cannot receive EOF on
+        # sys.stdin.readline() and advance toward COMMIT or normal return.
+        if self.proc.poll() is None:
+            try:
+                self.proc.terminate()
+            except Exception:
+                pass
+            try:
+                self.proc.wait(timeout=min(0.5, _rem()))
+            except Exception:
+                pass
+            if self.proc.poll() is None:
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
+                try:
+                    self.proc.wait(timeout=_rem())
+                except Exception:
+                    pass
+        else:
+            try:
+                self.proc.wait(timeout=min(0.1, _rem()))
+            except Exception:
+                pass
+
+        # 2. Terminate / kill any tracked descendants
+        # (e.g. retained-handle grandchildren) propagating remaining deadline
+        for d_pid in self._tracked_pids:
+            _kill_pid(d_pid, timeout=_rem())
+
+        # On Windows, enforce process-tree cleanup propagating deadline
+        if sys.platform == "win32" and self.proc.pid:
+            rem_tree = _rem()
+            if rem_tree > 0.0:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(self.proc.pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                        timeout=max(0.001, rem_tree),
+                    )
+                except Exception:
+                    pass
+
+        # Wait for all tracked descendants to exit under remaining deadline
+        for d_pid in self._tracked_pids:
+            while _is_pid_alive(d_pid) and _rem() > 0.0:
+                if sys.platform != "win32":
+                    try:
+                        os.waitpid(d_pid, os.WNOHANG)
+                    except Exception:
+                        pass
+                self._stop_event.wait(min(0.02, _rem()))
+
+        # 3. Close stdin, stdout, and stderr using retained cleanup workers
+        # under the overall deadline to protect against stream-lock contention
+        # or inherited pipe handles.
+        def _close_stream(stream: Any) -> None:
+            if stream is not None:
+                try:
+                    if not stream.closed:
+                        stream.close()
+                except Exception:
+                    pass
+
+        self._cleanup_workers = []
+        for s in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
+            if s is not None:
+                w = threading.Thread(target=_close_stream, args=(s,), daemon=True)
+                self._cleanup_workers.append(w)
+                w.start()
+
+        # 4. Join all cleanup worker threads and reader threads under deadline
+        for worker in self._cleanup_workers:
+            worker.join(timeout=_rem())
+
+        for reader in (self._stdout_thread, self._stderr_thread):
+            reader.join(timeout=_rem())
+
+        # 5. Mandatory process, descendant, reader, cleanup worker,
+        # and pipe terminal postconditions
+        assert self.proc.poll() is not None, "Child process was not reaped!"
+        for d_pid in self._tracked_pids:
+            assert not _is_pid_alive(d_pid), f"Descendant process {d_pid} was leaked!"
+        assert not self._stdout_thread.is_alive(), (
+            "Stdout reader thread was not stopped!"
+        )
+        assert not self._stderr_thread.is_alive(), (
+            "Stderr reader thread was not stopped!"
+        )
+        for idx, worker in enumerate(self._cleanup_workers):
+            assert not worker.is_alive(), f"Cleanup worker {idx} was not stopped!"
+
+        assert self.proc.stdin is None or self.proc.stdin.closed, (
+            "proc.stdin was not closed!"
+        )
+        assert self.proc.stdout is None or self.proc.stdout.closed, (
+            "proc.stdout was not closed!"
+        )
+        assert self.proc.stderr is None or self.proc.stderr.closed, (
+            "proc.stderr was not closed!"
+        )
+
+        cleanup_elapsed = time.monotonic() - close_start
+        assert cleanup_elapsed <= timeout + 0.1, (
+            f"BoundedProcessAckReader.close exceeded configured timeout: "
+            f"took {cleanup_elapsed:.2f}s > {timeout:.2f}s"
+        )
+
+
 def test_is11_cross_process_crash_and_restart_recovery(tmp_path: Path) -> None:
     """IS-11: Real commit_source_import path run in subprocesses.
     Stops via IPC/ACK when transaction is open and after real COMMIT before return.
@@ -2701,31 +3173,15 @@ commit_source_import(conn, req)
         stderr=subprocess.PIPE,
         text=True,
     )
-    ack1 = ""
+    ack_reader1 = BoundedProcessAckReader(proc1)
+    got_ack1 = False
     try:
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline:
-            line = proc1.stdout.readline() if proc1.stdout else ""
-            if line:
-                ack1 = line.strip()
-                break
-            if proc1.poll() is not None:
-                break
-            time.sleep(0.01)
-        stderr_text1 = (
-            proc1.stderr.read() if proc1.stderr and proc1.poll() is not None else ""
-        )
-        assert ack1 == "ACK_TX_OPEN", (
-            f"Subprocess 1 did not emit ACK_TX_OPEN. stderr: {stderr_text1}"
-        )
+        got_ack1 = ack_reader1.wait_for_ack("ACK_TX_OPEN", timeout=10.0)
     finally:
-        if proc1.poll() is None:
-            proc1.terminate()
-            try:
-                proc1.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                proc1.kill()
-                proc1.wait(timeout=2.0)
+        ack_reader1.close()
+    assert got_ack1, (
+        f"Subprocess 1 did not emit ACK_TX_OPEN. stderr: {ack_reader1.get_stderr()}"
+    )
 
     # Reopen and verify prior state: 0 imports, 0 revisions, 0 events, gen 0
     conn_reopen = sqlite3.connect(db_file)
@@ -2812,31 +3268,15 @@ commit_source_import(conn, req)
         stderr=subprocess.PIPE,
         text=True,
     )
-    ack2 = ""
+    ack_reader2 = BoundedProcessAckReader(proc2)
+    got_ack2 = False
     try:
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline:
-            line = proc2.stdout.readline() if proc2.stdout else ""
-            if line:
-                ack2 = line.strip()
-                break
-            if proc2.poll() is not None:
-                break
-            time.sleep(0.01)
-        stderr_text2 = (
-            proc2.stderr.read() if proc2.stderr and proc2.poll() is not None else ""
-        )
-        assert ack2 == "ACK_COMMIT_DONE", (
-            f"Subprocess 2 did not emit ACK_COMMIT_DONE. stderr: {stderr_text2}"
-        )
+        got_ack2 = ack_reader2.wait_for_ack("ACK_COMMIT_DONE", timeout=10.0)
     finally:
-        if proc2.poll() is None:
-            proc2.terminate()
-            try:
-                proc2.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                proc2.kill()
-                proc2.wait(timeout=2.0)
+        ack_reader2.close()
+    assert got_ack2, (
+        f"Subprocess 2 did not emit ACK_COMMIT_DONE. stderr: {ack_reader2.get_stderr()}"
+    )
 
     # Reopen: full Generation 2 persisted cleanly
     conn_post = sqlite3.connect(db_file)
@@ -2868,6 +3308,184 @@ commit_source_import(conn, req)
     )
     assert conn_post.execute("SELECT COUNT(*) FROM change_events;").fetchone()[0] == 2
     conn_post.close()
+
+
+def test_is11_negative_no_ack_bounded_exit_and_no_leaks(tmp_path: Path) -> None:
+    """IS-11 negative control: A silent live child must not prevent the deadline,
+    finally cleanup, process termination, pipe closure, or thread joins.
+    Covers both:
+    1. Direct child non-sleeping blocking wait with explicit READY synchronization.
+    2. Retained-handle descendant non-sleeping blocking wait with explicit
+       READY synchronization.
+    Proves bounded exit and zero child, descendant, reader-thread, or
+    cleanup-worker leaks.
+    """
+
+    # -------------------------------------------------------------------------
+    # Sub-case 1: Direct child non-sleeping blocking wait with READY sync
+    # -------------------------------------------------------------------------
+    script_direct = """import sys, os
+r, w = os.pipe()
+sys.stdout.write("READY\\n")
+sys.stdout.flush()
+# Non-sleeping blocking IPC wait
+os.read(r, 1)
+"""
+    proc1 = subprocess.Popen(
+        [sys.executable, "-c", script_direct],
+        stdout=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    ack_reader1 = BoundedProcessAckReader(proc1)
+    ACK_WAIT_TIMEOUT = 0.5
+    CLEANUP_TIMEOUT = 3.0
+    COMBINED_TIMEOUT_BOUND = ACK_WAIT_TIMEOUT + CLEANUP_TIMEOUT
+
+    t_start1 = 0.0
+    elapsed1 = 0.0
+    try:
+        ready1 = ack_reader1.wait_for_ack("READY", timeout=5.0)
+        assert ready1, (
+            f"Direct child did not emit READY. stderr: {ack_reader1.get_stderr()}"
+        )
+        t_start1 = time.monotonic()
+        got_ack1 = ack_reader1.wait_for_ack(
+            "ACK_NEVER_ARRIVES", timeout=ACK_WAIT_TIMEOUT
+        )
+        assert not got_ack1, "Unexpectedly received ACK from silent child"
+    finally:
+        ack_reader1.close(timeout=CLEANUP_TIMEOUT)
+        if t_start1 > 0.0:
+            elapsed1 = time.monotonic() - t_start1
+
+    # 1. Bounded exit: elapsed must be bounded through completion of cleanup
+    # within configured combined bound
+    assert t_start1 > 0.0, "Subprocess was not ready before ACK wait"
+    assert elapsed1 >= ACK_WAIT_TIMEOUT - 0.05, (
+        f"Wait should have taken at least timeout: took {elapsed1:.2f}s"
+    )
+    assert elapsed1 <= COMBINED_TIMEOUT_BOUND, (
+        f"Wait and cleanup did not bound exit: took {elapsed1:.2f}s, "
+        f"exceeded configured combined bound {COMBINED_TIMEOUT_BOUND:.2f}s"
+    )
+
+    # 2. Zero child leaks: process must be terminated and reaped
+    assert proc1.poll() is not None, "Child process was leaked!"
+    assert not _is_pid_alive(proc1.pid), f"Child process {proc1.pid} is still alive!"
+
+    # 3. Zero reader-thread leaks: reader threads must be terminated
+    assert not ack_reader1._stdout_thread.is_alive(), "Stdout reader thread was leaked!"
+    assert not ack_reader1._stderr_thread.is_alive(), "Stderr reader thread was leaked!"
+
+    # 4. Zero cleanup worker leaks: cleanup workers must be terminated
+    for idx, worker in enumerate(ack_reader1._cleanup_workers):
+        assert not worker.is_alive(), f"Cleanup worker {idx} was leaked!"
+
+    # 5. Pipe closure: all stdio pipes must be closed
+    assert proc1.stdout is not None and proc1.stdout.closed
+    assert proc1.stdin is not None and proc1.stdin.closed
+    assert proc1.stderr is not None and proc1.stderr.closed
+
+    # -------------------------------------------------------------------------
+    # Sub-case 2: Retained-handle descendant with explicit READY synchronization
+    # -------------------------------------------------------------------------
+    descendant_pid_file = tmp_path / "descendant.pid"
+    script_descendant = """import sys, os, subprocess
+from pathlib import Path
+
+pid_file = Path(sys.argv[1])
+pipe_r, pipe_w = os.pipe()
+
+# Grandchild process inherits stdout and stderr and blocks on unwritten pipe
+grandchild_script = '''import sys, os
+r, w = os.pipe()
+os.read(r, 1)
+'''
+
+proc_gc = subprocess.Popen(
+    [sys.executable, "-c", grandchild_script],
+    stdout=None,
+    stderr=None,
+    stdin=subprocess.DEVNULL,
+    close_fds=False,
+)
+
+pid_file.write_text(str(proc_gc.pid), encoding="utf-8")
+sys.stdout.write("READY_DESCENDANT\\n")
+sys.stdout.flush()
+
+# Direct child also blocks on unwritten pipe
+os.read(pipe_r, 1)
+"""
+    proc2 = subprocess.Popen(
+        [sys.executable, "-c", script_descendant, str(descendant_pid_file)],
+        stdout=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    ack_reader2 = BoundedProcessAckReader(proc2)
+    t_start2 = 0.0
+    elapsed2 = 0.0
+    descendant_pid: int | None = None
+    try:
+        ready2 = ack_reader2.wait_for_ack("READY_DESCENDANT", timeout=5.0)
+        assert ready2, (
+            "Child/descendant did not emit READY_DESCENDANT. "
+            f"stderr: {ack_reader2.get_stderr()}"
+        )
+        assert descendant_pid_file.exists()
+        assert descendant_pid_file.stat().st_size > 0
+        descendant_pid = int(descendant_pid_file.read_text().strip())
+        ack_reader2.track_pid(descendant_pid)
+        assert _is_pid_alive(descendant_pid), (
+            f"Descendant process {descendant_pid} is not alive!"
+        )
+
+        t_start2 = time.monotonic()
+        got_ack2 = ack_reader2.wait_for_ack(
+            "ACK_NEVER_ARRIVES", timeout=ACK_WAIT_TIMEOUT
+        )
+        assert not got_ack2, "Unexpectedly received ACK from descendant"
+    finally:
+        ack_reader2.close(timeout=CLEANUP_TIMEOUT)
+        if t_start2 > 0.0:
+            elapsed2 = time.monotonic() - t_start2
+
+    # 1. Bounded exit through cleanup completion within configured combined bound
+    assert t_start2 > 0.0, "Descendant process was not ready before ACK wait"
+    assert elapsed2 >= ACK_WAIT_TIMEOUT - 0.05, (
+        f"Wait should have taken at least timeout: took {elapsed2:.2f}s"
+    )
+    assert elapsed2 <= COMBINED_TIMEOUT_BOUND, (
+        f"Wait and cleanup did not bound exit: took {elapsed2:.2f}s, "
+        f"exceeded configured combined bound {COMBINED_TIMEOUT_BOUND:.2f}s"
+    )
+
+    # 2. Zero child and descendant leaks: both must be terminated and reaped
+    assert proc2.poll() is not None, "Direct child process was leaked!"
+    assert not _is_pid_alive(proc2.pid), (
+        f"Direct child process {proc2.pid} is still alive!"
+    )
+    assert descendant_pid is not None
+    assert not _is_pid_alive(descendant_pid), (
+        f"Descendant process {descendant_pid} was leaked!"
+    )
+
+    # 3. Zero reader-thread leaks
+    assert not ack_reader2._stdout_thread.is_alive(), "Stdout reader thread was leaked!"
+    assert not ack_reader2._stderr_thread.is_alive(), "Stderr reader thread was leaked!"
+
+    # 4. Zero cleanup worker leaks
+    for idx, worker in enumerate(ack_reader2._cleanup_workers):
+        assert not worker.is_alive(), f"Cleanup worker {idx} was leaked!"
+
+    # 5. All stdio pipes closed
+    assert proc2.stdout is not None and proc2.stdout.closed
+    assert proc2.stdin is not None and proc2.stdin.closed
+    assert proc2.stderr is not None and proc2.stderr.closed
 
 
 # ============================================================================
@@ -4085,6 +4703,350 @@ def test_is14_hypothesis_multi_step_history_property_tests(
     conn.close()
 
 
+@dataclasses.dataclass
+class _RecordedRaisesFailure:
+    expected_exception: Any
+    failure_exc: BaseException
+    failure_type: type[BaseException]
+    failure_message: str
+    consumed: bool = False
+
+
+@dataclasses.dataclass
+class _RecordedProbeFailure:
+    failure_exc: BaseException
+    probe_name: str
+    consumed: bool = False
+
+
+def _matches_exception_class(exp: Any, target_cls: type[BaseException]) -> bool:
+    if exp is target_cls:
+        return True
+    if isinstance(exp, tuple):
+        return any(item is target_cls for item in exp)
+    return False
+
+
+class _MutationHarnessState:
+    def __init__(self) -> None:
+        self.recorded_failures: list[_RecordedRaisesFailure] = []
+        self.recorded_probe_failures: list[_RecordedProbeFailure] = []
+
+    def record_raises_failure(
+        self, exc: BaseException, expected_exception: Any
+    ) -> None:
+        exc_any: Any = exc
+        try:
+            exc_any._harness_provenance_sentinel = id(self)
+        except Exception:
+            pass
+        self.recorded_failures.append(
+            _RecordedRaisesFailure(
+                expected_exception=expected_exception,
+                failure_exc=exc,
+                failure_type=type(exc),
+                failure_message=str(exc),
+                consumed=False,
+            )
+        )
+
+    def record_probe_failure(self, exc: BaseException, probe_name: str) -> None:
+        self.recorded_probe_failures.append(
+            _RecordedProbeFailure(
+                failure_exc=exc,
+                probe_name=probe_name,
+                consumed=False,
+            )
+        )
+
+    def verify_provenance(
+        self, exc: BaseException, expected_cls: type[BaseException]
+    ) -> bool:
+        if type(exc) is not pytest.fail.Exception:
+            return False
+        if not str(exc).startswith("DID NOT RAISE"):
+            return False
+        exc_any: Any = exc
+        sentinel = (
+            exc_any._harness_provenance_sentinel
+            if hasattr(exc_any, "_harness_provenance_sentinel")
+            else None
+        )
+        if sentinel != id(self):
+            return False
+        for rec in self.recorded_failures:
+            if rec.consumed:
+                continue
+            if rec.failure_exc is exc and _matches_exception_class(
+                rec.expected_exception, expected_cls
+            ):
+                rec.consumed = True
+                return True
+        return False
+
+    def verify_probe_provenance(self, exc: BaseException, probe_name: str) -> bool:
+        for rec in self.recorded_probe_failures:
+            if rec.consumed:
+                continue
+            if rec.failure_exc is exc and rec.probe_name == probe_name:
+                rec.consumed = True
+                return True
+        return False
+
+
+_active_mutation_harness: _MutationHarnessState | None = None
+
+
+def _execute_mutation_harness(
+    *,
+    name: str,
+    target_str: str,
+    replacement_str: str,
+    probe_fn: Callable[[], None],
+    expected_failure_desc: str,
+    verify_semantic_failure: Callable[[BaseException], bool],
+    observed_semantic_failures: dict[str, str] | None = None,
+) -> None:
+    """Shared mutation harness: executes a single controlled mutation, verifies
+    intended semantic failure classification, and guarantees byte-for-byte
+    restoration and pass on clean code."""
+    import accounting_persistence.source_import_store as sis_mod
+
+    store_path = (
+        Path(__file__).parent.parent
+        / "packages"
+        / "persistence"
+        / "src"
+        / "accounting_persistence"
+        / "source_import_store.py"
+    )
+    orig_bytes = store_path.read_bytes()
+    orig_text = orig_bytes.decode("utf-8")
+
+    assert target_str in orig_text, (
+        f"Target string for mutation '{name}' not found in source!"
+    )
+    mutated_text = orig_text.replace(target_str, replacement_str, 1)
+
+    def _clear_pycache() -> None:
+        importlib.invalidate_caches()
+        pyc_dir = store_path.parent / "__pycache__"
+        if pyc_dir.exists():
+            for f in pyc_dir.glob("source_import_store*.pyc"):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+
+    def _sync_modules() -> None:
+        test_mod = sys.modules[__name__]
+        for attr in dir(sis_mod):
+            if not attr.startswith("__") and hasattr(test_mod, attr):
+                setattr(test_mod, attr, getattr(sis_mod, attr))
+        pkg_mod = sys.modules.get("accounting_persistence")
+        if pkg_mod is not None:
+            for attr in dir(sis_mod):
+                if not attr.startswith("__") and hasattr(pkg_mod, attr):
+                    setattr(pkg_mod, attr, getattr(sis_mod, attr))
+
+    written_to_disk = False
+    harness_state = _MutationHarnessState()
+    global _active_mutation_harness
+    _active_mutation_harness = harness_state
+
+    pytest_any: Any = pytest
+    orig_pytest_raises = pytest_any.raises
+
+    def _harness_pytest_raises(
+        expected_exception: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        if args and callable(args[0]):
+            target_callable = args[0]
+            call_returned_normally = False
+
+            def _wrapped_target(*c_args: Any, **c_kwargs: Any) -> Any:
+                nonlocal call_returned_normally
+                res = target_callable(*c_args, **c_kwargs)
+                call_returned_normally = True
+                return res
+
+            try:
+                return orig_pytest_raises(
+                    expected_exception, _wrapped_target, *args[1:], **kwargs
+                )
+            except BaseException as exc:
+                if (
+                    call_returned_normally
+                    and type(exc) is pytest.fail.Exception
+                    and str(exc).startswith("DID NOT RAISE")
+                ):
+                    harness_state.record_raises_failure(exc, expected_exception)
+                raise
+
+        real_cm = orig_pytest_raises(expected_exception, *args, **kwargs)
+
+        class _HarnessRaisesContext:
+            def __enter__(self) -> Any:
+                return real_cm.__enter__()
+
+            def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Any:
+                try:
+                    return real_cm.__exit__(exc_type, exc_val, exc_tb)
+                except BaseException as exc:
+                    if (
+                        exc_type is None
+                        and type(exc) is pytest.fail.Exception
+                        and str(exc).startswith("DID NOT RAISE")
+                    ):
+                        harness_state.record_raises_failure(exc, expected_exception)
+                    raise
+
+            def __call__(self, func: Any, *c_args: Any, **c_kwargs: Any) -> Any:
+                merged_kwargs = dict(kwargs)
+                merged_kwargs.update(c_kwargs)
+                return _harness_pytest_raises(
+                    expected_exception, func, *c_args, **merged_kwargs
+                )
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(real_cm, name)
+
+        return _HarnessRaisesContext()
+
+    pytest_any.raises = _harness_pytest_raises
+    try:
+        if os.access(store_path, os.W_OK):
+            try:
+                store_path.write_text(mutated_text, encoding="utf-8")
+                written_to_disk = True
+            except OSError:
+                written_to_disk = False
+
+        _clear_pycache()
+        mutated_code = compile(mutated_text, str(store_path), "exec")
+        exec(mutated_code, sis_mod.__dict__)
+        _sync_modules()
+
+        # Under mutation, the probe MUST fail with intended semantic failure
+        caught_exc: BaseException | None = None
+        try:
+            probe_fn()
+        except BaseException as exc:
+            caught_exc = exc
+
+        assert caught_exc is not None, (
+            f"Controlled mutation '{name}' was NOT detected by test probe!"
+        )
+        assert verify_semantic_failure(caught_exc), (
+            f"Controlled mutation '{name}' failed with unexpected exception "
+            f"{type(caught_exc).__name__}: {caught_exc!r} instead of "
+            f"expected semantic failure ({expected_failure_desc})!"
+        )
+        if observed_semantic_failures is not None:
+            observed_semantic_failures[name] = (
+                f"{type(caught_exc).__name__}: {caught_exc}"
+            )
+    finally:
+        pytest_any.raises = orig_pytest_raises
+        _active_mutation_harness = None
+        if written_to_disk:
+            try:
+                store_path.write_bytes(orig_bytes)
+            except OSError:
+                pass
+        _clear_pycache()
+        orig_code = compile(orig_text, str(store_path), "exec")
+        exec(orig_code, sis_mod.__dict__)
+        _sync_modules()
+        assert store_path.read_bytes() == orig_bytes, (
+            f"Byte verification failed after restoring mutation '{name}'!"
+        )
+
+    # After exact byte restoration, probe MUST pass
+    probe_fn()
+
+
+def _verify_pytest_raises_provenance(
+    exc: BaseException,
+    expected_cls: type[BaseException],
+) -> bool:
+    """Verify structured provenance showing failure was generated by
+    concrete pytest.raises."""
+    if _active_mutation_harness is None:
+        return False
+    return _active_mutation_harness.verify_provenance(exc, expected_cls)
+
+
+def _verify_probe_provenance(
+    exc: BaseException,
+    probe_name: str,
+) -> bool:
+    """Verify structured provenance showing failure was generated by
+    concrete test probe."""
+    if _active_mutation_harness is None:
+        return False
+    return _active_mutation_harness.verify_probe_provenance(exc, probe_name)
+
+
+def classify_stale_check_failure(exc: BaseException) -> bool:
+    import accounting_persistence.source_import_store as sis_mod
+
+    return _verify_pytest_raises_provenance(exc, sis_mod.SourceImportStoreError)
+
+
+def classify_unchanged_membership_failure(exc: BaseException) -> bool:
+    imp1 = make_deterministic_uuid7(101)
+    imp2 = make_deterministic_uuid7(102)
+    expected_msg = f"last_import_id mismatch: {imp1.bytes!r} != {imp2.bytes!r}"
+    if type(exc) is not AssertionError:
+        return False
+    msg = str(exc)
+    if not (msg == expected_msg or msg.startswith(expected_msg + "\n")):
+        return False
+    return _verify_probe_provenance(exc, "unchanged membership")
+
+
+def classify_append_only_failure(exc: BaseException) -> bool:
+    return _verify_pytest_raises_provenance(exc, sqlite3.IntegrityError)
+
+
+def classify_outbox_insert_failure(exc: BaseException) -> bool:
+    expected_msg = "change_events count mismatch: 0 != 1"
+    if type(exc) is not AssertionError:
+        return False
+    msg = str(exc)
+    if not (msg == expected_msg or msg.startswith(expected_msg + "\n")):
+        return False
+    return _verify_probe_provenance(exc, "outbox insert")
+
+
+def classify_sequence_advance_failure(exc: BaseException) -> bool:
+    expected_msg = "next_sequence mismatch: 1 != 2"
+    if type(exc) is not AssertionError:
+        return False
+    msg = str(exc)
+    if not (msg == expected_msg or msg.startswith(expected_msg + "\n")):
+        return False
+    return _verify_probe_provenance(exc, "sequence advance")
+
+
+def classify_request_raw_digest_failure(exc: BaseException) -> bool:
+    import accounting_persistence.source_import_store as sis_mod
+
+    return _verify_pytest_raises_provenance(exc, sis_mod.SourceImportStoreError)
+
+
+def classify_predecessor_link_failure(exc: BaseException) -> bool:
+    import accounting_persistence.source_import_store as sis_mod
+
+    return (
+        type(exc) is sis_mod.SourceImportStoreError
+        and getattr(exc, "reason", None)
+        is sis_mod.SourceImportStoreReason.INCONSISTENT_STATE
+        and str(exc) == "Source import store is inconsistent."
+    )
+
+
 def test_is14_controlled_product_code_mutations() -> None:
     """IS-14: Execute the seven issued controlled product-code mutations:
     1. Stale check
@@ -4107,7 +5069,6 @@ def test_is14_controlled_product_code_mutations() -> None:
         / "source_import_store.py"
     )
     orig_bytes = store_path.read_bytes()
-    orig_text = orig_bytes.decode("utf-8")
 
     dev_id = make_deterministic_uuid7(1)
     src_id = make_deterministic_uuid7(2)
@@ -4122,62 +5083,15 @@ def test_is14_controlled_product_code_mutations() -> None:
         expected_failure_desc: str,
         verify_semantic_failure: Callable[[BaseException], bool],
     ) -> None:
-        assert target_str in orig_text, (
-            f"Target string for mutation '{name}' not found in source!"
+        _execute_mutation_harness(
+            name=name,
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=probe_fn,
+            expected_failure_desc=expected_failure_desc,
+            verify_semantic_failure=verify_semantic_failure,
+            observed_semantic_failures=observed_semantic_failures,
         )
-        mutated_text = orig_text.replace(target_str, replacement_str, 1)
-
-        def _clear_pycache() -> None:
-            importlib.invalidate_caches()
-            pyc_dir = store_path.parent / "__pycache__"
-            if pyc_dir.exists():
-                for f in pyc_dir.glob("source_import_store*.pyc"):
-                    try:
-                        f.unlink()
-                    except OSError:
-                        pass
-
-        try:
-            store_path.write_text(mutated_text, encoding="utf-8")
-            _clear_pycache()
-            importlib.reload(sis_mod)
-            test_mod = sys.modules[__name__]
-            for attr in dir(sis_mod):
-                if not attr.startswith("__") and hasattr(test_mod, attr):
-                    setattr(test_mod, attr, getattr(sis_mod, attr))
-
-            # Under mutation, the probe MUST fail with intended semantic failure
-            caught_exc: BaseException | None = None
-            try:
-                probe_fn()
-            except BaseException as exc:
-                caught_exc = exc
-
-            assert caught_exc is not None, (
-                f"Controlled mutation '{name}' was NOT detected by test probe!"
-            )
-            assert verify_semantic_failure(caught_exc), (
-                f"Controlled mutation '{name}' failed with unexpected exception "
-                f"{type(caught_exc).__name__}: {caught_exc!r} instead of "
-                f"expected semantic failure ({expected_failure_desc})!"
-            )
-            observed_semantic_failures[name] = (
-                f"{type(caught_exc).__name__}: {caught_exc}"
-            )
-        finally:
-            store_path.write_bytes(orig_bytes)
-            assert store_path.read_bytes() == orig_bytes, (
-                f"Byte verification failed after restoring mutation '{name}'!"
-            )
-            _clear_pycache()
-            importlib.reload(sis_mod)
-            test_mod = sys.modules[__name__]
-            for attr in dir(sis_mod):
-                if not attr.startswith("__") and hasattr(test_mod, attr):
-                    setattr(test_mod, attr, getattr(sis_mod, attr))
-
-        # After exact byte restoration, probe MUST pass
-        probe_fn()
 
     # Probe 1: Stale check
     def probe_stale_check() -> None:
@@ -4198,9 +5112,13 @@ def test_is14_controlled_product_code_mutations() -> None:
             snapshot=snap,
             event_ids={u: make_deterministic_uuid7(200)},
         )
-        with pytest.raises(sis_mod.SourceImportStoreError) as exc:
+        with pytest.raises(
+            sis_mod.SourceImportStoreError,
+            match=r"^Source import state is stale\.$",
+        ) as exc:
             sis_mod.commit_source_import(conn, req)
         assert exc.value.reason == sis_mod.SourceImportStoreReason.STALE_STATE
+        assert str(exc.value) == "Source import state is stale."
         conn.close()
 
     _execute_mutation(
@@ -4208,11 +5126,8 @@ def test_is14_controlled_product_code_mutations() -> None:
         "if stored_gen != request.expected_generation:",
         "if False and stored_gen != request.expected_generation:",
         probe_stale_check,
-        "pytest Failed DID NOT RAISE SourceImportStoreError(STALE_STATE)",
-        lambda exc: (
-            (isinstance(exc, AssertionError) or type(exc).__name__ == "Failed")
-            and "DID NOT RAISE" in str(exc)
-        ),
+        f"pytest Failed DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}",
+        classify_stale_check_failure,
     )
 
     # Probe 2: Unchanged membership
@@ -4251,9 +5166,15 @@ def test_is14_controlled_product_code_mutations() -> None:
             "SELECT last_import_id FROM source_memberships WHERE stable_id = ?;",
             (u.bytes,),
         ).fetchone()[0]
-        assert last_imp == imp2.bytes, (
-            f"last_import_id mismatch: {last_imp!r} != {imp2.bytes!r}"
-        )
+        if last_imp != imp2.bytes:
+            exc_obj = AssertionError(
+                f"last_import_id mismatch: {last_imp!r} != {imp2.bytes!r}"
+            )
+            if _active_mutation_harness is not None:
+                _active_mutation_harness.record_probe_failure(
+                    exc_obj, "unchanged membership"
+                )
+            raise exc_obj
         conn.close()
 
     _execute_mutation(
@@ -4261,10 +5182,8 @@ def test_is14_controlled_product_code_mutations() -> None:
         "last_import_id = excluded.last_import_id;",
         "last_import_id = source_memberships.last_import_id;",
         probe_unchanged_membership,
-        "AssertionError: last_import_id mismatch",
-        lambda exc: (
-            isinstance(exc, AssertionError) and "last_import_id mismatch" in str(exc)
-        ),
+        "AssertionError: last_import_id mismatch: exact match required",
+        classify_unchanged_membership_failure,
     )
 
     # Probe 3: Append-only revision
@@ -4287,7 +5206,9 @@ def test_is14_controlled_product_code_mutations() -> None:
             event_ids={u: make_deterministic_uuid7(200)},
         )
         sis_mod.commit_source_import(conn, req)
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(
+            sqlite3.IntegrityError, match=r"^Cannot update source_revisions$"
+        ):
             conn.execute("UPDATE source_revisions SET home_sheet = 'لیست کسبه';")
         conn.close()
 
@@ -4296,12 +5217,8 @@ def test_is14_controlled_product_code_mutations() -> None:
         "        SELECT RAISE(ABORT, 'Cannot update source_revisions');",
         "        SELECT 1;",
         probe_append_only_revision,
-        "pytest Failed DID NOT RAISE sqlite3.IntegrityError",
-        lambda exc: (
-            (isinstance(exc, AssertionError) or type(exc).__name__ == "Failed")
-            and "DID NOT RAISE" in str(exc)
-            and "IntegrityError" in str(exc)
-        ),
+        f"pytest Failed DID NOT RAISE {sqlite3.IntegrityError.__name__}",
+        classify_append_only_failure,
     )
 
     # Probe 4: Outbox insert
@@ -4325,7 +5242,11 @@ def test_is14_controlled_product_code_mutations() -> None:
         )
         sis_mod.commit_source_import(conn, req)
         ev_count = conn.execute("SELECT COUNT(*) FROM change_events;").fetchone()[0]
-        assert ev_count == 1, f"change_events count mismatch: {ev_count} != 1"
+        if ev_count != 1:
+            exc_obj = AssertionError(f"change_events count mismatch: {ev_count} != 1")
+            if _active_mutation_harness is not None:
+                _active_mutation_harness.record_probe_failure(exc_obj, "outbox insert")
+            raise exc_obj
         conn.close()
 
     _execute_mutation(
@@ -4333,11 +5254,8 @@ def test_is14_controlled_product_code_mutations() -> None:
         "            # Insert change_events\n            cur.execute(",
         "            # Insert change_events\n            if False: cur.execute(",
         probe_outbox_insert,
-        "AssertionError: change_events count mismatch",
-        lambda exc: (
-            isinstance(exc, AssertionError)
-            and "change_events count mismatch" in str(exc)
-        ),
+        "AssertionError: change_events count mismatch: 0 != 1",
+        classify_outbox_insert_failure,
     )
 
     # Probe 5: Sequence advance
@@ -4363,7 +5281,13 @@ def test_is14_controlled_product_code_mutations() -> None:
         next_seq = conn.execute(
             "SELECT next_sequence FROM source_store_meta;"
         ).fetchone()[0]
-        assert next_seq == 2, f"next_sequence mismatch: {next_seq} != 2"
+        if next_seq != 2:
+            exc_obj = AssertionError(f"next_sequence mismatch: {next_seq} != 2")
+            if _active_mutation_harness is not None:
+                _active_mutation_harness.record_probe_failure(
+                    exc_obj, "sequence advance"
+                )
+            raise exc_obj
         conn.close()
 
     _execute_mutation(
@@ -4371,10 +5295,8 @@ def test_is14_controlled_product_code_mutations() -> None:
         "next_seq_val = last_sequence + 1",
         "next_seq_val = stored_next_seq",
         probe_sequence_advance,
-        "AssertionError: next_sequence mismatch",
-        lambda exc: (
-            isinstance(exc, AssertionError) and "next_sequence mismatch" in str(exc)
-        ),
+        "AssertionError: next_sequence mismatch: 1 != 2",
+        classify_sequence_advance_failure,
     )
 
     # Probe 6: Request Raw digest
@@ -4459,9 +5381,13 @@ def test_is14_controlled_product_code_mutations() -> None:
         # requests, raising IDEMPOTENCY_CONFLICT.
         # Under mutation where raw_bytes is omitted from digest, req2's digest matches
         # req1, causing commit_source_import to return REPLAYED instead of raising.
-        with pytest.raises(sis_mod.SourceImportStoreError) as exc:
+        with pytest.raises(
+            sis_mod.SourceImportStoreError,
+            match=r"^Source import identity conflicts\.$",
+        ) as exc:
             sis_mod.commit_source_import(conn, req2)
         assert exc.value.reason == sis_mod.SourceImportStoreReason.IDEMPOTENCY_CONFLICT
+        assert str(exc.value) == "Source import identity conflicts."
         conn.close()
 
     _execute_mutation(
@@ -4469,11 +5395,8 @@ def test_is14_controlled_product_code_mutations() -> None:
         "            hasher.update(raw_bytes)",
         "            pass  # hasher.update(raw_bytes)",
         probe_request_raw_digest,
-        "pytest Failed DID NOT RAISE SourceImportStoreError(IDEMPOTENCY_CONFLICT)",
-        lambda exc: (
-            (isinstance(exc, AssertionError) or type(exc).__name__ == "Failed")
-            and "DID NOT RAISE" in str(exc)
-        ),
+        f"pytest Failed DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}",
+        classify_request_raw_digest_failure,
     )
 
     # Probe 7: Predecessor link
@@ -4542,11 +5465,11 @@ def test_is14_controlled_product_code_mutations() -> None:
         "previous_version_hash = p_row[0]",
         "previous_version_hash = 'f' * 64",
         probe_predecessor_link,
-        "SourceImportStoreError(INCONSISTENT_STATE)",
-        lambda exc: (
-            isinstance(exc, sis_mod.SourceImportStoreError)
-            and exc.reason == sis_mod.SourceImportStoreReason.INCONSISTENT_STATE
+        (
+            "SourceImportStoreError(INCONSISTENT_STATE): "
+            "Source import store is inconsistent."
         ),
+        classify_predecessor_link_failure,
     )
 
     assert len(observed_semantic_failures) == 7
@@ -4784,6 +5707,271 @@ def test_is15_identified_xlsx_composition_lifecycle(tmp_path: Path) -> None:
 # ============================================================================
 
 
+def assert_r4_timing_evidence(
+    *,
+    t_commit_total: float,
+    t_digest_pure: float,
+    t_digest_encode: float,
+    t_revision_encode: float,
+    t_encode_total: float,
+    t_req: float,
+    t_fisc: float,
+    t_plan: float,
+    t_val_proj_pure: float,
+    t_sql_write: float,
+    t_commit_phase: float,
+    t_residual: float,
+    t_fix: float = 0.0,
+    t_restart: float | None = None,
+    t_verify: float | None = None,
+    t_replay: float | None = None,
+    t_gen2: float | None = None,
+    tolerance_seconds: float = 0.5,
+) -> None:
+    """Validate R4 timing evidence with executable assertions:
+    1. All measured phase durations are non-negative.
+    2. Accounted time cannot exceed total time beyond documented tolerance.
+    3. Additive identity: projection + encoding + SQL write + commit phase +
+       residual equals commit total within tolerance.
+    Raw differences are preserved without clipping."""
+    assert t_commit_total >= 0.0, (
+        f"Commit total time must be non-negative: {t_commit_total:.4f}s"
+    )
+    assert t_digest_pure >= 0.0, (
+        f"Digest pure time must be non-negative: {t_digest_pure:.4f}s"
+    )
+    assert t_digest_encode >= 0.0, (
+        f"Digest encode time must be non-negative: {t_digest_encode:.4f}s"
+    )
+    assert t_revision_encode >= 0.0, (
+        f"Revision encode time must be non-negative: {t_revision_encode:.4f}s"
+    )
+    assert t_encode_total >= 0.0, (
+        f"Encode total time must be non-negative: {t_encode_total:.4f}s"
+    )
+    assert t_req >= 0.0, f"Requiredness time must be non-negative: {t_req:.4f}s"
+    assert t_fisc >= 0.0, f"Fiscal evidence time must be non-negative: {t_fisc:.4f}s"
+    assert t_plan >= 0.0, f"Plan time must be non-negative: {t_plan:.4f}s"
+    assert t_val_proj_pure >= 0.0, (
+        f"Validation/projection pure time must be non-negative: {t_val_proj_pure:.4f}s"
+    )
+    assert t_sql_write >= 0.0, (
+        f"SQL write time must be non-negative: {t_sql_write:.4f}s"
+    )
+    assert t_commit_phase >= 0.0, (
+        f"Commit phase time must be non-negative: {t_commit_phase:.4f}s"
+    )
+    assert t_residual >= 0.0, f"Residual time must be non-negative: {t_residual:.4f}s"
+    assert t_fix >= 0.0, f"Fixture time must be non-negative: {t_fix:.4f}s"
+
+    if t_restart is not None:
+        assert t_restart >= 0.0, (
+            f"Restart/read time must be non-negative: {t_restart:.4f}s"
+        )
+    if t_verify is not None:
+        assert t_verify >= 0.0, f"Verify time must be non-negative: {t_verify:.4f}s"
+    if t_replay is not None:
+        assert t_replay >= 0.0, f"Replay time must be non-negative: {t_replay:.4f}s"
+    if t_gen2 is not None:
+        assert t_gen2 >= 0.0, f"Generation 2 time must be non-negative: {t_gen2:.4f}s"
+
+    # Assert non-negative durations for all sub-phases and constituent breakdowns
+    assert abs(t_val_proj_pure - (t_digest_pure + t_req + t_fisc + t_plan)) <= 1e-6, (
+        f"Validation/projection breakdown mismatch: {t_val_proj_pure:.6f}s != "
+        f"digest_pure ({t_digest_pure:.6f}s) + req ({t_req:.6f}s) + "
+        f"fisc ({t_fisc:.6f}s) + plan ({t_plan:.6f}s)"
+    )
+    assert abs(t_encode_total - (t_digest_encode + t_revision_encode)) <= 1e-6, (
+        f"Encode total breakdown mismatch: {t_encode_total:.6f}s != "
+        f"digest_encode ({t_digest_encode:.6f}s) + "
+        f"revision_encode ({t_revision_encode:.6f}s)"
+    )
+
+    t_accounted = t_val_proj_pure + t_encode_total + t_sql_write + t_commit_phase
+
+    if t_accounted > t_commit_total:
+        overcount = t_accounted - t_commit_total
+        assert overcount <= tolerance_seconds, (
+            f"Accounted time ({t_accounted:.4f}s) exceeded total commit time "
+            f"({t_commit_total:.4f}s) by {overcount:.4f}s beyond tolerance "
+            f"({tolerance_seconds}s)"
+        )
+    assert t_accounted <= t_commit_total + tolerance_seconds, (
+        f"Accounted time ({t_accounted:.4f}s) exceeded total commit time "
+        f"({t_commit_total:.4f}s) beyond tolerance ({tolerance_seconds}s)"
+    )
+
+    additive_sum = (
+        t_val_proj_pure + t_encode_total + t_sql_write + t_commit_phase + t_residual
+    )
+    assert abs(additive_sum - t_commit_total) <= tolerance_seconds, (
+        f"Additive identity violated: projection ({t_val_proj_pure:.4f}s) + "
+        f"encoding ({t_encode_total:.4f}s) + SQL write ({t_sql_write:.4f}s) + "
+        f"commit phase ({t_commit_phase:.4f}s) + residual ({t_residual:.4f}s) = "
+        f"{additive_sum:.4f}s != commit total ({t_commit_total:.4f}s) "
+        f"within tolerance ({tolerance_seconds}s)"
+    )
+
+
+def test_is16_r4_timing_evidence_negative_controls() -> None:
+    """IS-16 R4 timing evidence negative controls:
+    Prove that a negative phase duration or an accounted-time overrun beyond
+    tolerance is rejected with specific AssertionError messages."""
+    # Negative control 1: genuinely negative phase rejected
+    with pytest.raises(
+        AssertionError,
+        match="Digest pure time must be non-negative",
+    ):
+        assert_r4_timing_evidence(
+            t_commit_total=1.0,
+            t_digest_pure=-0.05,
+            t_digest_encode=0.1,
+            t_revision_encode=0.1,
+            t_encode_total=0.2,
+            t_req=0.1,
+            t_fisc=0.1,
+            t_plan=0.1,
+            t_val_proj_pure=0.25,
+            t_sql_write=0.2,
+            t_commit_phase=0.1,
+            t_residual=0.25,
+            t_fix=0.1,
+            tolerance_seconds=0.5,
+        )
+
+    # Negative control 2: negative residual rejected even when within tolerance
+    with pytest.raises(
+        AssertionError,
+        match="Residual time must be non-negative",
+    ):
+        assert_r4_timing_evidence(
+            t_commit_total=1.0,
+            t_digest_pure=0.1,
+            t_digest_encode=0.1,
+            t_revision_encode=0.1,
+            t_encode_total=0.2,
+            t_req=0.05,
+            t_fisc=0.05,
+            t_plan=0.1,
+            t_val_proj_pure=0.3,
+            t_sql_write=0.5,
+            t_commit_phase=0.2,
+            t_residual=-0.2,
+            t_fix=0.1,
+            tolerance_seconds=0.5,
+        )
+
+    # Negative control 3: accounted-time overrun beyond tolerance rejected
+    with pytest.raises(
+        AssertionError,
+        match=r"Accounted time .* exceeded total commit time .* beyond tolerance",
+    ):
+        assert_r4_timing_evidence(
+            t_commit_total=1.0,
+            t_digest_pure=0.1,
+            t_digest_encode=0.1,
+            t_revision_encode=0.1,
+            t_encode_total=0.2,
+            t_req=0.1,
+            t_fisc=0.1,
+            t_plan=0.1,
+            t_val_proj_pure=0.4,
+            t_sql_write=0.8,
+            t_commit_phase=0.4,
+            t_residual=0.0,
+            t_fix=0.1,
+            tolerance_seconds=0.5,
+        )
+
+    # Negative control 4: additive identity violation beyond tolerance rejected
+    with pytest.raises(
+        AssertionError,
+        match=r"Additive identity violated",
+    ):
+        assert_r4_timing_evidence(
+            t_commit_total=1.0,
+            t_digest_pure=0.05,
+            t_digest_encode=0.05,
+            t_revision_encode=0.1,
+            t_encode_total=0.15,
+            t_req=0.05,
+            t_fisc=0.05,
+            t_plan=0.05,
+            t_val_proj_pure=0.2,
+            t_sql_write=0.4,
+            t_commit_phase=0.2,
+            t_residual=1.0,
+            t_fix=0.1,
+            tolerance_seconds=0.5,
+        )
+
+    # Negative control 5: constituent projection breakdown mismatch rejected
+    with pytest.raises(
+        AssertionError,
+        match=r"Validation/projection breakdown mismatch",
+    ):
+        assert_r4_timing_evidence(
+            t_commit_total=1.0,
+            t_digest_pure=0.1,
+            t_digest_encode=0.05,
+            t_revision_encode=0.1,
+            t_encode_total=0.15,
+            t_req=0.05,
+            t_fisc=0.05,
+            t_plan=0.05,
+            t_val_proj_pure=0.9,
+            t_sql_write=0.4,
+            t_commit_phase=0.2,
+            t_residual=0.2,
+            t_fix=0.1,
+            tolerance_seconds=0.5,
+        )
+
+    # Negative control 6: constituent encode breakdown mismatch rejected
+    with pytest.raises(
+        AssertionError,
+        match=r"Encode total breakdown mismatch",
+    ):
+        assert_r4_timing_evidence(
+            t_commit_total=1.0,
+            t_digest_pure=0.05,
+            t_digest_encode=0.05,
+            t_revision_encode=0.1,
+            t_encode_total=0.9,
+            t_req=0.05,
+            t_fisc=0.05,
+            t_plan=0.05,
+            t_val_proj_pure=0.2,
+            t_sql_write=0.4,
+            t_commit_phase=0.2,
+            t_residual=0.2,
+            t_fix=0.1,
+            tolerance_seconds=0.5,
+        )
+
+    # Positive control: valid timing evidence within tolerance accepted cleanly
+    assert_r4_timing_evidence(
+        t_commit_total=1.0,
+        t_digest_pure=0.05,
+        t_digest_encode=0.05,
+        t_revision_encode=0.1,
+        t_encode_total=0.15,
+        t_req=0.05,
+        t_fisc=0.05,
+        t_plan=0.05,
+        t_val_proj_pure=0.2,
+        t_sql_write=0.4,
+        t_commit_phase=0.2,
+        t_residual=0.2,
+        t_fix=0.1,
+        t_restart=0.05,
+        t_verify=0.05,
+        t_replay=0.05,
+        t_gen2=0.05,
+        tolerance_seconds=0.5,
+    )
+
+
 def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> None:
     """Commit 15,000 rows on temp DB, restart/read, replay below 350 MiB RSS.
     Includes large second generation (1,500 edits) and query/decode evidence.
@@ -5001,14 +6189,16 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
         else "Linux /proc/self/status VmRSS"
     )
 
-    t_digest_pure = max(0.0, t_digest_total - t_digest_encode)
+    TIMING_TOLERANCE_SECONDS = 0.5
+
+    t_digest_pure = t_digest_total - t_digest_encode
     t_encode_total = t_digest_encode + t_revision_encode
     t_sql_write = conn.t_sql_write
     t_commit_phase = conn.t_commit_phase
     t_req_fisc = t_req + t_fisc
     t_val_proj_pure = t_digest_pure + t_req_fisc + t_plan
     t_accounted = t_val_proj_pure + t_encode_total + t_sql_write + t_commit_phase
-    t_residual = max(0.0, t_commit_total - t_accounted)
+    t_residual = t_commit_total - t_accounted
 
     assert receipt.disposition == SourceImportDisposition.COMMITTED
     assert receipt.committed_generation == 1
@@ -5195,6 +6385,27 @@ def test_is16_15000_row_scale_benchmark_memory_and_replay(tmp_path: Path) -> Non
     v_gen2 = read_source_import_store(conn_reopen)
     assert v_gen2.generation == 2
     assert v_gen2.next_sequence == row_count + edit_count + 1
+
+    assert_r4_timing_evidence(
+        t_commit_total=t_commit_total,
+        t_digest_pure=t_digest_pure,
+        t_digest_encode=t_digest_encode,
+        t_revision_encode=t_revision_encode,
+        t_encode_total=t_encode_total,
+        t_req=t_req,
+        t_fisc=t_fisc,
+        t_plan=t_plan,
+        t_val_proj_pure=t_val_proj_pure,
+        t_sql_write=t_sql_write,
+        t_commit_phase=t_commit_phase,
+        t_residual=t_residual,
+        t_fix=t_fix,
+        t_restart=t_restart,
+        t_verify=t_verify,
+        t_replay=t_replay,
+        t_gen2=t_gen2,
+        tolerance_seconds=TIMING_TOLERANCE_SECONDS,
+    )
 
     print(
         f"[IS-16] Breakdown: fixture={t_fix:.3f}s, "
@@ -5666,7 +6877,6 @@ def test_r2_constant_query_and_decode_bounds_across_generations(tmp_path: Path) 
        (all queries use WHERE, aggregates, or LIMIT). Note: constant statement count
        does not prove history-independent total CPU/time because permitted SQL
        aggregates still scan historical import index/table entries in SQLite VM.
-       historical import index/table entries in SQLite VM.
     4. Commit of one edit remains within O(M + N log N + C) Python work.
     5. Current payload, hash, predecessor link, sequence, and newest-import
        corruptions are still rejected with INCONSISTENT_STATE."""
@@ -6597,7 +7807,10 @@ def test_r5_01_receipt_complete_comparison_and_negative_controls() -> None:
 
 def test_r5_02_mutation_harness_rejects_unrelated_setup_runtime_error() -> None:
     """R3.b: Verify mutation harness rejects unrelated fixture setup or runtime
-    errors instead of counting them as a kill."""
+    errors instead of counting them as a kill. Exercises the exact same
+    classification functions used by the real mutation probes."""
+    import accounting_persistence.source_import_store as sis_mod
+
     test_file = Path(__file__).resolve()
     repo_root = test_file.parents[1]
     store_path = (
@@ -6610,29 +7823,805 @@ def test_r5_02_mutation_harness_rejects_unrelated_setup_runtime_error() -> None:
     )
     orig_bytes = store_path.read_bytes()
 
-    # The harness MUST reject a RuntimeError and raise AssertionError
-    # stating that an unexpected exception occurred rather than semantic failure.
-    with pytest.raises(AssertionError) as exc_info:
-        try:
-            raise RuntimeError("Synthetic unrelated fixture setup failure!")
-        except BaseException as exc:
-            caught_exc = exc
-            expected_failure_desc = "AssertionError: next_seq == 2"
+    target_str = "if stored_gen != request.expected_generation:"
+    replacement_str = "if False and stored_gen != request.expected_generation:"
+    expected_desc = (
+        f"pytest Failed DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
+    )
 
-            def verify_semantic_failure(e: BaseException) -> bool:
-                return isinstance(e, AssertionError) and "next_seq" in str(e)
+    def _make_probe(exc_to_raise: BaseException) -> Callable[[], None]:
+        active = True
 
-            assert caught_exc is not None
-            assert verify_semantic_failure(caught_exc), (
-                f"Controlled mutation 'dummy' failed with unexpected exception "
-                f"{type(caught_exc).__name__}: {caught_exc!r} instead of expected "
-                f"semantic failure ({expected_failure_desc})!"
+        def probe_fn() -> None:
+            nonlocal active
+            if active:
+                active = False
+                raise exc_to_raise
+
+        return probe_fn
+
+    def _make_action_probe(action_fn: Callable[[], Any]) -> Callable[[], None]:
+        active = True
+
+        def probe_fn() -> None:
+            nonlocal active
+            if active:
+                active = False
+                action_fn()
+
+        return probe_fn
+
+    def _call_style_raises(
+        expected_exc: type[BaseException],
+        callable_target: Callable[[], Any],
+    ) -> Any:
+        call_adapter = cast(
+            Callable[[type[BaseException]], Callable[[Callable[[], Any]], Any]],
+            pytest.raises,
+        )
+        return call_adapter(expected_exc)(callable_target)
+
+    # 1. Unrelated RuntimeError (fixture setup failure) through real stale classifier
+    observed_semantic_failures: dict[str, str] = {}
+    with pytest.raises(AssertionError) as exc_rt:
+        _execute_mutation_harness(
+            name="negative control - RuntimeError",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                RuntimeError("Synthetic unrelated fixture setup failure!")
+            ),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception RuntimeError" in str(exc_rt.value)
+    assert "Synthetic unrelated fixture setup failure!" in str(exc_rt.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 2. Unrelated SystemExit through real stale classifier
+    with pytest.raises(AssertionError) as exc_se:
+        _execute_mutation_harness(
+            name="negative control - SystemExit",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(SystemExit(42)),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception SystemExit" in str(exc_se.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 3. Unrelated KeyboardInterrupt through real stale classifier
+    with pytest.raises(AssertionError) as exc_ki:
+        _execute_mutation_harness(
+            name="negative control - KeyboardInterrupt",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(KeyboardInterrupt("simulated cancel")),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception KeyboardInterrupt" in str(exc_ki.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 4. Unrelated pytest Failed (different message) through real stale classifier
+    with pytest.raises(AssertionError) as exc_unrelated:
+        _execute_mutation_harness(
+            name="negative control - unrelated pytest fail",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                pytest.fail.Exception("DID NOT RAISE unrelated SourceImportStoreError")
+            ),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception Exception" in str(
+        exc_unrelated.value
+    ) or "failed with unexpected exception" in str(exc_unrelated.value)
+    assert "DID NOT RAISE unrelated SourceImportStoreError" in str(exc_unrelated.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 4b. Exact-message forged pytest.fail.Exception through real stale classifier
+    with pytest.raises(AssertionError) as exc_exact_forged_stale:
+        _execute_mutation_harness(
+            name="negative control - exact forged pytest fail stale",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                pytest.fail.Exception(
+                    f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
+                )
+            ),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_exact_forged_stale.value)
+    assert f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}" in str(
+        exc_exact_forged_stale.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 4c. Function-style forged pytest.raises with callable raising exact
+    # pytest.fail.Exception through stale classifier
+    def _forged_fn_stale() -> None:
+        def _callable_stale() -> None:
+            raise pytest.fail.Exception(
+                f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
             )
 
-    assert "Synthetic unrelated fixture setup failure!" in str(exc_info.value)
-    assert "failed with unexpected exception RuntimeError" in str(exc_info.value)
+        pytest.raises(sis_mod.SourceImportStoreError, _callable_stale)
 
-    # Verify source file remains byte-for-byte identical
+    with pytest.raises(AssertionError) as exc_func_forged_stale:
+        _execute_mutation_harness(
+            name="negative control - function-style forged pytest fail stale",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_forged_fn_stale),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_func_forged_stale.value)
+    assert f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}" in str(
+        exc_func_forged_stale.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 4d. Context-manager forged pytest.raises with block raising exact
+    # pytest.fail.Exception through stale classifier
+    def _forged_cm_stale() -> None:
+        with pytest.raises(sis_mod.SourceImportStoreError):
+            raise pytest.fail.Exception(
+                f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
+            )
+
+    with pytest.raises(AssertionError) as exc_cm_forged_stale:
+        _execute_mutation_harness(
+            name="negative control - context-manager forged pytest fail stale",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_forged_cm_stale),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_cm_forged_stale.value)
+    assert f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}" in str(
+        exc_cm_forged_stale.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 4e. Call-style forged pytest.raises with callable raising exact
+    # pytest.fail.Exception through stale classifier
+    def _forged_call_style_stale() -> None:
+        def _callable_stale() -> None:
+            raise pytest.fail.Exception(
+                f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
+            )
+
+        _call_style_raises(sis_mod.SourceImportStoreError, _callable_stale)
+
+    with pytest.raises(AssertionError) as exc_call_forged_stale:
+        _execute_mutation_harness(
+            name="negative control - call-style forged pytest fail stale",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_forged_call_style_stale),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_call_forged_stale.value)
+    assert f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}" in str(
+        exc_call_forged_stale.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 5. Stale / custom string failure outcome through real stale classifier
+    with pytest.raises(AssertionError) as exc_custom_str:
+        _execute_mutation_harness(
+            name="negative control - custom string failure",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                pytest.fail.Exception(
+                    "DID NOT RAISE SourceImportStoreError(STALE_STATE)"
+                )
+            ),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_custom_str.value)
+    assert "DID NOT RAISE SourceImportStoreError(STALE_STATE)" in str(
+        exc_custom_str.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 6. Wrong exception class pytest Failed outcome through real stale classifier
+    with pytest.raises(AssertionError) as exc_wrong_class:
+        _execute_mutation_harness(
+            name="negative control - wrong class failure",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                pytest.fail.Exception(
+                    f"DID NOT RAISE {sqlite3.IntegrityError.__name__}"
+                )
+            ),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_wrong_class.value)
+    assert f"DID NOT RAISE {sqlite3.IntegrityError.__name__}" in str(
+        exc_wrong_class.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 7. Unrelated custom exception class named "Failed" carrying exact expected text
+    class Failed(Exception):
+        pass
+
+    with pytest.raises(AssertionError) as exc_spoofed:
+        _execute_mutation_harness(
+            name="negative control - spoofed Failed class",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                Failed(f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}")
+            ),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception Failed" in str(exc_spoofed.value)
+    assert f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}" in str(
+        exc_spoofed.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 8. Unrelated custom exception class named "Failed" for append-only IntegrityError
+    expected_integrity_desc = (
+        f"pytest Failed DID NOT RAISE {sqlite3.IntegrityError.__name__}"
+    )
+    with pytest.raises(AssertionError) as exc_spoofed_integrity:
+        _execute_mutation_harness(
+            name="negative control - spoofed Failed class integrity",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                Failed(f"DID NOT RAISE {sqlite3.IntegrityError.__name__}")
+            ),
+            expected_failure_desc=expected_integrity_desc,
+            verify_semantic_failure=classify_append_only_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception Failed" in str(exc_spoofed_integrity.value)
+    assert f"DID NOT RAISE {sqlite3.IntegrityError.__name__}" in str(
+        exc_spoofed_integrity.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 8b. Exact-message forged pytest.fail.Exception through append-only classifier
+    with pytest.raises(AssertionError) as exc_exact_forged_integrity:
+        _execute_mutation_harness(
+            name="negative control - exact forged pytest fail integrity",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                pytest.fail.Exception(
+                    f"DID NOT RAISE {sqlite3.IntegrityError.__name__}"
+                )
+            ),
+            expected_failure_desc=expected_integrity_desc,
+            verify_semantic_failure=classify_append_only_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_exact_forged_integrity.value)
+    assert f"DID NOT RAISE {sqlite3.IntegrityError.__name__}" in str(
+        exc_exact_forged_integrity.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 8c. Function-style forged pytest.raises with callable raising exact
+    # pytest.fail.Exception through integrity classifier
+    def _forged_fn_integrity() -> None:
+        def _callable_integrity() -> None:
+            raise pytest.fail.Exception(
+                f"DID NOT RAISE {sqlite3.IntegrityError.__name__}"
+            )
+
+        pytest.raises(sqlite3.IntegrityError, _callable_integrity)
+
+    with pytest.raises(AssertionError) as exc_func_forged_integrity:
+        _execute_mutation_harness(
+            name="negative control - function-style forged pytest fail integrity",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_forged_fn_integrity),
+            expected_failure_desc=expected_integrity_desc,
+            verify_semantic_failure=classify_append_only_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_func_forged_integrity.value)
+    assert f"DID NOT RAISE {sqlite3.IntegrityError.__name__}" in str(
+        exc_func_forged_integrity.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 8d. Context-manager forged pytest.raises with block raising exact
+    # pytest.fail.Exception through integrity classifier
+    def _forged_cm_integrity() -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            raise pytest.fail.Exception(
+                f"DID NOT RAISE {sqlite3.IntegrityError.__name__}"
+            )
+
+    with pytest.raises(AssertionError) as exc_cm_forged_integrity:
+        _execute_mutation_harness(
+            name="negative control - context-manager forged pytest fail integrity",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_forged_cm_integrity),
+            expected_failure_desc=expected_integrity_desc,
+            verify_semantic_failure=classify_append_only_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_cm_forged_integrity.value)
+    assert f"DID NOT RAISE {sqlite3.IntegrityError.__name__}" in str(
+        exc_cm_forged_integrity.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 8e. Call-style forged pytest.raises with callable raising exact
+    # pytest.fail.Exception through integrity classifier
+    def _forged_call_style_integrity() -> None:
+        def _callable_integrity() -> None:
+            raise pytest.fail.Exception(
+                f"DID NOT RAISE {sqlite3.IntegrityError.__name__}"
+            )
+
+        _call_style_raises(sqlite3.IntegrityError, _callable_integrity)
+
+    with pytest.raises(AssertionError) as exc_call_forged_integrity:
+        _execute_mutation_harness(
+            name="negative control - call-style forged pytest fail integrity",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_forged_call_style_integrity),
+            expected_failure_desc=expected_integrity_desc,
+            verify_semantic_failure=classify_append_only_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_call_forged_integrity.value)
+    assert f"DID NOT RAISE {sqlite3.IntegrityError.__name__}" in str(
+        exc_call_forged_integrity.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 9. Marker substring AssertionError: last_import_id mismatch
+    expected_membership_desc = (
+        "AssertionError: last_import_id mismatch: exact match required"
+    )
+    with pytest.raises(AssertionError) as exc_marker_last_id:
+        _execute_mutation_harness(
+            name="negative control - marker substring last_import_id",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                AssertionError("last_import_id mismatch: unrelated substring")
+            ),
+            expected_failure_desc=expected_membership_desc,
+            verify_semantic_failure=classify_unchanged_membership_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception AssertionError" in str(
+        exc_marker_last_id.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 9b. Unrecorded exact-message AssertionError for unchanged membership
+    imp_u1 = make_deterministic_uuid7(101)
+    imp_u2 = make_deterministic_uuid7(102)
+    with pytest.raises(AssertionError) as exc_unrecorded_mem:
+        _execute_mutation_harness(
+            name="negative control - unrecorded exact message unchanged membership",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                AssertionError(
+                    f"last_import_id mismatch: {imp_u1.bytes!r} != {imp_u2.bytes!r}"
+                )
+            ),
+            expected_failure_desc=expected_membership_desc,
+            verify_semantic_failure=classify_unchanged_membership_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception AssertionError" in str(
+        exc_unrecorded_mem.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 10. Marker substring AssertionError: change_events count mismatch
+    expected_outbox_desc = "AssertionError: change_events count mismatch: 0 != 1"
+    with pytest.raises(AssertionError) as exc_marker_events:
+        _execute_mutation_harness(
+            name="negative control - marker substring change_events",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                AssertionError("change_events count mismatch: 99 != 1")
+            ),
+            expected_failure_desc=expected_outbox_desc,
+            verify_semantic_failure=classify_outbox_insert_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception AssertionError" in str(
+        exc_marker_events.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 10b. Unrecorded exact-message AssertionError for outbox insert
+    with pytest.raises(AssertionError) as exc_unrecorded_outbox:
+        _execute_mutation_harness(
+            name="negative control - unrecorded exact message outbox insert",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                AssertionError("change_events count mismatch: 0 != 1")
+            ),
+            expected_failure_desc=expected_outbox_desc,
+            verify_semantic_failure=classify_outbox_insert_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception AssertionError" in str(
+        exc_unrecorded_outbox.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 11. Marker substring AssertionError: next_sequence mismatch
+    expected_seq_desc = "AssertionError: next_sequence mismatch: 1 != 2"
+    with pytest.raises(AssertionError) as exc_marker_seq:
+        _execute_mutation_harness(
+            name="negative control - marker substring next_sequence",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(AssertionError("next_sequence mismatch: 99 != 2")),
+            expected_failure_desc=expected_seq_desc,
+            verify_semantic_failure=classify_sequence_advance_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception AssertionError" in str(
+        exc_marker_seq.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 11b. Unrecorded exact-message AssertionError for sequence advance
+    with pytest.raises(AssertionError) as exc_unrecorded_seq:
+        _execute_mutation_harness(
+            name="negative control - unrecorded exact message sequence advance",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(AssertionError("next_sequence mismatch: 1 != 2")),
+            expected_failure_desc=expected_seq_desc,
+            verify_semantic_failure=classify_sequence_advance_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception AssertionError" in str(
+        exc_unrecorded_seq.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 11c. Substituted failure object for unchanged membership
+    def _substituted_assertion_fn() -> None:
+        orig_err = AssertionError(
+            f"last_import_id mismatch: {imp_u1.bytes!r} != {imp_u2.bytes!r}"
+        )
+        if _active_mutation_harness is not None:
+            _active_mutation_harness.record_probe_failure(
+                orig_err, "unchanged membership"
+            )
+        raise AssertionError(
+            f"last_import_id mismatch: {imp_u1.bytes!r} != {imp_u2.bytes!r}"
+        )
+
+    with pytest.raises(AssertionError) as exc_sub_assertion:
+        _execute_mutation_harness(
+            name="negative control - substituted assertion object",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_substituted_assertion_fn),
+            expected_failure_desc=expected_membership_desc,
+            verify_semantic_failure=classify_unchanged_membership_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception AssertionError" in str(
+        exc_sub_assertion.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 12. Predecessor link classifier rejects wrong reason or wrong public message
+    expected_pred_desc = (
+        "SourceImportStoreError(INCONSISTENT_STATE): "
+        "Source import store is inconsistent."
+    )
+    with pytest.raises(AssertionError) as exc_pred_wrong:
+        _execute_mutation_harness(
+            name="negative control - predecessor link wrong reason",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                sis_mod.SourceImportStoreError(
+                    sis_mod.SourceImportStoreReason.STALE_STATE
+                )
+            ),
+            expected_failure_desc=expected_pred_desc,
+            verify_semantic_failure=classify_predecessor_link_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception SourceImportStoreError" in str(
+        exc_pred_wrong.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 13. Request Raw digest classifier rejects unrelated exception
+    expected_raw_digest_desc = (
+        f"pytest Failed DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
+    )
+    with pytest.raises(AssertionError) as exc_raw_digest:
+        _execute_mutation_harness(
+            name="negative control - request raw digest unrelated",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                pytest.fail.Exception("DID NOT RAISE unrelated SourceImportStoreError")
+            ),
+            expected_failure_desc=expected_raw_digest_desc,
+            verify_semantic_failure=classify_request_raw_digest_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_raw_digest.value)
+    assert "DID NOT RAISE unrelated SourceImportStoreError" in str(exc_raw_digest.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 13b. Exact-message forged pytest.fail.Exception through request raw digest
+    # classifier
+    with pytest.raises(AssertionError) as exc_exact_forged_raw_digest:
+        _execute_mutation_harness(
+            name="negative control - exact forged pytest fail raw digest",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                pytest.fail.Exception(
+                    f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
+                )
+            ),
+            expected_failure_desc=expected_raw_digest_desc,
+            verify_semantic_failure=classify_request_raw_digest_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_exact_forged_raw_digest.value)
+    assert f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}" in str(
+        exc_exact_forged_raw_digest.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 13c. Function-style forged pytest.raises with callable raising exact
+    # pytest.fail.Exception through request raw digest classifier
+    def _forged_fn_raw_digest() -> None:
+        def _callable_raw_digest() -> None:
+            raise pytest.fail.Exception(
+                f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
+            )
+
+        pytest.raises(sis_mod.SourceImportStoreError, _callable_raw_digest)
+
+    with pytest.raises(AssertionError) as exc_func_forged_raw_digest:
+        _execute_mutation_harness(
+            name="negative control - function-style forged pytest fail raw digest",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_forged_fn_raw_digest),
+            expected_failure_desc=expected_raw_digest_desc,
+            verify_semantic_failure=classify_request_raw_digest_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_func_forged_raw_digest.value)
+    assert f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}" in str(
+        exc_func_forged_raw_digest.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 13d. Call-style forged pytest.raises with callable raising exact
+    # pytest.fail.Exception through request raw digest classifier
+    def _forged_call_style_raw_digest() -> None:
+        def _callable_raw_digest() -> None:
+            raise pytest.fail.Exception(
+                f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}"
+            )
+
+        _call_style_raises(sis_mod.SourceImportStoreError, _callable_raw_digest)
+
+    with pytest.raises(AssertionError) as exc_call_forged_raw_digest:
+        _execute_mutation_harness(
+            name="negative control - call-style forged pytest fail raw digest",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_forged_call_style_raw_digest),
+            expected_failure_desc=expected_raw_digest_desc,
+            verify_semantic_failure=classify_request_raw_digest_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_call_forged_raw_digest.value)
+    assert f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}" in str(
+        exc_call_forged_raw_digest.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 14. Foreign same-named expected class recorded through pytest.raises
+    class ForeignSourceImportStoreError(Exception):
+        pass
+
+    def _foreign_expected_fn() -> None:
+        with pytest.raises(ForeignSourceImportStoreError):
+            pass
+
+    with pytest.raises(AssertionError) as exc_foreign_cls:
+        _execute_mutation_harness(
+            name="negative control - foreign same-named expected class",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_foreign_expected_fn),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_foreign_cls.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 15. Subclass of expected class recorded through pytest.raises
+    class SubSourceImportStoreError(sis_mod.SourceImportStoreError):
+        pass
+
+    def _subclass_expected_fn() -> None:
+        with pytest.raises(SubSourceImportStoreError):
+            pass
+
+    with pytest.raises(AssertionError) as exc_sub_cls:
+        _execute_mutation_harness(
+            name="negative control - subclass expected class",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_subclass_expected_fn),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_sub_cls.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 16. Substituted failure object (recorded failure caught and
+    # substituted with new object)
+    def _substituted_obj_fn() -> None:
+        try:
+            with pytest.raises(sis_mod.SourceImportStoreError):
+                pass
+        except pytest.fail.Exception as orig_fail:
+            raise pytest.fail.Exception(str(orig_fail)) from orig_fail
+
+    with pytest.raises(AssertionError) as exc_sub_obj:
+        _execute_mutation_harness(
+            name="negative control - substituted failure object",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_substituted_obj_fn),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_sub_obj.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 17. Subclass of pytest failure base (PytestFailed)
+    class SubFailed(PytestFailed):
+        pass
+
+    with pytest.raises(AssertionError) as exc_sub_failed:
+        _execute_mutation_harness(
+            name="negative control - subclass of pytest.fail.Exception",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                SubFailed(f"DID NOT RAISE {sis_mod.SourceImportStoreError.__name__}")
+            ),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception SubFailed" in str(exc_sub_failed.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 18. Tuple without expected class
+    def _probe_tuple_without_expected_fn() -> None:
+        with pytest.raises((sqlite3.OperationalError, ForeignSourceImportStoreError)):
+            pass
+
+    with pytest.raises(AssertionError) as exc_tuple_foreign:
+        _execute_mutation_harness(
+            name="negative control - tuple without expected class",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_action_probe(_probe_tuple_without_expected_fn),
+            expected_failure_desc=expected_desc,
+            verify_semantic_failure=classify_stale_check_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception" in str(exc_tuple_foreign.value)
+    assert len(observed_semantic_failures) == 0
+
+    # 19. Foreign same-named class for predecessor link failure
+    class ForeignSourceImportStoreError2(Exception):
+        reason = sis_mod.SourceImportStoreReason.INCONSISTENT_STATE
+
+        def __str__(self) -> str:
+            return "Source import store is inconsistent."
+
+    with pytest.raises(AssertionError) as exc_pred_foreign:
+        _execute_mutation_harness(
+            name="negative control - predecessor foreign class",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(ForeignSourceImportStoreError2()),
+            expected_failure_desc=expected_pred_desc,
+            verify_semantic_failure=classify_predecessor_link_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception ForeignSourceImportStoreError2" in str(
+        exc_pred_foreign.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 20. Subclass of sis_mod.SourceImportStoreError for predecessor link failure
+    class SubSourceImportStoreError2(sis_mod.SourceImportStoreError):
+        pass
+
+    with pytest.raises(AssertionError) as exc_pred_sub:
+        _execute_mutation_harness(
+            name="negative control - predecessor subclass",
+            target_str=target_str,
+            replacement_str=replacement_str,
+            probe_fn=_make_probe(
+                SubSourceImportStoreError2(
+                    sis_mod.SourceImportStoreReason.INCONSISTENT_STATE
+                )
+            ),
+            expected_failure_desc=expected_pred_desc,
+            verify_semantic_failure=classify_predecessor_link_failure,
+            observed_semantic_failures=observed_semantic_failures,
+        )
+    assert "failed with unexpected exception SubSourceImportStoreError2" in str(
+        exc_pred_sub.value
+    )
+    assert len(observed_semantic_failures) == 0
+
+    # 21. Prove probe classifiers reject assertion failures when harness is inactive
+    assert not classify_unchanged_membership_failure(
+        AssertionError(f"last_import_id mismatch: {imp_u1.bytes!r} != {imp_u2.bytes!r}")
+    )
+    assert not classify_outbox_insert_failure(
+        AssertionError("change_events count mismatch: 0 != 1")
+    )
+    assert not classify_sequence_advance_failure(
+        AssertionError("next_sequence mismatch: 1 != 2")
+    )
+
     assert store_path.read_bytes() == orig_bytes
 
 
