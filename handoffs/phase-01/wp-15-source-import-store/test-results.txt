@@ -2,12 +2,13 @@
 WORK PACKAGE: WP-15 source-import-store.v1
 PHASE: Phase 1 — source and data-model foundation (Gate G1)
 RECORDED AT UTC: 2026-09-05T06:35:00Z
-TESTED COMMIT SHA: a41539f76e7c57e15cf8a6824edae480095923ca
-PARENT COMMIT SHA: 7517173da979bb7884efdda3bdc5445e2e563ef8
+TESTED COMMIT SHA: 34321ebf4a3624f21da418c5e7780b290d6cbcfd
+PARENT COMMIT SHA: a41539f76e7c57e15cf8a6824edae480095923ca
 BASELINE COMMIT SHA: 0915081b3a44e08dee935785c6c1ba7a96135fcb
 ================================================================================
 
 1. TOOLCHAIN AND ENVIRONMENT VERIFICATION
+Historical Reference Execution (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 Command: uv sync --frozen --all-packages --all-groups
 Exit status: 0
 Output:
@@ -45,6 +46,19 @@ SQLite compile options:
 
 ================================================================================
 2. FORMATTING AND LINTING
+Preceding Stage Verified Execution (Check 1):
+Command: /venv/bin/ruff check --no-cache .
+Exit status: 0
+Output:
+All checks passed!
+
+Preceding Stage Verified Execution (Check 2):
+Command: /venv/bin/ruff format --check --no-cache .
+Exit status: 0
+Output:
+140 files already formatted
+
+Historical Reference Execution (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 Command: uv run ruff format --check .
 Exit status: 0
 Output:
@@ -57,6 +71,21 @@ All checks passed!
 
 ================================================================================
 3. STATIC TYPE CHECKING (LINUX AND WIN32)
+Preceding Stage Verified Execution (Check 3):
+Command: /python/bin/python3.13 -m mypy --cache-dir /tmp/mypy .
+Exit status: 0
+Output:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 59 source files
+
+Preceding Stage Verified Execution (Check 4):
+Command: /python/bin/python3.13 -m mypy --platform win32 --cache-dir /tmp/mypy-win32 .
+Exit status: 0
+Output:
+pyproject.toml: note: unused section(s): module = ['playwright.*', 'pythoncom.*', 'win32com.*', 'win32con.*', 'win32gui.*', 'win32process.*']
+Success: no issues found in 59 source files
+
+Historical Reference Execution (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 Command: uv run mypy .
 Exit status: 0
 Output:
@@ -74,7 +103,14 @@ Static Mypy type-checking on Linux targets Win32 type definitions but is not nat
 Windows runtime execution. Native Windows runtime execution is deferred to Windows CI.
 
 ================================================================================
-4. DEDICATED WP-15 TEST SUITE (IS-01 THROUGH IS-16 AND R1..R5)
+4. DEDICATED WP-15 TEST SUITE (IS-01 THROUGH IS-16 AND R1..R6)
+Preceding Stage Verified Execution (Check 0):
+Command: /python/bin/python3.13 -m pytest -q -- tests/test_source_import_store.py
+Exit status: 0
+Output:
+.........................................................                [100%]
+
+Historical Reference Execution (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 Command: uv run pytest tests/test_source_import_store.py -v -o addopts=""
 Exit status: 0
 Output:
@@ -146,7 +182,7 @@ tests/test_source_import_store.py::test_r5_03_is11_subprocess_scripts_portable_w
 
 ================== 55 passed in 49.11s ==================
 
-Focused Verification (Receipt, Harness, Subprocess Path Controls):
+Historical Focused Verification (Receipt, Harness, Subprocess Path Controls; from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 Command: uv run pytest tests/test_source_import_store.py -k "test_r5 or test_is11 or test_is14" -v -o addopts=""
 Exit status: 0
 Output:
@@ -160,6 +196,13 @@ tests/test_source_import_store.py::test_r5_03_is11_subprocess_scripts_portable_w
 
 ================================================================================
 5. IS-16 15,000-ROW SCALE BENCHMARK & MEMORY TARGET (<350 MiB)
+Note: In Round 6 (tested commit 34321ebf4a3624f21da418c5e7780b290d6cbcfd), both IS-16 test nodes
+(test_is16_r4_timing_evidence_negative_controls and test_is16_15000_row_scale_benchmark_memory_and_replay)
+are verified passing in Check 0 (57 passed). The detailed scale benchmark execution below
+is retained as historical reference evidence from parent commit a41539f76e7c57e15cf8a6824edae480095923ca
+with untouched output.
+
+Historical Reference Execution (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 Command: /usr/bin/time -v uv run pytest tests/test_source_import_store.py -k "test_is16" -s
 Exit status: 0
 Output:
@@ -229,6 +272,13 @@ Scale Metrics Summary & Window Identification:
 
 ================================================================================
 6. R2 CONSTANT BOUNDS BENCHMARK AND SQL AGGREGATE QUALIFICATION
+Note: In Round 6 (tested commit 34321ebf4a3624f21da418c5e7780b290d6cbcfd), both R2 test nodes
+(test_r2_schema_validation_rigor and test_r2_constant_query_and_decode_bounds_across_generations)
+are verified passing in Check 0 (57 passed). The query and decode bounds execution below
+is retained as historical reference evidence from parent commit a41539f76e7c57e15cf8a6824edae480095923ca
+with untouched output.
+
+Historical Reference Execution (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 Command: uv run pytest tests/test_source_import_store.py -k "test_r2" -v -s -o addopts=""
 Exit status: 0
 Output:
@@ -254,28 +304,61 @@ R2 Query and Decode Bounds Summary & Honest Qualification:
 
 ================================================================================
 7. FULL REPOSITORY TEST SUITE (REGRESSION CHECK)
-Command: uv run pytest -v
+Preceding Stage Verified Execution (Check 5):
+Command: /python/bin/python3.13 -m pytest -q
 Exit status: 0
 Output:
-collected 1011 items
-1009 passed, 2 skipped in 175.01s (0:02:55)
+........................................................................ [  7%]
+........................................................................ [ 14%]
+........................................................................ [ 21%]
+........................................................................ [ 28%]
+........................................................................ [ 35%]
+........................................................................ [ 42%]
+........................................................................ [ 49%]
+........................................................................ [ 56%]
+........................................................................ [ 63%]
+........................................................................ [ 71%]
+..
+[WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.6838s | baseline_current_rss_mib: 31.48 MiB | call_peak_rss_mib: 61.24 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 96fe4858facbb226aab34ab694fb28ed9cdc407edc71ea4adf9c39a1774d84c1 | platform: linux
+..............................ss...................................... [ 78%]
+........................................................................ [ 85%]
+........................................................................ [ 92%]
+....
+[WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.5426s | baseline_current_rss_mib: 32.76 MiB | call_peak_rss_mib: 62.04 MiB | rows: 15000 | platform: linux
+.................................................................... [ 99%]
+.....                                                                    [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
+SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
 
 Exact Skipped Test Information:
 - tests/test_xlsx_snapshot_acquisition.py:3911: `test_r11_01_windows_handle_protect_from_close_native_oracle`
   Reason: Native Windows handle protection test only runs on Windows runtime
 - tests/test_xlsx_snapshot_acquisition.py:4008: `test_r9_10_windows_runtime_full_lifecycle_platform_conditional`
   Reason: Windows platform-conditional test only runs on Windows runtime
-Total collection represents 956 baseline + 55 WP-15 tests = 1011 items.
+Total collection represents 956 baseline + 57 WP-15 tests = 1013 items (1011 passed, 2 skipped).
+
+Historical Reference Execution (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
+Command: uv run pytest -v
+Exit status: 0
+Output:
+collected 1011 items
+1009 passed, 2 skipped in 175.01s (0:02:55)
 
 ================================================================================
 8. EXISTING BENCHMARKS VERIFICATION (WP-05, WP-06, WP-12)
+Note: Embedded benchmarks in Check 5 passed cleanly (WP-06: 11.68s, 61.24 MiB; WP-05: 10.54s, 62.04 MiB).
+The standalone combined benchmark execution below is retained as historical reference evidence
+from parent commit a41539f76e7c57e15cf8a6824edae480095923ca with untouched output.
+
+Historical Reference Execution (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 Command: uv run pytest tests/test_xlsx_source_reader.py::test_xr12_synthetic_15000_row_benchmark tests/test_xlsx_snapshot_acquisition.py::test_sa14_combined_15000_row_benchmark tests/test_xlsx_source_identity.py::test_xi14_combined_15000_row_benchmark -v -s
 Exit status: 0
 Output:
-tests/test_xlsx_source_reader.py 
+tests/test_xlsx_source_reader.py
 [WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 11.6553s | baseline_current_rss_mib: 30.66 MiB | call_peak_rss_mib: 62.34 MiB | rows: 15000 | platform: linux
 .
-tests/test_xlsx_snapshot_acquisition.py 
+tests/test_xlsx_snapshot_acquisition.py
 [WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 11.8430s | baseline_current_rss_mib: 30.31 MiB | call_peak_rss_mib: 62.07 MiB | rows: 15000 | file_bytes: 549787 | file_sha: bd1e0b778ca356122ec7a1a4e21d7dfa1e78f196fab038f46fdad2e73335f188 | platform: linux
 .
 tests/test_xlsx_source_identity.py {"fixture_seconds": 0.6903318280819803, "peak_rss_mib": 78.8515625, "rows": 15000, "seconds": 11.344031452899799}
@@ -289,18 +372,40 @@ Existing Benchmarks vs Gate Limits:
 
 ================================================================================
 9. WHITESPACE AND DIFF CLEANLINESS
-Command: git diff --check 0915081b3a44e08dee935785c6c1ba7a96135fcb...a41539f76e7c57e15cf8a6824edae480095923ca
+Tested-Code Commit Range Verified Execution:
+Command: git diff --check 0915081b3a44e08dee935785c6c1ba7a96135fcb...34321ebf4a3624f21da418c5e7780b290d6cbcfd
 Exit status: 0
 Output: (clean, no whitespace errors)
 
+Delivery Tree Verified Execution (controller preflight on final candidate bytes):
+Command: git diff --check 0915081b3a44e08dee935785c6c1ba7a96135fcb
+Exit status: 0
+Stdout: (empty)
+Stderr: (empty)
+
+Requirement: The inclusion-aware check `git diff --check 0915081b3a44e08dee935785c6c1ba7a96135fcb` (no ellipsis) against the final delivery tree is required to exit 0 across all changed files including the materialized documentation artifacts. Trailing whitespace defects previously present after tests/test_xlsx_source_reader.py and tests/test_xlsx_snapshot_acquisition.py in test-results.txt have been permanently removed.
+
 ================================================================================
 10. ROLLBACK REHEARSAL
-Isolation method: Clean isolated scratch worktree
-Working directory: /srv/accounting-bot/workspace
-Scratch tree: scratch_rollback_worktree
+Round 6 Rollback Procedure (Unrehearsed):
+The rollback procedure for tested commit 34321ebf4a3624f21da418c5e7780b290d6cbcfd
+is defined in handoff.md as an unrehearsed procedure:
+1. Single-round rollback: `git revert --no-edit 34321ebf4a3624f21da418c5e7780b290d6cbcfd`
+   Expected verification: `git diff --quiet a41539f76e7c57e15cf8a6824edae480095923ca HEAD` must exit 0.
+2. Full WP-15 package rollback: `git revert --no-edit 0915081b3a44e08dee935785c6c1ba7a96135fcb..34321ebf4a3624f21da418c5e7780b290d6cbcfd`
+   Expected verification: `git diff --quiet 0915081b3a44e08dee935785c6c1ba7a96135fcb HEAD` must exit 0.
+No Round 6 rollback rehearsal was executed.
 
-Rehearsal 1: Single-round code rollback to pre-round delivery HEAD
-Commands:
+Historical Rehearsal Reference Evidence (from parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
+The rehearsal command outputs below are retained solely as historical reference evidence
+captured during parent commit a41539f76e7c57e15cf8a6824edae480095923ca rehearsal:
+
+Historical isolation method: Clean isolated scratch worktree
+Historical working directory: /srv/accounting-bot/workspace
+Historical scratch tree: scratch_rollback_worktree
+
+Historical Rehearsal 1: Single-round code rollback to pre-round delivery HEAD
+Commands (executed at parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 1. git worktree add scratch_rollback_worktree a41539f76e7c57e15cf8a6824edae480095923ca --detach
    Exit status: 0
    Output: Preparing worktree (detached HEAD a41539f)
@@ -312,8 +417,8 @@ Commands:
    Exit status: 0
    DIFF_QUIET_EXIT_CODE=0 (empty diff against pre-round delivery 7517173da979bb7884efdda3bdc5445e2e563ef8)
 
-Rehearsal 2: Full WP-15 rollback to baseline 0915081b3a44e08dee935785c6c1ba7a96135fcb
-Commands:
+Historical Rehearsal 2: Full WP-15 rollback to baseline 0915081b3a44e08dee935785c6c1ba7a96135fcb
+Commands (executed at parent commit a41539f76e7c57e15cf8a6824edae480095923ca):
 1. git reset --hard a41539f76e7c57e15cf8a6824edae480095923ca
    Exit status: 0
 2. git revert --no-edit 0915081b3a44e08dee935785c6c1ba7a96135fcb..a41539f76e7c57e15cf8a6824edae480095923ca
@@ -325,22 +430,53 @@ Commands:
 4. git worktree remove scratch_rollback_worktree --force
    Exit status: 0
 
-Active branch status: `git status` on `antigravity/phase-01-source-import-store` reports
-working tree clean; no workspace branches or working files were disturbed.
-Result: PASS
+Historical active branch status: Working tree clean (historical parent-commit evidence at a41539f76e7c57e15cf8a6824edae480095923ca; no workspace branches or working files were disturbed).
+Historical Rehearsal Result: PASS (retained solely as historical parent-commit evidence from a41539f76e7c57e15cf8a6824edae480095923ca).
+
+================================================================================
+11. HANDOFF VALIDATION
+Command: python3 .agents/skills/accounting-bot-implementer/scripts/validate_handoff.py handoffs/phase-01/wp-15-source-import-store
+Exit status: 0
+Stdout:
+Handoff validation passed.
+Stderr: (empty)
+Execution: controller preflight on the final candidate bytes.
+Requirement: Structural validation of all three finalized documentation artifacts (handoff.md, acceptance-matrix.md, test-results.txt) under handoffs/phase-01/wp-15-source-import-store is required to pass with exit status 0 on the finalized delivery tree.
 
 ================================================================================
 FINAL SUMMARY
-All 16 acceptance criteria IS-01 through IS-16 and Round 5 review items R3.a, R3.b,
-W1, and R4 are satisfied with truthful, independent synthetic test evidence. All 55
-dedicated test nodes pass (49.11s). Full repository test suite passes with 1009 passed
-and 2 expected Windows-only acquisition skips (1011 total collected = 956 baseline + 55 new).
-Peak process call-window RSS for 15,000 rows was 83.84 MiB (Linux /proc/self/status VmRSS),
-and whole-process peak RSS via /usr/bin/time -v was 212,212 KiB = 207.24 MiB (well below
-the 350 MiB limit). Type checks pass for both Linux and Win32 platforms across 59 source
-files. Query bounds are verified with honest qualification regarding SQL aggregate scans.
-Fixed-SHA single-commit and full-package rollback were cleanly rehearsed in an isolated
-scratch worktree.
-Product module SHA-256 is exactly b9492262e9d77b508afb6df56174679ec8c04f6d3800279abcaff8c4df49cb4c.
+Local Linux evidence is verified across IS-01 through IS-16 and Round 6 review items
+R3.a, R3.b, W1, and R4, with native Windows acceptance evidence pending PR CI.
+Because IS-16 requires native Windows/Linux CI, criteria are reported as local Linux
+evidence with Windows acceptance evidence pending rather than complete criterion
+satisfaction. All 57 dedicated test nodes pass in Check 0. Full repository test
+suite passes in Check 5 with 1011 passed and 2 expected Windows-only acquisition
+skips (1013 total collected = 956 baseline + 57 new).
+Bounded no-ACK cleanup (test_is11_negative_no_ack_bounded_exit_and_no_leaks), exact-harness
+mutation negative controls (test_r5_02), and enforced additive timing assertions
+(assert_r4_timing_evidence / test_is16_r4_timing_evidence_negative_controls) are verified.
+Exact mutation harness negative control in test_r5_02 proves 35 mutation-harness executions
+across the numbered and lettered subcases followed by three inactive-harness classifier
+checks fail the harness.
+Scale benchmark IS-16 historical reference at parent commit a41539f76e7c57e15cf8a6824edae480095923ca:
+call-window RSS was 83.84 MiB (Linux /proc/self/status VmRSS), and whole-process peak RSS
+via /usr/bin/time -v was 212,212 KiB = 207.24 MiB (well below the 350 MiB limit). Type checks
+pass for both Linux and Win32 platforms across 59 source files (Checks 3 and 4). Query bounds
+are verified with honest qualification regarding SQL aggregate scans.
+Fixed-SHA rollback procedure for Round 6 is an unrehearsed procedure with required expected
+checks; historical rehearsal evidence and clean tree/PASS results are cleanly attributed to parent
+commit a41539f76e7c57e15cf8a6824edae480095923ca.
+Tested-code commit diff check (git diff --check 0915081b3a44e08dee935785c6c1ba7a96135fcb...34321ebf4a3624f21da418c5e7780b290d6cbcfd)
+verified with exit status 0 (clean, no whitespace errors); final delivery tree whitespace check (git diff --check 0915081b3a44e08dee935785c6c1ba7a96135fcb)
+and handoff validator (validate_handoff.py) both exited 0 on the final candidate tree, with exact output recorded in sections 9 and 11 and bound to the final document hashes by controller preflight.
+Product module SHA-256 before and after documentation work is byte-for-byte unchanged at:
+b9492262e9d77b508afb6df56174679ec8c04f6d3800279abcaff8c4df49cb4c.
+Test module SHA-256 before and after documentation work is byte-for-byte unchanged at:
+0af2983e18f8a6b8af1951346805cfa6b26c6cdc54170271aa5605d36343eb7b.
+Linux locally executed; native Windows execution is pending PR CI.
+Preceding stage job ID: wp15-r6-continuous-s01e0253-2c3fc949.
+Preceding stage test receipt SHA-256: 3ec4a9e6b65c17cceafa61a3a1ae0f38c280ee9626dcd4516994259fe8bb6364.
+Preceding stage review result SHA-256: 6e3c49cfd3f0cbd3380770f4371203cb07c56d54ec977c3bcb5c00905c417662.
+Current documentation delivery SHA: not yet created.
 Gate G1 remains OPEN / IN PROGRESS.
 ================================================================================
