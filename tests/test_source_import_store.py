@@ -99,8 +99,8 @@ def get_current_process_rss_mib() -> float:
 
         class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
             _fields_ = [
-                ("cb", ctypes.c_uint32),
-                ("PageFaultCount", ctypes.c_uint32),
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
                 ("PeakWorkingSetSize", ctypes.c_size_t),
                 ("WorkingSetSize", ctypes.c_size_t),
                 ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
@@ -112,16 +112,33 @@ def get_current_process_rss_mib() -> float:
             ]
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.argtypes = []
         kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+
+        mem_func: Any = None
         try:
             psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            mem_func = getattr(psapi, "GetProcessMemoryInfo", None)
         except Exception:
-            psapi = kernel32
+            pass
+
+        if mem_func is None:
+            mem_func = getattr(kernel32, "K32GetProcessMemoryInfo", None)
+
+        if mem_func is None:
+            raise RuntimeError("Windows GetProcessMemoryInfo API entry point not found")
+
+        mem_func.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+            wintypes.DWORD,
+        ]
+        mem_func.restype = wintypes.BOOL
 
         counters = PROCESS_MEMORY_COUNTERS()
         counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
         handle = kernel32.GetCurrentProcess()
-        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+        if not mem_func(handle, ctypes.byref(counters), counters.cb):
             raise RuntimeError("Windows GetProcessMemoryInfo failed")
         return float(counters.WorkingSetSize) / (1024.0 * 1024.0)
 
@@ -8663,3 +8680,337 @@ db_file = sys.argv[2]
     stdout, stderr = proc.communicate(timeout=5.0)
     assert proc.returncode == 0
     assert stdout == win_path
+
+
+def test_r5_04_windows_rss_ctypes_abi_regression(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """IS-16 regression: platform-independent test using fake Windows bindings.
+
+    Proves:
+    1. Rejection of missing/wrong ctypes prototypes when handle is wider than 32 bits.
+    2. Correct 64-bit HANDLE transport and successful RSS conversion to MiB.
+    3. Failure propagation when API returns 0 or entry point is not found.
+    4. Fallback to kernel32.K32GetProcessMemoryInfo when psapi is unavailable.
+    5. Platform monkeypatches built before patching and fully restored with no
+       real foreign-OS calls on Linux.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    class FakeWinFunction:
+        def __init__(
+            self,
+            name: str,
+            *,
+            should_fail: bool = False,
+            working_set_bytes: int = 0,
+            wide_handle: int = 0xFFFF_FFFF_FFFF_FFFF,
+        ) -> None:
+            self.name = name
+            self.argtypes: list[Any] | tuple[Any, ...] | None = None
+            self.restype: Any = None
+            self.should_fail = should_fail
+            self.working_set_bytes = working_set_bytes
+            self.wide_handle = wide_handle
+            self.invoked = False
+            self.last_args: tuple[Any, ...] = ()
+
+        def __call__(self, *args: Any) -> Any:
+            self.invoked = True
+            self.last_args = args
+
+            if self.name == "GetCurrentProcess":
+                if self.argtypes is None:
+                    raise ctypes.ArgumentError(
+                        "GetCurrentProcess missing argtypes prototype"
+                    )
+                if len(self.argtypes) != 0:
+                    raise ctypes.ArgumentError(
+                        "GetCurrentProcess argtypes must be empty"
+                    )
+                if self.restype is None or self.restype not in (
+                    wintypes.HANDLE,
+                    ctypes.c_void_p,
+                ):
+                    raise ctypes.ArgumentError(
+                        "GetCurrentProcess restype must be wintypes.HANDLE"
+                    )
+                return self.wide_handle
+
+            if self.name in ("GetProcessMemoryInfo", "K32GetProcessMemoryInfo"):
+                # 1. Reject missing argtypes when handle wider than 32 bits
+                if self.argtypes is None:
+                    raise ctypes.ArgumentError(
+                        "argument 1: OverflowError: int too long to convert"
+                    )
+
+                # 2. Reject incorrect argtypes length
+                if len(self.argtypes) != 3:
+                    raise ctypes.ArgumentError(
+                        f"{self.name} argtypes must specify exactly 3 arguments"
+                    )
+
+                # 3. Reject non-64-bit / 32-bit handle parameter type
+                arg1_type = self.argtypes[0]
+                if arg1_type not in (wintypes.HANDLE, ctypes.c_void_p):
+                    raise ctypes.ArgumentError(
+                        "argument 1: OverflowError: int too long to convert"
+                    )
+
+                # Confirm supplied handle is wider than 32 bits
+                handle_val = args[0] if args else None
+                if isinstance(handle_val, int) and handle_val <= 0xFFFFFFFF:
+                    raise ValueError(
+                        f"Expected handle wider than 32 bits, got {handle_val:#x}"
+                    )
+
+                # 4. Reject invalid pointer type for counters struct
+                arg2_type = self.argtypes[1]
+                if not (
+                    isinstance(arg2_type, type)
+                    and hasattr(arg2_type, "_type_")
+                    and hasattr(arg2_type._type_, "WorkingSetSize")
+                ):
+                    raise ctypes.ArgumentError(
+                        "argument 2: expected pointer to PROCESS_MEMORY_COUNTERS"
+                    )
+
+                # 5. Reject invalid DWORD parameter type
+                arg3_type = self.argtypes[2]
+                if arg3_type not in (
+                    wintypes.DWORD,
+                    ctypes.c_uint32,
+                    ctypes.c_ulong,
+                    ctypes.c_uint,
+                ):
+                    raise ctypes.ArgumentError("argument 3: expected DWORD type")
+
+                # 6. Reject missing / invalid BOOL restype
+                if self.restype not in (wintypes.BOOL, ctypes.c_int, ctypes.c_long):
+                    raise ctypes.ArgumentError("restype must be wintypes.BOOL")
+
+                if self.should_fail:
+                    return 0  # Win32 BOOL FALSE
+
+                # Write simulated working set bytes into counters struct
+                if len(args) > 1 and args[1] is not None:
+                    byref_arg = args[1]
+                    target_counters = getattr(byref_arg, "_obj", byref_arg)
+                    if hasattr(byref_arg, "contents"):
+                        target_counters = byref_arg.contents
+                    if hasattr(target_counters, "WorkingSetSize"):
+                        target_counters.WorkingSetSize = self.working_set_bytes
+                return 1  # Win32 BOOL TRUE
+
+            raise NotImplementedError(f"Unsupported fake function: {self.name}")
+
+    class FakeWinDLL:
+        def __init__(self, name: str, functions: dict[str, FakeWinFunction]) -> None:
+            self._name = name
+            self._functions = functions
+
+        def __getattr__(self, name: str) -> FakeWinFunction:
+            if name in self._functions:
+                return self._functions[name]
+            raise AttributeError(f"DLL '{self._name}' has no export '{name}'")
+
+    class FakeWinDLLLoader:
+        def __init__(self, libraries: dict[str, FakeWinDLL]) -> None:
+            self._libraries = libraries
+
+        def __call__(self, name: str, *args: Any, **kwargs: Any) -> FakeWinDLL:
+            key = name.lower().removesuffix(".dll")
+            if key in self._libraries:
+                return self._libraries[key]
+            raise OSError(f"DLL '{name}' not found")
+
+    WIDE_HANDLE = 0xFFFF_FFFF_FFFF_FFFF  # 64-bit pseudo-handle (HANDLE)-1
+    assert WIDE_HANDLE > 0xFFFFFFFF
+    assert WIDE_HANDLE.bit_length() == 64
+
+    # -------------------------------------------------------------------------
+    # Sub-case 1: Primary psapi path with 64-bit handle & successful RSS conversion
+    # -------------------------------------------------------------------------
+    # Fixtures built BEFORE monkeypatching platform state
+    fn_k32_p1 = FakeWinFunction("GetCurrentProcess", wide_handle=WIDE_HANDLE)
+    fn_psapi_p1 = FakeWinFunction(
+        "GetProcessMemoryInfo",
+        working_set_bytes=104_857_600,  # 100 MiB
+    )
+    k32_dll_p1 = FakeWinDLL("kernel32", {"GetCurrentProcess": fn_k32_p1})
+    psapi_dll_p1 = FakeWinDLL("psapi", {"GetProcessMemoryInfo": fn_psapi_p1})
+    loader_p1 = FakeWinDLLLoader({"kernel32": k32_dll_p1, "psapi": psapi_dll_p1})
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("ctypes.WinDLL", loader_p1, raising=False)
+
+    rss_result_p1 = get_current_process_rss_mib()
+    assert rss_result_p1 == 100.0
+    assert fn_k32_p1.invoked
+    assert fn_k32_p1.argtypes == []
+    assert fn_k32_p1.restype in (wintypes.HANDLE, ctypes.c_void_p)
+    assert fn_psapi_p1.invoked
+    assert fn_psapi_p1.argtypes is not None
+    assert fn_psapi_p1.argtypes[0] in (wintypes.HANDLE, ctypes.c_void_p)
+    assert fn_psapi_p1.argtypes[2] in (
+        wintypes.DWORD,
+        ctypes.c_uint32,
+        ctypes.c_ulong,
+        ctypes.c_uint,
+    )
+    assert fn_psapi_p1.restype in (wintypes.BOOL, ctypes.c_int)
+    assert fn_psapi_p1.last_args[0] == WIDE_HANDLE
+
+    # -------------------------------------------------------------------------
+    # Sub-case 2: Fallback to kernel32.K32GetProcessMemoryInfo when psapi missing
+    # -------------------------------------------------------------------------
+    fn_k32_p2 = FakeWinFunction("GetCurrentProcess", wide_handle=WIDE_HANDLE)
+    fn_k32_mem_p2 = FakeWinFunction(
+        "K32GetProcessMemoryInfo",
+        working_set_bytes=262_144_000,  # 250 MiB
+    )
+    k32_dll_p2 = FakeWinDLL(
+        "kernel32",
+        {
+            "GetCurrentProcess": fn_k32_p2,
+            "K32GetProcessMemoryInfo": fn_k32_mem_p2,
+        },
+    )
+    loader_p2 = FakeWinDLLLoader({"kernel32": k32_dll_p2})  # no psapi!
+
+    monkeypatch.setattr("ctypes.WinDLL", loader_p2, raising=False)
+
+    rss_result_p2 = get_current_process_rss_mib()
+    assert rss_result_p2 == 250.0
+    assert fn_k32_mem_p2.invoked
+    assert fn_k32_mem_p2.argtypes is not None
+    assert fn_k32_mem_p2.argtypes[0] in (wintypes.HANDLE, ctypes.c_void_p)
+    assert fn_k32_mem_p2.argtypes[2] in (
+        wintypes.DWORD,
+        ctypes.c_uint32,
+        ctypes.c_ulong,
+        ctypes.c_uint,
+    )
+    assert fn_k32_mem_p2.restype in (wintypes.BOOL, ctypes.c_int)
+    assert fn_k32_mem_p2.last_args[0] == WIDE_HANDLE
+
+    # -------------------------------------------------------------------------
+    # Sub-case 3: Failure propagation
+    # -------------------------------------------------------------------------
+    # 3a: API call failure (returns 0/FALSE)
+    fn_k32_p3a = FakeWinFunction("GetCurrentProcess", wide_handle=WIDE_HANDLE)
+    fn_psapi_p3a = FakeWinFunction("GetProcessMemoryInfo", should_fail=True)
+    k32_dll_p3a = FakeWinDLL("kernel32", {"GetCurrentProcess": fn_k32_p3a})
+    psapi_dll_p3a = FakeWinDLL("psapi", {"GetProcessMemoryInfo": fn_psapi_p3a})
+    loader_p3a = FakeWinDLLLoader({"kernel32": k32_dll_p3a, "psapi": psapi_dll_p3a})
+
+    monkeypatch.setattr("ctypes.WinDLL", loader_p3a, raising=False)
+    with pytest.raises(RuntimeError, match="Windows GetProcessMemoryInfo failed"):
+        get_current_process_rss_mib()
+
+    # 3b: API entry point not found in either psapi or kernel32
+    fn_k32_p3b = FakeWinFunction("GetCurrentProcess", wide_handle=WIDE_HANDLE)
+    k32_dll_p3b = FakeWinDLL("kernel32", {"GetCurrentProcess": fn_k32_p3b})
+    psapi_dll_p3b = FakeWinDLL("psapi", {})
+    loader_p3b = FakeWinDLLLoader({"kernel32": k32_dll_p3b, "psapi": psapi_dll_p3b})
+
+    monkeypatch.setattr("ctypes.WinDLL", loader_p3b, raising=False)
+    with pytest.raises(
+        RuntimeError, match="Windows GetProcessMemoryInfo API entry point not found"
+    ):
+        get_current_process_rss_mib()
+
+    # -------------------------------------------------------------------------
+    # Sub-case 4: Regression detection - prove unprototyped call reproduces PR #50
+    # -------------------------------------------------------------------------
+    fn_raw_k32 = FakeWinFunction("GetCurrentProcess", wide_handle=WIDE_HANDLE)
+    fn_raw_psapi = FakeWinFunction("GetProcessMemoryInfo")
+    # Missing argtypes (None) with 64-bit handle raises exact PR #50 ArgumentError
+    with pytest.raises(
+        ctypes.ArgumentError,
+        match=r"argument 1: OverflowError: int too long to convert",
+    ):
+        fn_raw_psapi(WIDE_HANDLE, None, 72)
+
+    # 32-bit handle parameter type (e.g. c_int32) raises exact ArgumentError
+    fn_raw_psapi.argtypes = [ctypes.c_int32, ctypes.c_void_p, wintypes.DWORD]
+    fn_raw_psapi.restype = wintypes.BOOL
+    with pytest.raises(
+        ctypes.ArgumentError,
+        match=r"argument 1: OverflowError: int too long to convert",
+    ):
+        fn_raw_psapi(WIDE_HANDLE, None, 72)
+
+    # Missing GetCurrentProcess prototypes rejected
+    with pytest.raises(
+        ctypes.ArgumentError, match="GetCurrentProcess missing argtypes prototype"
+    ):
+        fn_raw_k32()
+    fn_raw_k32.argtypes = []
+    with pytest.raises(
+        ctypes.ArgumentError, match="GetCurrentProcess restype must be wintypes.HANDLE"
+    ):
+        fn_raw_k32()
+
+    # Missing GetProcessMemoryInfo restype rejected
+    fn_raw_psapi.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+        wintypes.DWORD,
+    ]
+    fn_raw_psapi.restype = None
+    with pytest.raises(ctypes.ArgumentError, match="restype must be wintypes.BOOL"):
+        fn_raw_psapi(WIDE_HANDLE, None, 72)
+
+    # Invalid pointer type for counters rejected
+    fn_raw_psapi.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.DWORD]
+    fn_raw_psapi.restype = wintypes.BOOL
+    with pytest.raises(
+        ctypes.ArgumentError,
+        match="argument 2: expected pointer to PROCESS_MEMORY_COUNTERS",
+    ):
+        fn_raw_psapi(WIDE_HANDLE, None, 72)
+
+    # Rejection of unprototyped workflow function simulating the defect
+    def unprototyped_rss_workflow(k32: Any, ps: Any) -> float:
+        k32.GetCurrentProcess.argtypes = []
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        h = k32.GetCurrentProcess()
+        cnt = PROCESS_MEMORY_COUNTERS()
+        cnt.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+        if not ps.GetProcessMemoryInfo(h, ctypes.byref(cnt), cnt.cb):
+            raise RuntimeError("Windows GetProcessMemoryInfo failed")
+        return float(cnt.WorkingSetSize) / (1024.0 * 1024.0)
+
+    fn_unprot_k32 = FakeWinFunction("GetCurrentProcess", wide_handle=WIDE_HANDLE)
+    fn_unprot_psapi = FakeWinFunction("GetProcessMemoryInfo")
+    unprot_k32_dll = FakeWinDLL("kernel32", {"GetCurrentProcess": fn_unprot_k32})
+    unprot_psapi_dll = FakeWinDLL("psapi", {"GetProcessMemoryInfo": fn_unprot_psapi})
+
+    with pytest.raises(
+        ctypes.ArgumentError,
+        match=r"argument 1: OverflowError: int too long to convert",
+    ):
+        unprototyped_rss_workflow(unprot_k32_dll, unprot_psapi_dll)
+
+    # -------------------------------------------------------------------------
+    # Sub-case 5: Restore all monkeypatches & verify real platform RSS path
+    # -------------------------------------------------------------------------
+    monkeypatch.undo()
+    live_rss = get_current_process_rss_mib()
+    assert live_rss > 0.0
