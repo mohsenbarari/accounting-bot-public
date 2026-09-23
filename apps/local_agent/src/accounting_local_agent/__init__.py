@@ -4,6 +4,7 @@ Provides XLSX source reading, snapshot acquisition, change tracking, and sync.
 """
 
 from accounting_local_agent.save_import_coordinator import (
+    IDENTIFIED_SAVE_IMPORT_DRIVER_VERSION,
     SAVE_DEBOUNCE_NS,
     SAVE_IMPORT_COORDINATOR_VERSION,
     SaveCoordinatorError,
@@ -15,6 +16,7 @@ from accounting_local_agent.save_import_coordinator import (
     SaveImportCoordinator,
     SourceReadAttempt,
     SourceReadOutcome,
+    read_due_identified_source,
     read_due_source,
 )
 from accounting_local_agent.source_watch_runtime import (
@@ -72,6 +74,7 @@ __all__ = [
     "XlsxSourceIdentityReason",
     "read_identified_xlsx_source",
     "DEFAULT_COPY_CHUNK_SIZE",
+    "IDENTIFIED_SAVE_IMPORT_DRIVER_VERSION",
     "SAVE_DEBOUNCE_NS",
     "SAVE_IMPORT_COORDINATOR_VERSION",
     "SOURCE_WATCH_RUNTIME_VERSION",
@@ -109,6 +112,7 @@ __all__ = [
     "XlsxSourceReadResult",
     "XlsxStructureError",
     "open_stable_xlsx_snapshot",
+    "read_due_identified_source",
     "read_due_source",
     "read_xlsx_source_snapshot",
 ]

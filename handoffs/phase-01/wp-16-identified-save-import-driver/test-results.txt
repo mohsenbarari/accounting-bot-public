@@ -1,0 +1,81 @@
+WORK PACKAGE: WP-16 identified-save-import-driver.v1, independent-review correction
+PHASE: 1, G1 OPEN / IN PROGRESS
+RECORDED AT UTC: 2026-09-23 03:53:15 UTC
+BASELINE: d41830ebb53cbf5184da58beac96f0c4e24c1d3b
+TESTED CODE COMMIT: 03d462f51d9926241a0b9b23433ef701546f4be6
+PLATFORM: Linux local server; native Windows not run
+
+COMMAND 1
+Exact command: /root/.local/bin/uv sync --offline --frozen --all-packages --all-groups
+Exit code: 0
+Relevant output: Built seven workspace packages; installed 81 locked packages into the isolated worktree.
+
+COMMAND 2
+Exact command: /root/.local/bin/uv lock --check --offline
+Exit code: 0
+Relevant output: Resolved 88 packages in 10ms.
+
+COMMAND 3
+Exact command: .venv/bin/ruff format --check .
+Exit code: 0
+Relevant output: Final repository run: 145 files already formatted.
+
+COMMAND 4
+Exact command: .venv/bin/ruff check .
+Exit code: 0
+Relevant output: All checks passed!
+
+COMMAND 5
+Exact command: .venv/bin/mypy .
+Exit code: 0
+Relevant output: Success: no issues found in 60 source files.
+
+COMMAND 6
+Exact command: .venv/bin/mypy --platform win32 .
+Exit code: 0
+Relevant output: Success: no issues found in 60 source files. This is static analysis, not a native Windows test.
+
+COMMAND 7
+Exact command: .venv/bin/pytest -q tests/test_identified_save_import_driver.py
+Exit code: 0
+Relevant output: 70 dedicated WP-16 tests passed, including all ID-04, ID-10, ID-11 and ID-12 corrections.
+
+COMMAND 8
+Exact command: .venv/bin/pytest -q tests/test_identified_save_import_driver.py -k 'id11_replacement_at_acquisition_boundary'
+Exit code: 0
+Relevant output: Three acquisition-boundary race variants passed after the Windows-compatible in-copy mutation change.
+
+COMMAND 9
+Exact command: .venv/bin/pytest --collect-only -q
+Exit code: 0
+Relevant output: 1084 tests collected across 24 files.
+
+COMMAND 10
+Exact command: .venv/bin/pytest -q
+Exit code: 0
+Relevant output: Full suite completed at 100 percent with no failures. Of 1084 collected tests, 1082 passed and two native-Windows-only tests were skipped on Linux. Final run included WP-05 15,000-row reader 9.9120 s / 62.26 MiB and WP-06 15,000-row acquisition plus reader 10.4531 s / 61.76 MiB.
+
+COMMAND 11
+Exact command: .venv/bin/pytest -q -s tests/test_identified_save_import_driver.py -k id14
+Exit code: 0
+Relevant output: 15,000 generated identified rows; driver call window 10.076090697199106 s, peak RSS 78.84375 MiB, fixture construction 0.5965588758699596 s. Existing 15-second / 128-MiB identity/acquisition gate preserved.
+
+COMMAND 12
+Exact command: git diff --cached --check
+Exit code: 0
+Relevant output: No whitespace errors in the four explicitly staged implementation files.
+
+COMMAND 13
+Exact command: git revert --no-edit 03d462f51d9926241a0b9b23433ef701546f4be6 on an isolated scratch worktree, then git diff --quiet d41830ebb53cbf5184da58beac96f0c4e24c1d3b
+Exit code: 0
+Relevant output: Reverted scratch tree matched the baseline exactly; scratch worktree was removed after verification. No active branch was reverted.
+
+INDEPENDENT REVIEW
+Previous candidate: CHANGES_REQUIRED with five findings (ID-10 oracle, ID-11 acquisition races, ID-04 lease faults, ID-12 fresh import boundary, README absolute path).
+Corrected candidate: NOT RUN independently. No review approval or Gate acceptance is claimed.
+
+FINAL SUMMARY
+Passed: 1082 in the Linux full suite; 70 dedicated WP-16 tests
+Failed: 0
+Skipped: 2 native-Windows-only tests on Linux
+Blocked: independent non-author review and native CI remain pending

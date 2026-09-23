@@ -35,6 +35,17 @@ Windows interactive user-session agent for monitoring Excel `.xlsx` saves, strea
   - Thread-safe state transitions without holding locks across file I/O or parsing.
   - Synchronous `read_due_source` driver reserves an attempt, invokes `open_stable_xlsx_snapshot` and `read_xlsx_source_snapshot`, verifies clean context exit, completes attempt bookkeeping, and re-raises failures with original causes.
 
+- **Identified Due-Read Driver (`save_import_coordinator.py` — WP-16 / ADR-0024):**
+  - Public version: `IDENTIFIED_SAVE_IMPORT_DRIVER_VERSION = "identified-save-import-driver.v1"`
+  - Public API: `read_due_identified_source(coordinator, *, snapshot_root, observation_interval_seconds) -> IdentifiedXlsxSource | None`
+  - Reserves at most one due attempt from `SaveImportCoordinator`, derives the source path strictly from the coordinator, and calls `read_identified_xlsx_source` with unchanged snapshot arguments.
+  - Requires a valid `SaveImportCoordinator` instance (raising `TypeError` otherwise before descriptor access or state mutation); returns `None` without reader invocation when not due.
+  - Re-raises errors identically and preserves state transitions: `XlsxSourceNotReadyError` to `SOURCE_NOT_READY` (installing fixed retry debounce), `XlsxSourceReadError` and `XlsxSourceIdentityError` to `READER_REJECTED` (requiring a fresh notice unless an admitted follow-up is pending), and all other failures to `FAULTED` (requiring explicit resume).
+  - Returns the exact `IdentifiedXlsxSource` instance only after ZIP close, lease verification, cleanup, and success bookkeeping complete; never clones or independently associates marker, hash, and Raw.
+  - Preserves ordered exception group types (`ExceptionGroup` vs `BaseExceptionGroup`) and direct `KeyboardInterrupt`/`SystemExit` identities.
+  - Concurrency is bounded by atomic reservation; loser callers perform no I/O.
+  - Remains unwired from `SourceWatchRuntime`, direct storage, or `accounting_persistence`.
+
 - **Stable XLSX Snapshot Acquisition (`xlsx_snapshot_acquisition.py` — WP-06 / ADR-0009):**
   - Public version: `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
   - Public API: `open_stable_xlsx_snapshot(source_path, snapshot_root, observation_interval_seconds) -> Iterator[StableXlsxSnapshot]`
@@ -143,6 +154,42 @@ remain available and are not a promise of redacted tracebacks.
 WP-12 is read-only and uses synthetic fixtures. Marker writing/enrollment,
 real Excel Save/SaveAs/OneDrive retention, durable identity/revision state,
 runtime retry integration and rollover remain separate work. G1 remains open.
+
+## Identified save-import due-read driver (WP-16)
+
+`read_due_identified_source` implements [ADR-0024](../../docs/adr/ADR-0024-identified-save-import-driver.md).
+It coordinates snapshot acquisition, source reading, and marker identity resolution for due saves
+tracked by a `SaveImportCoordinator`.
+
+```python
+from pathlib import Path
+from accounting_local_agent import (
+    IDENTIFIED_SAVE_IMPORT_DRIVER_VERSION,
+    SaveImportCoordinator,
+    read_due_identified_source,
+)
+
+synthetic_root = Path.cwd() / "synthetic"
+coordinator = SaveImportCoordinator(synthetic_root / "source.xlsx")
+# When work is due following a notification:
+result = read_due_identified_source(
+    coordinator,
+    snapshot_root=synthetic_root / "leases",
+    observation_interval_seconds=0.01,
+)
+if result is not None:
+    identity_key = result.key
+    raw_snapshot = result.read_result.snapshot
+    file_sha256 = result.file_sha256
+```
+
+The driver reserves at most one active attempt, invokes `read_identified_xlsx_source`
+once with the coordinator's configured path, and returns the verified `IdentifiedXlsxSource`
+only after ZIP close, lease verification, artifact cleanup, and coordinator success bookkeeping complete.
+Invalid coordinator instances fail immediately with `TypeError`. Unready sources install
+the fixed debounce retry, reader/identity rejections require a fresh notice or preserve follow-up,
+and unexpected failures enter `FAULTED` state requiring explicit resume.
+`SourceWatchRuntime` remains on its prior driver and is unwired to this function.
 
 ## Pre-commit and validation checks
 
