@@ -22,15 +22,21 @@ from accounting_local_agent.xlsx_snapshot_acquisition import (
     XlsxSourceNotReadyError,
     open_stable_xlsx_snapshot,
 )
+from accounting_local_agent.xlsx_source_identity import (
+    XlsxSourceIdentityError,
+    read_identified_xlsx_source,
+)
 from accounting_local_agent.xlsx_source_reader import (
     XlsxSourceReadError,
     read_xlsx_source_snapshot,
 )
 
 if TYPE_CHECKING:
+    from accounting_local_agent.xlsx_source_identity import IdentifiedXlsxSource
     from accounting_local_agent.xlsx_source_reader import XlsxSourceReadResult
 
 SAVE_IMPORT_COORDINATOR_VERSION: str = "save-import-coordinator.v1"
+IDENTIFIED_SAVE_IMPORT_DRIVER_VERSION: str = "identified-save-import-driver.v1"
 SAVE_DEBOUNCE_NS: int = 2_000_000_000
 
 
@@ -560,5 +566,81 @@ def read_due_source(
     std_excs = [e for e in all_excs if isinstance(e, Exception)]
     raise ExceptionGroup(
         "read_due_source encountered multiple failures",
+        std_excs,
+    )
+
+
+def read_due_identified_source(
+    coordinator: SaveImportCoordinator,
+    *,
+    snapshot_root: Path,
+    observation_interval_seconds: float,
+) -> IdentifiedXlsxSource | None:
+    """Reserve and execute one snapshot acquisition, source-read, and identity attempt.
+
+    Returns IdentifiedXlsxSource on complete success (acquisition + reading +
+    marker identification + lease cleanup + success bookkeeping).
+    Returns None when no work is due.
+    Re-raises errors with original causes and updates coordinator state.
+    """
+    if type(coordinator) is not SaveImportCoordinator:
+        raise TypeError("Invalid identified save import driver input.")
+
+    attempt = coordinator.take_due()
+    if attempt is None:
+        return None
+
+    work_exc: BaseException | None = None
+    result: IdentifiedXlsxSource | None = None
+    outcome: SourceReadOutcome = SourceReadOutcome.FAULTED
+
+    try:
+        result = read_identified_xlsx_source(
+            coordinator.source_path,
+            snapshot_root=snapshot_root,
+            observation_interval_seconds=observation_interval_seconds,
+        )
+        outcome = SourceReadOutcome.SUCCESS
+    except XlsxSourceNotReadyError as exc:
+        outcome = SourceReadOutcome.SOURCE_NOT_READY
+        work_exc = exc
+    except (XlsxSourceReadError, XlsxSourceIdentityError) as exc:
+        outcome = SourceReadOutcome.READER_REJECTED
+        work_exc = exc
+    except BaseException as exc:
+        outcome = SourceReadOutcome.FAULTED
+        work_exc = exc
+
+    finish_exc: BaseException | None = None
+    guard_exc: BaseException | None = None
+    try:
+        coordinator.finish(attempt, outcome)
+    except BaseException as exc:
+        finish_exc = exc
+        try:
+            _guarded_force_fault(coordinator, attempt)
+        except BaseException as g_exc:
+            guard_exc = g_exc
+
+    all_excs: list[BaseException] = [
+        e for e in (work_exc, finish_exc, guard_exc) if e is not None
+    ]
+
+    if not all_excs:
+        return result
+
+    if len(all_excs) == 1:
+        raise all_excs[0]
+
+    if any(
+        isinstance(e, BaseException) and not isinstance(e, Exception) for e in all_excs
+    ):
+        raise BaseExceptionGroup(
+            "read_due_identified_source encountered multiple failures",
+            all_excs,
+        )
+    std_excs = [e for e in all_excs if isinstance(e, Exception)]
+    raise ExceptionGroup(
+        "read_due_identified_source encountered multiple failures",
         std_excs,
     )
