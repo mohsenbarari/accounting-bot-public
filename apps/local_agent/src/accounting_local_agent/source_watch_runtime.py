@@ -35,10 +35,15 @@ from accounting_local_agent.save_import_coordinator import (
     SaveCoordinatorState,
     SaveEventKind,
     SaveImportCoordinator,
+    read_due_identified_source,
     read_due_source,
 )
 from accounting_local_agent.xlsx_snapshot_acquisition import (
     XlsxSourceNotReadyError,
+)
+from accounting_local_agent.xlsx_source_identity import (
+    IdentifiedXlsxSource,
+    XlsxSourceIdentityError,
 )
 from accounting_local_agent.xlsx_source_reader import (
     XlsxSourceReadError,
@@ -46,6 +51,7 @@ from accounting_local_agent.xlsx_source_reader import (
 )
 
 SOURCE_WATCH_RUNTIME_VERSION = "source-watch-runtime.v1"
+IDENTIFIED_SOURCE_WATCH_RUNTIME_VERSION = "identified-source-watch-runtime.v1"
 
 _IGNORED_EVENT_TYPES = frozenset({"opened", "closed", "closed_no_write", "accessed"})
 
@@ -515,6 +521,34 @@ class SourceWatchRuntime:
             self._state = SourceWatchRuntimeState.RUNNING
             self._admission_open = True
 
+        self._execute_loop(consumer, identified=False)
+
+    def run_identified(self, consumer: Callable[[IdentifiedXlsxSource], None]) -> None:
+        """Execute the identified source watch runtime loop on the calling thread.
+
+        Blocks until stopped or failed, delivering successful IdentifiedXlsxSource
+        results serially to the consumer callback.
+        """
+        if not callable(consumer):
+            raise SourceWatchRuntimeError(
+                SourceWatchRuntimeReason.INVALID_POLICY,
+                "consumer must be callable",
+            )
+
+        with self._lifecycle_lock:
+            if self._state != SourceWatchRuntimeState.NEW:
+                raise SourceWatchRuntimeError(
+                    SourceWatchRuntimeReason.INVALID_TRANSITION,
+                    "run_identified() can only be called on a runtime in new state",
+                )
+            self._state = SourceWatchRuntimeState.RUNNING
+            self._admission_open = True
+
+        self._execute_loop(consumer, identified=True)
+
+    def _execute_loop(
+        self, consumer: Callable[[Any], None], *, identified: bool
+    ) -> None:
         start_error: BaseException | None = None
         run_error: BaseException | None = None
         teardown_errors: list[BaseException] = []
@@ -662,16 +696,27 @@ class SourceWatchRuntime:
                         self._condition.wait(1.0)
                         continue
 
-                # Execute read_due_source OUTSIDE lifecycle lock
-                read_res: XlsxSourceReadResult | None = None
+                # Execute read driver OUTSIDE lifecycle lock
+                read_res: Any = None
                 read_failed = False
                 try:
-                    read_res = read_due_source(
-                        self._coordinator,
-                        snapshot_root=self._snapshot_root,
-                        observation_interval_seconds=self._observation_interval_seconds,
-                    )
-                except (XlsxSourceNotReadyError, XlsxSourceReadError):
+                    if identified:
+                        read_res = read_due_identified_source(
+                            self._coordinator,
+                            snapshot_root=self._snapshot_root,
+                            observation_interval_seconds=self._observation_interval_seconds,
+                        )
+                    else:
+                        read_res = read_due_source(
+                            self._coordinator,
+                            snapshot_root=self._snapshot_root,
+                            observation_interval_seconds=self._observation_interval_seconds,
+                        )
+                except (
+                    XlsxSourceNotReadyError,
+                    XlsxSourceReadError,
+                    XlsxSourceIdentityError,
+                ):
                     # Handled coordinator retry/idle state; continue loop
                     with self._lifecycle_lock:
                         self._active_cycle_running = False

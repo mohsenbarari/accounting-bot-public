@@ -162,6 +162,7 @@ class TestIdentifiedSaveImportDriverApi:
         assert set(public.__all__) == set(PREVIOUS_EXPORTS) | {
             "IDENTIFIED_SAVE_IMPORT_DRIVER_VERSION",
             "read_due_identified_source",
+            "IDENTIFIED_SOURCE_WATCH_RUNTIME_VERSION",
         }
         sig = inspect.signature(read_due_identified_source)
         assert list(sig.parameters) == [
@@ -1122,13 +1123,11 @@ print('PERSISTENCE_IMPORT_GUARD_OK')
         assert raw is not None and raw.snapshot.total_row_count == 5
         forbidden.assert_not_called()
         assert vars(runtime)["read_due_source"] is driver.read_due_source
-        runtime_tree = ast.parse(inspect.getsource(runtime))
-        calls = [
-            node.func.id
-            for node in ast.walk(runtime_tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        ]
-        assert "read_due_source" in calls and "read_due_identified_source" not in calls
+        forbidden_identified = Mock(
+            side_effect=AssertionError("raw execution path called identified driver")
+        )
+        monkeypatch.setattr(runtime, "read_due_identified_source", forbidden_identified)
+        monkeypatch.setattr(driver, "read_due_identified_source", forbidden_identified)
 
         from test_source_watch_runtime import (
             ControlledConditionWaiter,
@@ -1169,6 +1168,7 @@ print('PERSISTENCE_IMPORT_GUARD_OK')
         assert len(delivered_values) == 1 and delivered_values[0] == raw
         assert legacy.call_count >= 1
         forbidden.assert_not_called()
+        forbidden_identified.assert_not_called()
         assert not observer.is_alive() and all(
             not em.is_alive() for em in observer.emitters
         )
