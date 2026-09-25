@@ -239,6 +239,7 @@ class TestIdentifiedSourceWatchRuntimeApi:
         orig_remove = os.remove
         orig_unlink = os.unlink
         orig_stat = os.stat
+        orig_os_path_exists = os.path.exists
         orig_listdir = os.listdir
         orig_scandir = os.scandir
         orig_os_open = os.open
@@ -267,6 +268,7 @@ class TestIdentifiedSourceWatchRuntimeApi:
             os.remove = fail_trap("os.remove", orig_remove)
             os.unlink = fail_trap("os.unlink", orig_unlink)
             os.stat = fail_trap("os.stat", orig_stat)
+            os.path.exists = fail_trap("os.path.exists", orig_os_path_exists)
             os.listdir = fail_trap("os.listdir", orig_listdir)
             os.scandir = fail_trap("os.scandir", orig_scandir)
             os.open = fail_trap("os.open", orig_os_open)
@@ -301,7 +303,7 @@ class TestIdentifiedSourceWatchRuntimeApi:
                 ("uuid.uuid4", "uuid.uuid4()"),
                 ("secrets.token_bytes", "secrets.token_bytes(8)"),
                 ("os.stat", "os.stat('synthetic-guard-probe')"),
-                ("os.stat", "os.path.exists('synthetic-guard-probe')"),
+                ("os.path.exists", "os.path.exists('synthetic-guard-probe')"),
                 ("os.unlink", "os.unlink('synthetic-guard-probe')"),
                 ("os.listdir", "os.listdir('.')"),
                 ("Path.exists", "Path('synthetic-guard-probe').exists()"),
@@ -351,6 +353,7 @@ class TestIdentifiedSourceWatchRuntimeApi:
             os.remove = orig_remove
             os.unlink = orig_unlink
             os.stat = orig_stat
+            os.path.exists = orig_os_path_exists
             os.listdir = orig_listdir
             os.scandir = orig_scandir
             os.open = orig_os_open
