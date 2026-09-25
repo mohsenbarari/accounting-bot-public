@@ -824,14 +824,7 @@ class SourceWatchRuntime:
                     and t is not threading.current_thread()
                 ):
                     try:
-                        t.join(timeout=5.0)
-                        if t.is_alive():
-                            teardown_errors.append(
-                                SourceWatchRuntimeError(
-                                    SourceWatchRuntimeReason.SHUTDOWN_FAILED,
-                                    "Owned thread failed to join within timeout",
-                                )
-                            )
+                        t.join()
                     except BaseException as j_exc:
                         if isinstance(j_exc, Exception):
                             wrap_err = SourceWatchRuntimeError(

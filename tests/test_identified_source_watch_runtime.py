@@ -2002,6 +2002,103 @@ class TestIdentifiedSourceWatchRuntimeLifecycle:
             runner.join(timeout=5.0)
             observer.stop()
 
+    def test_iw09_controlled_delayed_worker_joins_cleanly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """IW-09: Delayed worker during teardown joins cleanly without cutoff."""
+        src_dir = tmp_path / "watch"
+        src_dir.mkdir()
+        src = src_dir / "target.xlsx"
+        snap_root = tmp_path / "snapshots"
+        snap_root.mkdir()
+
+        src.write_bytes(_build_synthetic_identified_xlsx(rows_per_sheet=1))
+        clock = FakeClock()
+        join_timeouts: list[float | None] = []
+
+        class ControlledDelayedEmitter(MockEmitter):
+            def __init__(self) -> None:
+                super().__init__()
+                self.stop_called = threading.Event()
+                self.release_worker = threading.Event()
+                self.join_called = threading.Event()
+
+            def stop(self) -> None:
+                self.stopped = True
+                self.stop_called.set()
+
+            def run(self) -> None:
+                assert self.stop_called.wait(timeout=5.0)
+                assert self.release_worker.wait(timeout=5.0)
+
+            def join(self, timeout: float | None = None) -> None:
+                join_timeouts.append(timeout)
+                self.join_called.set()
+                super().join(timeout=timeout)
+
+        delayed_emitter = ControlledDelayedEmitter()
+
+        class ControlledDelayedObserver(MockObserver):
+            def __init__(self) -> None:
+                super().__init__()
+                self._mock_emitters = {delayed_emitter}
+
+        obs = ControlledDelayedObserver()
+        runtime = SourceWatchRuntime(
+            src,
+            snapshot_root=snap_root,
+            observation_interval_seconds=0.001,
+            _observer_factory=lambda: obs,
+            _time_source=clock,
+        )
+
+        waiter = ControlledConditionWaiter(runtime._condition)
+        monkeypatch.setattr(runtime._condition, "wait", waiter.hooked_wait)
+
+        delivered: list[IdentifiedXlsxSource] = []
+
+        def consumer(res: IdentifiedXlsxSource) -> None:
+            delivered.append(res)
+            runtime.request_stop()
+
+        runner = ManagedIdentifiedRunnerThread(runtime, consumer)
+        runner.start()
+
+        try:
+            waiter.wait_for_ack(timeout=5.0)
+            clock.advance_seconds(3.0)
+            with runtime._lifecycle_lock:
+                runtime._condition.notify_all()
+
+            # Verify that teardown calls stop() and arrives at join()
+            assert delayed_emitter.stop_called.wait(timeout=5.0)
+            assert delayed_emitter.join_called.wait(timeout=5.0)
+
+            # Fixed join cutoff is removed: join is called with no timeout (None)
+            assert None in join_timeouts
+            assert 5.0 not in join_timeouts
+
+            # While delayed worker is still running, runner is waiting in join
+            assert delayed_emitter.is_alive()
+            assert runner._thread.is_alive()
+            assert runtime.view().state == SourceWatchRuntimeState.STOPPING
+
+            # Release delayed worker and ensure clean join and STOPPED state
+            delayed_emitter.release_worker.set()
+            runner.join(timeout=5.0)
+            runner.assert_clean_exit()
+
+            # All owned workers must be joined (not alive)
+            assert len(delivered) == 1
+            assert not delayed_emitter.is_alive()
+            assert not obs.is_alive()
+            assert runtime.view().state == SourceWatchRuntimeState.STOPPED
+        finally:
+            delayed_emitter.release_worker.set()
+            runtime.request_stop()
+            runner.join(timeout=5.0)
+            obs.stop()
+
     def test_iw10_concurrency_and_race_prevention(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2180,10 +2277,34 @@ class TestIdentifiedSourceWatchRuntimeLifecycle:
             runner_cb.join(timeout=5.0)
             runner_cb.assert_clean_exit()
             assert runtime_cb.view().state == SourceWatchRuntimeState.STOPPED
-            assert cb_threads in (
-                {runner_cb._thread.ident, callback_thread_id},
-                {runner_cb._thread.ident, callback_thread_id, t_cb.ident},
-            )
+            # IW-10: Record winner and verify callback-vs-teardown invariant.
+            assert runner_cb._thread.ident is not None
+            assert t_cb.ident is not None
+            assert t_td.ident is not None
+            assert t_td.ident not in cb_threads
+            assert callback_thread_id in cb_threads
+            assert runner_cb._thread.ident in cb_threads
+
+            callback_won_admission = t_cb.ident in cb_threads
+            if callback_won_admission:
+                admission_winner = "callback"
+                # Callback won admission; event reached coordinator.
+                # Teardown lost race but performed no forbidden notification.
+                assert cb_threads == {
+                    runner_cb._thread.ident,
+                    callback_thread_id,
+                    t_cb.ident,
+                }
+            else:
+                admission_winner = "teardown"
+                # Teardown won admission; stop closed admission.
+                # Losing callback performed no forbidden notification.
+                assert t_cb.ident not in cb_threads
+                assert cb_threads == {
+                    runner_cb._thread.ident,
+                    callback_thread_id,
+                }
+            assert admission_winner in ("callback", "teardown")
         finally:
             runtime_cb.request_stop()
             if t_cb.ident is not None:
