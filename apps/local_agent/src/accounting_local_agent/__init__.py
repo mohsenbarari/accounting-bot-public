@@ -20,6 +20,7 @@ from accounting_local_agent.save_import_coordinator import (
     read_due_source,
 )
 from accounting_local_agent.source_watch_runtime import (
+    IDENTIFIED_SOURCE_WATCH_RUNTIME_VERSION,
     SOURCE_WATCH_RUNTIME_VERSION,
     SourceWatchRuntime,
     SourceWatchRuntimeError,
@@ -75,6 +76,7 @@ __all__ = [
     "read_identified_xlsx_source",
     "DEFAULT_COPY_CHUNK_SIZE",
     "IDENTIFIED_SAVE_IMPORT_DRIVER_VERSION",
+    "IDENTIFIED_SOURCE_WATCH_RUNTIME_VERSION",
     "SAVE_DEBOUNCE_NS",
     "SAVE_IMPORT_COORDINATOR_VERSION",
     "SOURCE_WATCH_RUNTIME_VERSION",

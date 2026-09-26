@@ -4,13 +4,14 @@ Windows interactive user-session agent for monitoring Excel `.xlsx` saves, strea
 
 ## Architecture and boundaries
 
-- **Managed Source Watcher and Read Runtime (`source_watch_runtime.py` — WP-08 / ADR-0011):**
-  - Public version: `SOURCE_WATCH_RUNTIME_VERSION = "source-watch-runtime.v1"`
-  - Public API: `SourceWatchRuntime`, `SourceWatchRuntimeView`, `SourceWatchRuntimeState`, `SourceWatchRuntimeReason`, `SourceWatchRuntimeError`
-  - Lifecycle: single-use `new -> running -> stopping -> stopped` (clean) or `failed` (on error).
+- **Managed Source Watcher and Read Runtime (`source_watch_runtime.py` — WP-08 / ADR-0011 / WP-17 / ADR-0025):**
+  - Public version: `SOURCE_WATCH_RUNTIME_VERSION = "source-watch-runtime.v1"`, `IDENTIFIED_SOURCE_WATCH_RUNTIME_VERSION = "identified-source-watch-runtime.v1"`
+  - Public API: `SourceWatchRuntime`, `SourceWatchRuntimeView`, `SourceWatchRuntimeState`, `SourceWatchRuntimeReason`, `SourceWatchRuntimeError`, `SourceWatchRuntime.run_identified`
+  - Lifecycle: single-use `new -> running -> stopping -> stopped` (clean) or `failed` (on error). Both `run()` and `run_identified()` share this single-use lifecycle.
   - Connects native `watchdog.observers.Observer` non-recursively to the source parent directory, maps mutating events to coordinator notifications, and enqueues an initial logical `MODIFIED` notice on successful start.
   - Derives waiting intervals from coordinator deadlines with an idle 1.0s liveness check for observer and emitter threads.
-  - Executes serial `read_due_source` lock-free and delivers successful results synchronously to the caller-supplied `consumer` callback on the run thread.
+  - In raw mode (`run(consumer)`), executes serial `read_due_source` lock-free and delivers successful results synchronously to the caller-supplied `consumer` callback on the run thread.
+  - In identified mode (`run_identified(consumer)`), executes serial `read_due_identified_source` lock-free with runtime-owned coordinator, snapshot_root, and observation_interval_seconds, delivering each non-None `IdentifiedXlsxSource` synchronously and once by object identity.
   - Thread-safe, non-blocking `request_stop()` wakes the loop, closes event admission, and gracefully drains any admitted read.
   - Limitations: No process-wide lock or multi-instance coordination for the same file; liveness checks are bounded by the next loop iteration (blocked reader I/O or consumer delays liveness detection); normal shutdown waits for admitted I/O and backend joins without hard process termination.
   - Synthetic library usage:
@@ -23,7 +24,10 @@ Windows interactive user-session agent for monitoring Excel `.xlsx` saves, strea
         snapshot_root=Path("/tmp/snapshots"),
         observation_interval_seconds=0.05,
     )
+    # Raw mode:
     # runtime.run(lambda result: print("Received snapshot:", result.snapshot.version))
+    # Identified mode:
+    # runtime.run_identified(lambda identified_source: print("Received identified source:", identified_source.key))
     ```
 
 - **Save Debounce, Coalescing, and Coordination (`save_import_coordinator.py` — WP-07 / ADR-0010):**
@@ -44,7 +48,7 @@ Windows interactive user-session agent for monitoring Excel `.xlsx` saves, strea
   - Returns the exact `IdentifiedXlsxSource` instance only after ZIP close, lease verification, cleanup, and success bookkeeping complete; never clones or independently associates marker, hash, and Raw.
   - Preserves ordered exception group types (`ExceptionGroup` vs `BaseExceptionGroup`) and direct `KeyboardInterrupt`/`SystemExit` identities.
   - Concurrency is bounded by atomic reservation; loser callers perform no I/O.
-  - Remains unwired from `SourceWatchRuntime`, direct storage, or `accounting_persistence`.
+  - Wired into `SourceWatchRuntime.run_identified` for identified monitoring; direct storage and `accounting_persistence` remain unwired.
 
 - **Stable XLSX Snapshot Acquisition (`xlsx_snapshot_acquisition.py` — WP-06 / ADR-0009):**
   - Public version: `XLSX_SNAPSHOT_ACQUISITION_VERSION = "xlsx-snapshot-acquisition.v1"`
@@ -151,9 +155,10 @@ marker parsing starts. Independent read/close/lease failures remain in ordered
 exception groups, with `BaseExceptionGroup` for cancellation; diagnostic causes
 remain available and are not a promise of redacted tracebacks.
 
-WP-12 is read-only and uses synthetic fixtures. Marker writing/enrollment,
-real Excel Save/SaveAs/OneDrive retention, durable identity/revision state,
-runtime retry integration and rollover remain separate work. G1 remains open.
+WP-12 is read-only and uses synthetic fixtures. WP-17 connects identified
+source reads and source-not-ready retries to `run_identified`. Marker
+writing/enrollment, real Excel Save/SaveAs/OneDrive retention, durable
+identity/revision state, and rollover remain separate work. G1 remains open.
 
 ## Identified save-import due-read driver (WP-16)
 
@@ -189,7 +194,7 @@ only after ZIP close, lease verification, artifact cleanup, and coordinator succ
 Invalid coordinator instances fail immediately with `TypeError`. Unready sources install
 the fixed debounce retry, reader/identity rejections require a fresh notice or preserve follow-up,
 and unexpected failures enter `FAULTED` state requiring explicit resume.
-`SourceWatchRuntime` remains on its prior driver and is unwired to this function.
+`SourceWatchRuntime.run` remains on its prior raw driver, while `SourceWatchRuntime.run_identified` is wired to this function for identified monitoring.
 
 ## Pre-commit and validation checks
 
