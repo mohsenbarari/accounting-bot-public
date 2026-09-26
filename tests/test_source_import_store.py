@@ -211,8 +211,12 @@ def test_is01_public_exports_and_signatures() -> None:
         "read_source_import_store",
         "commit_source_import",
     }
+    # WP-15 owns these ten exports; later additive persistence APIs must not
+    # invalidate this predecessor contract or conceal a missing WP-15 symbol.
     actual_pkg_exports = set(persistence.__all__) - {"__version__"}
-    assert actual_pkg_exports == expected_exports
+    assert expected_exports <= actual_pkg_exports
+    assert len(persistence.__all__) == len(set(persistence.__all__))
+    assert all(hasattr(persistence, name) for name in persistence.__all__)
     assert SOURCE_IMPORT_STORE_VERSION == "source-import-store.v1"
 
     # Enums
