@@ -28,6 +28,12 @@ Create `accounting_persistence.identified_source_import_bridge` and export exact
 
 The mapping uses the accepted `SourceImportRequest.event_ids` shape: changed row UUIDv7 to caller-supplied event UUIDv7, exactly one for each planned INSERT, EDIT or VOID and none for UNCHANGED. No positional variants, defaults, path, separate key/snapshot/hash override, clock, random source, connection factory, request factory, callback, retry flag or approval flag are added. Existing persistence exports and signatures remain unchanged.
 
+## Preflight prerequisites for implementation
+
+The implementation baseline must include the independently reviewed WP-15 export-test compatibility correction merged in PR #58 (`32dfff152c8f134b775fc1740ae32469c032d409`). Before a model call, verify that `tests/test_source_import_store.py::test_is01_public_exports_and_signatures` requires the ten WP-15 names as a subset and permits the six additive WP-18 names in `accounting_persistence.__all__`. If the baseline lacks that correction, stop and rebaseline instead of omitting the new names from `__all__`, suppressing the predecessor test, or exhausting implementation retries on an impossible assertion.
+
+When generating native XLSX tests, use the existing fixture signatures exactly: `raw_parts(rows_per_sheet=n, extra_buy=False)` constructs row-bearing workbook parts; `identified_parts(raw=raw_parts(...), value=marker)` adds identity metadata; `zipped(...)` produces the XLSX bytes. `identified_parts` has no `rows_per_sheet` or `extra_buy` arguments. Inspect these signatures in `tests/xlsx_source_identity_fixtures.py` before writing BI-02, BI-13 or BI-14, and run the focused test selector before declaring a correction ready. This requirement is a bounded prompt/context preflight, not permission to edit the fixture or weaken the quality gate.
+
 ## Normative behavior and ownership
 
 1. Read `key`, `read_result`, its `snapshot`, and `file_sha256` once each into local variables. Require an actual `SourceBindingKey`, `ValidatedSourceWorkbookSnapshot` and lowercase 64-character hexadecimal file digest. Derive source ID and fiscal year only from that key; pass the exact snapshot object and digest to the accepted request constructor. Do not rebuild, filter, rehash or infer from filename or date rows. Malformed or inaccessible evidence is `INVALID_EVIDENCE` before request construction or database access. Ordinary property-access failures may be retained as causes; direct non-`Exception` cancellation propagates.
