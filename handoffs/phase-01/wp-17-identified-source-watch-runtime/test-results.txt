@@ -1,17 +1,21 @@
 WORK PACKAGE: WP-17 (identified-source-watch-runtime)
 PHASE: Phase 1
-RECORDED AT UTC: UNREPORTED
+RECORDED AT UTC: 2026-09-26T01:56:40.353522+00:00
 
 ================================================================================
 IMPLEMENTATION RECEIPT EVIDENCE
 ================================================================================
-Tested Implementation Commit: c143a13340ce2ffe5dc5e665e66963ec3ee56a73
-Baseline Commit: d5da5386accc8cd63d19c90da7e41aab5dd88a25
+Tested Implementation Commit: 45ca7653600bd430d02bba4c9839f18b2413afcf
+Execution Baseline Commit: d5da5386accc8cd63d19c90da7e41aab5dd88a25
+Preceding Recovery Baseline Commit: 95487cb01ea73a232f127d61ba9b1324c13d920d
+Job ID: p01-wp17-pm-recovery-0-s01e0009-001ee6bf
+Supplemental Receipt SHA-256: d5cd3ccaf66a07c268450e5586b1b4bbdef30ccaa020e90ba17455ac02222e40
+Rollback Receipt SHA-256: 54e232b86742e079d7db0818548dae7d7f1ca838c99f39cda447a2a6f4bff077
 
 Check 0: Focused Test Suite
 Command: /python/bin/python3.13 -m pytest -vv -- tests/test_identified_source_watch_runtime.py tests/test_identified_save_import_driver.py tests/test_source_watch_runtime.py tests/test_source_watch_runtime_native.py tests/test_save_import_coordinator.py tests/test_xlsx_source_identity_lifecycle.py tests/test_architecture_guard.py tests/test_xlsx_source_identity.py
 Exit Code: 0
-Output Summary: 395 passed in 91.13s (0:01:31)
+Output Summary: 396 passed in 88.04s (0:01:28) (stdout truncated at 51761 bytes)
 
 Check 1: Ruff Lint Check
 Command: /venv/bin/ruff check --no-cache .
@@ -21,7 +25,7 @@ Output Summary: All checks passed!
 Check 2: Ruff Format Check
 Command: /venv/bin/ruff format --check --no-cache .
 Exit Code: 0
-Output Summary: 148 files already formatted
+Output Summary: 150 files already formatted
 
 Check 3: Native Mypy Type Check
 Command: /python/bin/python3.13 -m mypy --cache-dir /tmp/mypy .
@@ -40,14 +44,14 @@ Output Summary: All tests passed with 2 Windows-only skips:
   SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:3911: Native Windows handle protection test only runs on Windows runtime
   SKIPPED [1] tests/test_xlsx_snapshot_acquisition.py:4008: Windows platform-conditional test only runs on Windows runtime
 Included Predecessor Benchmarks:
-  [WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 10.8890s | baseline_current_rss_mib: 32.67 MiB | call_peak_rss_mib: 61.39 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 58db02226d266834f651cbb00570a5a92cf5518a01879b9268427fa11f28e34a | platform: linux
-  [WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.4354s | baseline_current_rss_mib: 32.79 MiB | call_peak_rss_mib: 62.30 MiB | rows: 15000 | platform: linux
+  [WP-06 BENCHMARK] 15,000 active rows (Acquisition + Reader) -> duration: 9.7871s | baseline_current_rss_mib: 32.68 MiB | call_peak_rss_mib: 61.68 MiB | rows: 15000 | file_bytes: 549787 | file_sha: 8df6919e49e728b15c4b0752dc4b4e34002c675742a83af3cc94502e2fea4959 | platform: linux
+  [WP-05 BENCHMARK] 15,000 active rows -> read_build_seconds: 10.3700s | baseline_current_rss_mib: 32.75 MiB | call_peak_rss_mib: 62.28 MiB | rows: 15000 | platform: linux
 
 ================================================================================
 HANDOFF PREFLIGHT CHECKS
 ================================================================================
 Check 6: Git Diff Check
-Command: git diff --check c143a13340ce2ffe5dc5e665e66963ec3ee56a73
+Command: git diff --check 45ca7653600bd430d02bba4c9839f18b2413afcf
 Exit Code: 0
 Output Summary: Clean diff, no trailing whitespace or whitespace errors
 
@@ -57,22 +61,79 @@ Exit Code: 0
 Output Summary: Handoff validation passed.
 
 ================================================================================
-UNREPORTED GATES AND PENDING ITEMS
+SUPPLEMENTAL CONTROLLER-BOUND QUALITY GATES EVIDENCE
 ================================================================================
-- Frozen sync (uv sync --frozen --all-packages --all-groups): UNREPORTED
-- Lockfile verification (uv lock --check): UNREPORTED
-- Separate test collection (pytest --collect-only): UNREPORTED
-- Formal protected-asset / repository secret scan: UNREPORTED
-- IW-16 / ID-14 call-window duration and peak RSS measurements: UNREPORTED (tests passed exit 0, metrics pending)
-- Native Windows CI execution: PENDING (win32 mypy passed exit 0, native execution pending)
+Check S1: Lockfile Verification
+Command: /root/.local/bin/uv lock --check
+Exit Code: 0
+Output Summary: Resolved 88 packages in 6ms
+
+Check S2: Frozen Synchronization
+Command: /root/.local/bin/uv sync --frozen --all-packages --all-groups
+Exit Code: 0
+Output Summary: Resolved 88 packages; synchronized packages successfully
+
+Check S3: Separate Test Collection
+Command: /root/.local/bin/uv run pytest --collect-only -q tests/test_identified_source_watch_runtime.py tests/test_identified_save_import_driver.py
+Exit Code: 0
+Output Summary: tests/test_identified_save_import_driver.py: 70; tests/test_identified_source_watch_runtime.py: 88
+
+Check S4: WP-16 ID-14 Benchmark
+Command: /root/.local/bin/uv run pytest -q -s tests/test_identified_save_import_driver.py::TestIdentifiedSaveImportDriverBenchmark::test_id14_identified_15000_row_benchmark
+Exit Code: 0
+Output Summary: {"fixture_seconds": 0.6218414921313524, "peak_rss_mib": 81.73046875, "rows": 15000, "seconds": 9.781682164873928}
+Measurements: call-window duration = 9.7817s (< 15.0s limit), peak RSS = 81.73 MiB (< 128.0 MiB limit), rows = 15000
+
+Check S5: IW-16 Identified Runtime Benchmark
+Command: /root/.local/bin/uv run pytest -q -s tests/test_identified_source_watch_runtime.py::TestIdentifiedSourceWatchRuntimeBenchmark::test_iw16_identified_15000_row_runtime_benchmark
+Exit Code: 0
+Output Summary: [IW-16 DRIVER WINDOW] rows=15000 duration=8.7487s peak_rss=87.81MiB
+Measurements: call-window duration = 8.7487s (< 15.0s limit), peak RSS = 87.81 MiB (< 128.0 MiB limit), rows = 15000, no second workbook buffer
+
+Check S6: Baseline Git Diff Check
+Command: git diff --check d5da5386accc8cd63d19c90da7e41aab5dd88a25..45ca7653600bd430d02bba4c9839f18b2413afcf
+Exit Code: 0
+Output Summary: Clean diff, no trailing whitespace or whitespace errors
+
+Check S7: Changed-File Asset and Credential Scan Lists
+Protected changed files: []
+Credential pattern changed files: []
+Note: Supplemental receipt provides changed-file scan result lists with no scan command or exit code; scan gate is marked pending until bound command results are available.
+
+Check S8: Rollback Rehearsal
+Rehearsed four whole-commit reverts in detached worktree (/tmp/wp17-rollback-rehearsal-45ca7653) for commits 45ca7653, 95487cb0, 9239ea1c, c143a133.
+Commands:
+  git worktree add --detach /tmp/wp17-rollback-rehearsal-45ca7653 45ca7653600bd430d02bba4c9839f18b2413afcf (exit 0)
+  git revert --no-edit 45ca7653600bd430d02bba4c9839f18b2413afcf (exit 0)
+  git revert --no-edit 95487cb01ea73a232f127d61ba9b1324c13d920d (exit 0)
+  git revert --no-edit 9239ea1cd7abae90eb4da1ad68eb16a0329a3cec (exit 0)
+  git revert --no-edit c143a13340ce2ffe5dc5e665e66963ec3ee56a73 (exit 0)
+  git diff --quiet d5da5386accc8cd63d19c90da7e41aab5dd88a25 HEAD (exit 0)
+  git status --porcelain (exit 0)
+  git rev-parse HEAD (exit 0)
+  git worktree remove /tmp/wp17-rollback-rehearsal-45ca7653 (exit 0)
+Status: Tree matches execution baseline d5da5386accc8cd63d19c90da7e41aab5dd88a25 (clean status).
+Rehearsal Limitation: Receipt records four whole-commit reverts at tested commit. No reverse-patch run, later-edit preservation test, or post-rollback pytest run was recorded in the rehearsal receipt; selective rollback with subsequent edits remains an unexecuted operational procedure pending native CI.
+
+================================================================================
+PENDING GATES
+================================================================================
+- Native Windows CI execution: Pending (static win32 mypy passed exit 0, but native Windows execution remains pending native CI)
+- Protected-asset and secret scan gates: Pending (changed-file lists are empty, but no scan command or exit code was supplied; both repository-wide and changed-file scan gates remain pending until bound command results are available)
+- Selective rollback execution with concurrent/subsequent edits: Pending native CI verification
 
 ================================================================================
 FINAL SUMMARY
 ================================================================================
-Tested implementation commit c143a13340ce2ffe5dc5e665e66963ec3ee56a73 passed
-focused tests (395 passed in 91.13s), Ruff check, Ruff format check, native Mypy,
+Tested implementation commit 45ca7653600bd430d02bba4c9839f18b2413afcf passed
+focused tests (396 passed in 88.04s), Ruff check, Ruff format check, native Mypy,
 win32 Mypy, and full regression pytest (with 2 expected Windows-only skips).
-Preflight checks git diff --check and validate_handoff.py passed with exit 0.
-Native Windows CI execution (IW-11) and benchmark metrics (IW-16, ID-14) are
-marked pending. Formal protected-asset verification is marked unreported.
+Handoff-stage preflight checks (git diff --check and validate_handoff.py) passed exit 0.
+Supplemental controller-bound checks verified lockfile (/root/.local/bin/uv lock --check),
+frozen sync, test collection (88 IW tests, 70 WP-16 tests), ID-14 benchmark (9.7817s,
+81.73 MiB peak RSS), IW-16 benchmark (8.7487s, 87.81 MiB peak RSS), execution baseline
+diff check, and empty changed-file asset/credential scan lists.
+Whole-commit rollback rehearsal verified clean match with baseline d5da5386accc8cd63d19c90da7e41aab5dd88a25.
+Native Windows CI execution (IW-11), protected-asset/secret scan gates, and selective
+rollback execution with later edits remain pending.
 Gate G1 remains OPEN / IN PROGRESS. Stopping for independent non-author review.
